@@ -18,6 +18,7 @@ pub enum Effect {
     Retile,
     RetileDisplays(Vec<DisplayId>),
     SendLayoutCommand {
+        layout: Option<String>,
         cmd: String,
         args: Vec<String>,
     },

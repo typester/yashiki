@@ -133,7 +133,8 @@ yashiki layout-set --output 2 byobu     # Set layout on specific display
 yashiki layout-get                      # Get current layout
 yashiki layout-get --tags 2             # Get layout for specific tags
 yashiki layout-get --output 2           # Get layout for specific display
-yashiki layout-cmd set-main-ratio 0.6   # Send command to layout engine
+yashiki layout-cmd set-main-ratio 0.6   # Send command to current layout engine
+yashiki layout-cmd --layout tatami set-outer-gap 10  # Send command to specific layout
 yashiki layout-cmd inc-main-count       # Increase main window count
 yashiki layout-cmd zoom                 # Move focused window to main area (tatami)
 yashiki layout-cmd zoom 123             # Move specific window to main area (tatami)
@@ -181,9 +182,10 @@ yashiki bind alt-l layout-cmd inc-main-ratio
 yashiki bind alt-o output-focus next
 yashiki bind alt-shift-o output-send next
 
-# Gap configuration (sent to currently active layout engine)
-yashiki layout-cmd set-inner-gap 10
-yashiki layout-cmd set-outer-gap 10
+# Gap configuration (--layout sends to specific engine, without sends to current)
+yashiki layout-cmd --layout tatami set-inner-gap 10
+yashiki layout-cmd --layout tatami set-outer-gap 10
+yashiki layout-cmd --layout byobu set-padding 30
 
 # App launchers
 yashiki bind alt-return exec "open -n /Applications/Ghostty.app"
@@ -359,7 +361,9 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
   | `layout-set --tags N <layout>` | Set for tag N (applied when switching to that tag) |
 - `LayoutEngineManager` spawns engines lazily on first use and keeps them running
 - Each engine maintains its own state (main_ratio, gaps, etc.) independently
-- `layout-cmd` sends commands to the currently active layout engine
+- `layout-cmd` sends commands to layout engines
+  - Without `--layout`: sends to current active layout and retiles
+  - With `--layout <name>`: sends to specified layout (lazy spawns if needed), no retile
 
 ## Testing
 

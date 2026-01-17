@@ -52,6 +52,7 @@ pub enum Command {
         output: Option<OutputSpecifier>,
     },
     LayoutCommand {
+        layout: Option<String>,
         cmd: String,
         args: Vec<String>,
     },
@@ -226,6 +227,7 @@ mod tests {
     #[test]
     fn test_command_layout_command_serialization() {
         let cmd = Command::LayoutCommand {
+            layout: None,
             cmd: "set-main-ratio".to_string(),
             args: vec!["0.6".to_string()],
         };
@@ -233,9 +235,29 @@ mod tests {
 
         let deserialized: Command = serde_json::from_str(&json).unwrap();
         match deserialized {
-            Command::LayoutCommand { cmd, args } => {
+            Command::LayoutCommand { layout, cmd, args } => {
+                assert_eq!(layout, None);
                 assert_eq!(cmd, "set-main-ratio");
                 assert_eq!(args, vec!["0.6"]);
+            }
+            _ => panic!("Wrong variant"),
+        }
+
+        // With layout specified
+        let cmd = Command::LayoutCommand {
+            layout: Some("tatami".to_string()),
+            cmd: "set-outer-gap".to_string(),
+            args: vec!["10".to_string()],
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"layout\":\"tatami\""));
+
+        let deserialized: Command = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Command::LayoutCommand { layout, cmd, args } => {
+                assert_eq!(layout, Some("tatami".to_string()));
+                assert_eq!(cmd, "set-outer-gap");
+                assert_eq!(args, vec!["10"]);
             }
             _ => panic!("Wrong variant"),
         }

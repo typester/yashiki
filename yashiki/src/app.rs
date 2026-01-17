@@ -666,13 +666,18 @@ fn process_command(
         }
 
         // Layout commands - need layout engine interaction (handled as effects)
-        Command::LayoutCommand { cmd, args } => CommandResult::ok_with_effects(vec![
-            Effect::SendLayoutCommand {
+        Command::LayoutCommand { layout, cmd, args } => {
+            let mut effects = vec![Effect::SendLayoutCommand {
+                layout: layout.clone(),
                 cmd: cmd.clone(),
                 args: args.clone(),
-            },
-            Effect::Retile,
-        ]),
+            }];
+            // Only retile if targeting current layout (layout is None)
+            if layout.is_none() {
+                effects.push(Effect::Retile);
+            }
+            CommandResult::ok_with_effects(effects)
+        }
         Command::Retile { output } => {
             if let Some(ref spec) = output {
                 let display_id = match state.get_target_display(Some(spec)) {
@@ -792,8 +797,10 @@ fn execute_effects<M: WindowManipulator>(
                     do_retile_display(state, layout_engine_manager, manipulator, display_id);
                 }
             }
-            Effect::SendLayoutCommand { cmd, args } => {
-                let layout_name = state.borrow().current_layout().to_string();
+            Effect::SendLayoutCommand { layout, cmd, args } => {
+                let layout_name = layout
+                    .clone()
+                    .unwrap_or_else(|| state.borrow().current_layout().to_string());
                 let mut manager = layout_engine_manager.borrow_mut();
                 if let Err(e) = manager.send_command(&layout_name, &cmd, &args) {
                     return Err(format!("Layout command failed: {}", e));
@@ -1166,10 +1173,12 @@ mod tests {
     fn test_layout_command_produces_send_and_retile() {
         let (mut state, mut hotkey_manager) = setup_state();
 
+        // Without layout option - should retile
         let result = process_command(
             &mut state,
             &mut hotkey_manager,
             &Command::LayoutCommand {
+                layout: None,
                 cmd: "set-main-ratio".to_string(),
                 args: vec!["0.6".to_string()],
             },
@@ -1179,13 +1188,37 @@ mod tests {
         assert_eq!(result.effects.len(), 2);
 
         match &result.effects[0] {
-            Effect::SendLayoutCommand { cmd, args } => {
+            Effect::SendLayoutCommand { layout, cmd, args } => {
+                assert_eq!(*layout, None);
                 assert_eq!(cmd, "set-main-ratio");
                 assert_eq!(args, &vec!["0.6".to_string()]);
             }
             _ => panic!("Expected SendLayoutCommand effect"),
         }
         assert!(matches!(result.effects[1], Effect::Retile));
+
+        // With layout option - should not retile
+        let result = process_command(
+            &mut state,
+            &mut hotkey_manager,
+            &Command::LayoutCommand {
+                layout: Some("tatami".to_string()),
+                cmd: "set-outer-gap".to_string(),
+                args: vec!["10".to_string()],
+            },
+        );
+
+        assert!(matches!(result.response, Response::Ok));
+        assert_eq!(result.effects.len(), 1);
+
+        match &result.effects[0] {
+            Effect::SendLayoutCommand { layout, cmd, args } => {
+                assert_eq!(*layout, Some("tatami".to_string()));
+                assert_eq!(cmd, "set-outer-gap");
+                assert_eq!(args, &vec!["10".to_string()]);
+            }
+            _ => panic!("Expected SendLayoutCommand effect"),
+        }
     }
 
     #[test]

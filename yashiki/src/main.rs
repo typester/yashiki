@@ -222,6 +222,9 @@ struct LayoutGetCmd {
 #[derive(FromArgs)]
 #[argh(subcommand, name = "layout-cmd")]
 struct LayoutCmdCmd {
+    /// target layout engine (defaults to current active layout)
+    #[argh(option)]
+    layout: Option<String>,
     /// layout command
     #[argh(positional)]
     cmd: String,
@@ -432,6 +435,7 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             output: parse_output_specifier(cmd.output),
         }),
         SubCommand::LayoutCmd(cmd) => Ok(Command::LayoutCommand {
+            layout: cmd.layout,
             cmd: cmd.cmd,
             args: cmd.args,
         }),
@@ -554,6 +558,7 @@ fn parse_command(args: &[String]) -> Result<Command> {
         "layout-cmd" => {
             let cmd: LayoutCmdCmd = from_argh(cmd_name, &cmd_args)?;
             Ok(Command::LayoutCommand {
+                layout: cmd.layout,
                 cmd: cmd.cmd,
                 args: cmd.args,
             })
