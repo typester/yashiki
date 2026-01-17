@@ -82,7 +82,9 @@ enum LayoutResult {
 ## CLI Usage
 
 ```sh
-yashiki                           # Run daemon
+yashiki                           # Show help
+yashiki start                     # Start daemon
+yashiki version                   # Show version
 yashiki bind alt-1 view-tag 1     # Bind hotkey
 yashiki unbind alt-1              # Unbind hotkey
 yashiki list-bindings             # List all bindings
@@ -184,12 +186,14 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
 
 - Requires Accessibility permission (System Preferences → Privacy & Security → Accessibility)
 - During development, grant permission to the terminal (e.g., Ghostty)
-- Run daemon: `RUST_LOG=info cargo run -p yashiki`
+- Run daemon: `RUST_LOG=info cargo run -p yashiki -- start`
 - Run CLI: `cargo run -p yashiki -- list-windows`
+- PID file: `/tmp/yashiki.pid` (prevents double startup)
 
 ## Dependencies
 
 Key crates:
+- `argh` - CLI argument parsing
 - `core-foundation` (0.10) - macOS Core Foundation bindings
 - `core-graphics` (0.25) - CGWindowList, CGEventTap, display info
 - `objc2`, `objc2-app-kit`, `objc2-foundation` - NSScreen, NSWorkspace bindings
@@ -246,3 +250,9 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
 - `Window.saved_frame` stores original position when hidden
 - `Window.is_hidden()` returns true when `saved_frame.is_some()`
 - macOS clamps window positions, so left-edge hiding (-10000) doesn't work reliably
+
+### Automatic Tag Switching on External Focus
+- When focus changes externally (Dock, Cmd+Tab, emacsclient, etc.), tag switches automatically
+- If focused window is hidden (on different tag), yashiki switches to that window's tag
+- Unlike Wayland compositors, macOS cannot prevent external focus changes
+- This ensures the focused window is always visible

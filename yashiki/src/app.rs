@@ -230,9 +230,26 @@ impl App {
             // Process observer events and forward to tokio
             let mut needs_retile = false;
             while let Ok(event) = ctx.observer_event_rx.try_recv() {
+                let is_focus_event = matches!(
+                    event,
+                    Event::FocusedWindowChanged { .. } | Event::ApplicationActivated { .. }
+                );
+
                 if ctx.state.borrow_mut().handle_event(&event) {
                     needs_retile = true;
                 }
+
+                // On external focus change, switch tag if focused window is hidden
+                if is_focus_event {
+                    if let Some(moves) = switch_tag_for_focused_window(
+                        &ctx.state,
+                        &mut ctx.layout_engine.borrow_mut(),
+                    ) {
+                        apply_window_moves(&moves);
+                        needs_retile = true;
+                    }
+                }
+
                 if ctx.event_tx.blocking_send(event).is_err() {
                     tracing::error!("Failed to forward event to tokio");
                 }
@@ -885,4 +902,50 @@ fn apply_layout_on_display(
             }
         }
     }
+}
+
+fn switch_tag_for_focused_window(
+    state: &RefCell<State>,
+    layout_engine: &mut Option<LayoutEngine>,
+) -> Option<Vec<WindowMove>> {
+    let (focused_id, window_tags, window_display_id, is_hidden) = {
+        let s = state.borrow();
+        let focused_id = s.focused?;
+        let window = s.windows.get(&focused_id)?;
+        (
+            focused_id,
+            window.tags,
+            window.display_id,
+            window.is_hidden(),
+        )
+    };
+
+    // Check if window is visible on its display's current visible tags
+    let is_visible = {
+        let s = state.borrow();
+        if let Some(display) = s.displays.get(&window_display_id) {
+            window_tags.intersects(display.visible_tags) && !is_hidden
+        } else {
+            false
+        }
+    };
+
+    if is_visible {
+        return None;
+    }
+
+    // Window is hidden, switch to its tag
+    let tag = window_tags.first_tag()?;
+    tracing::info!(
+        "Switching to tag {} for focused window {} (external focus change)",
+        tag,
+        focused_id
+    );
+
+    let moves = state.borrow_mut().view_tag(tag);
+    if !moves.is_empty() {
+        // Need to retile after tag switch
+        do_retile(state, layout_engine);
+    }
+    Some(moves)
 }
