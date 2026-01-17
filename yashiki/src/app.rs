@@ -325,21 +325,33 @@ fn handle_ipc_command(
         Command::ViewTag { tag } => {
             let moves = state.borrow_mut().view_tag(*tag);
             apply_window_moves(&moves);
+            // Retile after switching tag to layout shown windows
+            do_retile(&state.borrow(), &mut layout_engine.borrow_mut());
+            // Focus a visible window if none is focused
+            focus_visible_window_if_needed(&state);
             Response::Ok
         }
         Command::ToggleViewTag { tag } => {
             let moves = state.borrow_mut().toggle_view_tag(*tag);
             apply_window_moves(&moves);
+            // Retile after toggling tag
+            do_retile(&state.borrow(), &mut layout_engine.borrow_mut());
+            // Focus a visible window if none is focused
+            focus_visible_window_if_needed(&state);
             Response::Ok
         }
         Command::MoveToTag { tag } => {
             let moves = state.borrow_mut().move_focused_to_tag(*tag);
             apply_window_moves(&moves);
+            // Retile after moving window to tag
+            do_retile(&state.borrow(), &mut layout_engine.borrow_mut());
             Response::Ok
         }
         Command::ToggleWindowTag { tag } => {
             let moves = state.borrow_mut().toggle_focused_window_tag(*tag);
             apply_window_moves(&moves);
+            // Retile after toggling window tag
+            do_retile(&state.borrow(), &mut layout_engine.borrow_mut());
             Response::Ok
         }
         Command::LayoutCommand { cmd, args } => {
@@ -619,6 +631,33 @@ fn focus_window_by_id(state: &State, window_id: u32, pid: i32) {
     );
 }
 
+fn focus_visible_window_if_needed(state: &RefCell<State>) {
+    let state = state.borrow();
+    let visible_windows = state.visible_windows_on_display(state.focused_display);
+
+    if visible_windows.is_empty() {
+        return;
+    }
+
+    // Check if current focus is on a visible window
+    let focus_is_visible = state
+        .focused
+        .map(|id| visible_windows.iter().any(|w| w.id == id))
+        .unwrap_or(false);
+
+    if !focus_is_visible {
+        // Focus the first visible window
+        if let Some(window) = visible_windows.first() {
+            tracing::info!(
+                "Focusing visible window {} ({}) after tag switch",
+                window.id,
+                window.app_name
+            );
+            focus_window_by_id(&state, window.id, window.pid);
+        }
+    }
+}
+
 fn apply_window_moves(moves: &[WindowMove]) {
     // Group moves by PID to minimize AX calls
     use std::collections::HashMap;
@@ -638,8 +677,8 @@ fn apply_window_moves(moves: &[WindowMove]) {
         };
 
         for m in pid_moves {
-            // Find the window to move - for now, just move all windows of this app
-            // In the future, we should match by position/size
+            // Find the window to move - for now, just move first window of this app
+            // AeroSpace-style: only move position, don't resize
             for win in &windows {
                 let pos = CGPoint::new(m.x as f64, m.y as f64);
                 if let Err(e) = win.set_position(pos) {

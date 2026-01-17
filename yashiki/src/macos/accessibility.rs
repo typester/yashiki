@@ -254,6 +254,15 @@ impl AXUIElement {
         Ok(cf.into())
     }
 
+    pub fn set_minimized(&self, minimized: bool) -> Result<(), AXError> {
+        let value = if minimized {
+            CFBoolean::true_value()
+        } else {
+            CFBoolean::false_value()
+        };
+        self.set_attribute(attr::MINIMIZED, value.as_CFTypeRef())
+    }
+
     pub fn windows(&self) -> Result<Vec<AXUIElement>, AXError> {
         let value = self.get_attribute(attr::WINDOWS)?;
         let arr: CFArray = unsafe { CFArray::wrap_under_create_rule(value as *const _) };

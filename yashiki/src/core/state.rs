@@ -1,4 +1,4 @@
-use super::{offscreen_x, Display, Rect, Tag, Window, WindowId};
+use super::{Display, Rect, Tag, Window, WindowId};
 use crate::event::Event;
 use crate::macos::{get_all_displays, get_focused_window, get_on_screen_windows, DisplayId};
 use std::collections::{HashMap, HashSet};
@@ -194,15 +194,19 @@ impl State {
                         || window.frame.height != new_frame.height;
 
                     if title_changed || frame_changed {
+                        tracing::debug!(
+                            "Window updated: [{}] {} ({}) pos=({},{}) -> ({},{})",
+                            window.id,
+                            window.title,
+                            window.app_name,
+                            window.frame.x,
+                            window.frame.y,
+                            new_frame.x,
+                            new_frame.y
+                        );
                         window.title = new_title;
                         window.frame = new_frame;
                         window.display_id = new_display_id;
-                        tracing::debug!(
-                            "Window updated: [{}] {} ({})",
-                            window.id,
-                            window.title,
-                            window.app_name
-                        );
                     }
                 }
             }
@@ -377,7 +381,7 @@ impl State {
             .filter(|w| {
                 w.display_id == self.focused_display
                     && w.tags.intersects(visible_tags)
-                    && !w.is_offscreen()
+                    && !w.is_hidden()
             })
             .collect();
 
@@ -550,16 +554,39 @@ impl State {
             return vec![];
         };
         let visible_tags = display.visible_tags;
+        // Hide windows to bottom-right corner (AeroSpace-style)
+        // Position window's top-left at screen's bottom-right, so entire window is off-screen
+        // Subtract 1 pixel offset like AeroSpace does
+        let hide_x = display.frame.x + display.frame.width as i32 - 1;
+        let hide_y = display.frame.y + display.frame.height as i32 - 1;
 
         let mut moves = Vec::new();
 
         for window in self.windows.values_mut() {
             if window.display_id != display_id {
+                tracing::trace!(
+                    "Skipping window {} - display {} != {}",
+                    window.id,
+                    window.display_id,
+                    display_id
+                );
                 continue;
             }
 
             let should_be_visible = window.tags.intersects(visible_tags);
-            let is_visible = !window.is_offscreen();
+            let is_visible = !window.is_hidden();
+
+            tracing::debug!(
+                "Window {}: tags={}, visible_tags={}, should_visible={}, frame=({},{}), is_visible={}, saved_frame={:?}",
+                window.id,
+                window.tags.mask(),
+                visible_tags.mask(),
+                should_be_visible,
+                window.frame.x,
+                window.frame.y,
+                is_visible,
+                window.saved_frame.as_ref().map(|f| (f.x, f.y))
+            );
 
             if should_be_visible && !is_visible {
                 if let Some(saved) = window.saved_frame.take() {
@@ -570,24 +597,28 @@ impl State {
                         x: saved.x,
                         y: saved.y,
                     });
-                    window.frame.x = saved.x;
-                    window.frame.y = saved.y;
+                    window.frame = saved;
                 }
             } else if !should_be_visible && is_visible {
                 tracing::debug!(
-                    "Hiding window {} (was at ({}, {}))",
+                    "Hiding window {} to ({}, {}) (was at ({}, {}))",
                     window.id,
+                    hide_x,
+                    hide_y,
                     window.frame.x,
                     window.frame.y
                 );
                 window.saved_frame = Some(window.frame);
+                // Move window's top-left to screen's bottom-right corner
+                // Window keeps its size, entire window is off-screen
                 moves.push(WindowMove {
                     window_id: window.id,
                     pid: window.pid,
-                    x: offscreen_x(),
-                    y: window.frame.y,
+                    x: hide_x,
+                    y: hide_y,
                 });
-                window.frame.x = offscreen_x();
+                window.frame.x = hide_x;
+                window.frame.y = hide_y;
             }
         }
 
@@ -604,7 +635,7 @@ impl State {
             .filter(|w| {
                 w.display_id == display_id
                     && w.tags.intersects(display.visible_tags)
-                    && !w.is_offscreen()
+                    && !w.is_hidden()
             })
             .collect()
     }

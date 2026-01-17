@@ -3,8 +3,6 @@ use crate::macos::{Bounds, DisplayId, WindowInfo};
 
 pub type WindowId = u32;
 
-const OFFSCREEN_X: i32 = -10000;
-
 #[derive(Debug, Clone)]
 pub struct Window {
     pub id: WindowId,
@@ -40,13 +38,10 @@ impl Window {
         )
     }
 
-    pub fn is_offscreen(&self) -> bool {
-        self.frame.x <= OFFSCREEN_X
+    /// Check if window is hidden (has a saved frame from being moved offscreen)
+    pub fn is_hidden(&self) -> bool {
+        self.saved_frame.is_some()
     }
-}
-
-pub fn offscreen_x() -> i32 {
-    OFFSCREEN_X
 }
 
 #[derive(Debug, Clone, Copy, Default)]
