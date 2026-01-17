@@ -98,3 +98,9 @@ Key crates:
 - Minimal comments - only where logic is non-obvious
 - No unnecessary comments explaining what the next line does
 - When adding dependencies, always use the latest version
+
+## Workflow
+
+- When user asks to plan something, present the plan first and wait for approval before implementing
+- Do not start implementation until user confirms the plan
+- Run `cargo fmt --all` at the end of each task

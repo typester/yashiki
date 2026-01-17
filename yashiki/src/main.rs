@@ -34,32 +34,43 @@ fn main() -> Result<()> {
         );
     }
 
-    println!("\n=== Windows via Accessibility API ===\n");
-    let pids = macos::get_running_app_pids();
-    for pid in pids {
-        let app = macos::AXUIElement::application(pid);
-        let Ok(app_windows) = app.windows() else {
-            continue;
+    println!("\n=== Move focused window test ===\n");
+    if let Ok(win) = macos::get_focused_window() {
+        let title = win.title().unwrap_or_default();
+        let Ok(pos) = win.position() else {
+            println!("Could not get position");
+            return Ok(());
         };
+        println!(
+            "Focused: {:?} @ ({}, {})",
+            title, pos.x as i32, pos.y as i32
+        );
 
-        for win in app_windows {
-            let title = win.title().unwrap_or_default();
-            let pos = win.position().ok();
-            let size = win.size().ok();
-            let minimized = win.is_minimized().unwrap_or(false);
-
-            if minimized {
-                continue;
-            }
-
-            println!(
-                "[{}] {:?} @ {:?} {:?}",
-                pid,
-                title,
-                pos.map(|p| (p.x as i32, p.y as i32)),
-                size.map(|s| (s.width as u32, s.height as u32)),
-            );
+        let new_pos = core_graphics::geometry::CGPoint::new(pos.x + 100.0, pos.y);
+        println!("Moving to ({}, {})...", new_pos.x as i32, new_pos.y as i32);
+        if win.set_position(new_pos).is_err() {
+            println!("Failed to set position");
+            return Ok(());
         }
+
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        let Ok(final_pos) = win.position() else {
+            println!("Could not get final position");
+            return Ok(());
+        };
+        println!(
+            "Final position: ({}, {})",
+            final_pos.x as i32, final_pos.y as i32
+        );
+
+        if (final_pos.x - new_pos.x).abs() < 1.0 {
+            println!("Success! Window moved.");
+        } else {
+            println!("Window was moved back (probably by AeroSpace)");
+        }
+    } else {
+        println!("Could not get focused window");
     }
 
     Ok(())

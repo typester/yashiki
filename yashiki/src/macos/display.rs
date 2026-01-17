@@ -1,9 +1,5 @@
 use core_foundation::{
-    array::CFArray,
-    base::TCFType,
-    dictionary::CFDictionary,
-    number::CFNumber,
-    string::CFString,
+    array::CFArray, base::TCFType, dictionary::CFDictionary, number::CFNumber, string::CFString,
 };
 use core_graphics::window::{
     kCGNullWindowID, kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly,
@@ -108,6 +104,11 @@ fn parse_bounds(dict: &CFDictionary, key: &str) -> Option<Bounds> {
         let width = get_number(&bounds_dict, "Width")?.to_f64()?;
         let height = get_number(&bounds_dict, "Height")?.to_f64()?;
 
-        Some(Bounds { x, y, width, height })
+        Some(Bounds {
+            x,
+            y,
+            width,
+            height,
+        })
     }
 }

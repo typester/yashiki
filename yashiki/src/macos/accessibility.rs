@@ -51,6 +51,7 @@ const AX_VALUE_TYPE_CGSIZE: u32 = 2;
 mod attr {
     pub const WINDOWS: &str = "AXWindows";
     pub const FOCUSED_WINDOW: &str = "AXFocusedWindow";
+    pub const FOCUSED_APPLICATION: &str = "AXFocusedApplication";
     pub const TITLE: &str = "AXTitle";
     pub const POSITION: &str = "AXPosition";
     pub const SIZE: &str = "AXSize";
@@ -218,4 +219,15 @@ impl AXUIElement {
         let value = self.get_attribute(attr::FOCUSED_WINDOW)?;
         Ok(unsafe { AXUIElement::wrap_under_create_rule(value as AXUIElementRef) })
     }
+
+    pub fn focused_application(&self) -> Result<AXUIElement, AXError> {
+        let value = self.get_attribute(attr::FOCUSED_APPLICATION)?;
+        Ok(unsafe { AXUIElement::wrap_under_create_rule(value as AXUIElementRef) })
+    }
+}
+
+pub fn get_focused_window() -> Result<AXUIElement, AXError> {
+    let system = AXUIElement::system_wide();
+    let app = system.focused_application()?;
+    app.focused_window()
 }
