@@ -9,7 +9,7 @@ use anyhow::{bail, Result};
 use ipc::IpcClient;
 use std::env;
 use tracing_subscriber::EnvFilter;
-use yashiki_ipc::{Command, Direction, Response};
+use yashiki_ipc::{Command, Direction, OutputDirection, Response};
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -141,6 +141,20 @@ fn parse_command(args: &[String]) -> Result<Command> {
             let direction = parse_direction(&rest[0])?;
             Ok(Command::SwapWindow { direction })
         }
+        "focus-output" => {
+            if rest.is_empty() {
+                bail!("Usage: yashiki focus-output <next|prev>");
+            }
+            let direction = parse_output_direction(&rest[0])?;
+            Ok(Command::FocusOutput { direction })
+        }
+        "send-to-output" => {
+            if rest.is_empty() {
+                bail!("Usage: yashiki send-to-output <next|prev>");
+            }
+            let direction = parse_output_direction(&rest[0])?;
+            Ok(Command::SendToOutput { direction })
+        }
         "retile" => Ok(Command::Retile),
         "layout-cmd" => {
             if rest.is_empty() {
@@ -167,5 +181,13 @@ fn parse_direction(s: &str) -> Result<Direction> {
         "next" => Ok(Direction::Next),
         "prev" => Ok(Direction::Prev),
         _ => bail!("Unknown direction: {}", s),
+    }
+}
+
+fn parse_output_direction(s: &str) -> Result<OutputDirection> {
+    match s.to_lowercase().as_str() {
+        "next" => Ok(OutputDirection::Next),
+        "prev" => Ok(OutputDirection::Prev),
+        _ => bail!("Unknown output direction: {} (use next or prev)", s),
     }
 }

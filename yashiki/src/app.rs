@@ -1,11 +1,11 @@
-use crate::core::{State, WindowMove};
+use crate::core::{Display, State, WindowMove};
 use crate::event::Event;
 use crate::ipc::IpcServer;
 use crate::layout::LayoutEngine;
 use crate::macos;
 use crate::macos::{
-    activate_application, get_main_display_size, AXUIElement, HotkeyManager, ObserverManager,
-    WorkspaceEvent, WorkspaceWatcher,
+    activate_application, AXUIElement, HotkeyManager, ObserverManager, WorkspaceEvent,
+    WorkspaceWatcher,
 };
 use anyhow::Result;
 use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop};
@@ -246,10 +246,10 @@ impl App {
 }
 
 fn run_init_script() {
-    let config_dir = match dirs::config_dir() {
-        Some(dir) => dir.join("yashiki"),
+    let config_dir = match dirs::home_dir() {
+        Some(dir) => dir.join(".config").join("yashiki"),
         None => {
-            tracing::warn!("Could not determine config directory");
+            tracing::warn!("Could not determine home directory");
             return;
         }
     };
@@ -313,7 +313,7 @@ fn handle_ipc_command(
             let state = state.borrow();
             Response::State {
                 state: StateInfo {
-                    visible_tags: state.visible_tags.mask(),
+                    visible_tags: state.visible_tags().mask(),
                     focused_window_id: state.focused,
                     window_count: state.windows.len(),
                 },
@@ -392,6 +392,46 @@ fn handle_ipc_command(
             }
             Response::Ok
         }
+        Command::FocusOutput { direction } => {
+            let result = state.borrow_mut().focus_output(*direction);
+            if let Some((window_id, pid)) = result {
+                tracing::info!("Focusing output - window {} (pid {})", window_id, pid);
+                focus_window_by_id(&state.borrow(), window_id, pid);
+            }
+            Response::Ok
+        }
+        Command::SendToOutput { direction } => {
+            let displays_to_retile = state.borrow_mut().send_to_output(*direction);
+            if let Some((source_display, target_display)) = displays_to_retile {
+                // Move the focused window physically
+                {
+                    let s = state.borrow();
+                    if let Some(focused_id) = s.focused {
+                        if let Some(window) = s.windows.get(&focused_id) {
+                            move_window_to_position(
+                                window.pid,
+                                focused_id,
+                                &s,
+                                window.frame.x,
+                                window.frame.y,
+                            );
+                        }
+                    }
+                }
+                // Retile both displays
+                do_retile_display(
+                    &state.borrow(),
+                    &mut layout_engine.borrow_mut(),
+                    source_display,
+                );
+                do_retile_display(
+                    &state.borrow(),
+                    &mut layout_engine.borrow_mut(),
+                    target_display,
+                );
+            }
+            Response::Ok
+        }
         Command::Quit => {
             tracing::info!("Quit command received");
             Response::Ok
@@ -410,25 +450,116 @@ fn do_retile(state: &State, layout_engine: &mut Option<LayoutEngine>) {
         return;
     };
 
-    let visible_windows: Vec<_> = state
-        .windows
-        .values()
-        .filter(|w| w.tags.intersects(state.visible_tags) && !w.is_offscreen())
-        .collect();
+    // Retile each display independently
+    for (display_id, display) in &state.displays {
+        retile_single_display(state, engine, *display_id, display);
+    }
+}
+
+fn do_retile_display(
+    state: &State,
+    layout_engine: &mut Option<LayoutEngine>,
+    display_id: crate::macos::DisplayId,
+) {
+    let Some(ref mut engine) = layout_engine else {
+        return;
+    };
+    let Some(display) = state.displays.get(&display_id) else {
+        return;
+    };
+    retile_single_display(state, engine, display_id, display);
+}
+
+fn retile_single_display(
+    state: &State,
+    engine: &mut LayoutEngine,
+    display_id: crate::macos::DisplayId,
+    display: &Display,
+) {
+    let visible_windows = state.visible_windows_on_display(display_id);
 
     if visible_windows.is_empty() {
         return;
     }
 
     let window_ids: Vec<u32> = visible_windows.iter().map(|w| w.id).collect();
-    let (width, height) = get_main_display_size();
+    let width = display.frame.width;
+    let height = display.frame.height;
 
     match engine.request_layout(width, height, &window_ids) {
         Ok(geometries) => {
-            apply_layout(state, &geometries);
+            apply_layout_on_display(state, display, &geometries);
         }
         Err(e) => {
-            tracing::error!("Layout request failed: {}", e);
+            tracing::error!("Layout request failed for display {}: {}", display_id, e);
+        }
+    }
+}
+
+fn move_window_to_position(pid: i32, window_id: u32, state: &State, x: i32, y: i32) {
+    let window = match state.windows.get(&window_id) {
+        Some(w) => w,
+        None => return,
+    };
+
+    let app = AXUIElement::application(pid);
+    let ax_windows = match app.windows() {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::warn!("Failed to get windows for pid {}: {}", pid, e);
+            return;
+        }
+    };
+
+    // Find matching AX window by current position
+    for ax_win in &ax_windows {
+        let pos = match ax_win.position() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let size = match ax_win.size() {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        // Use stored frame (before moving)
+        let old_x = window.frame.x as f64 - (x as f64 - window.frame.x as f64);
+        let old_y = window.frame.y as f64 - (y as f64 - window.frame.y as f64);
+
+        let pos_match = (pos.x - old_x).abs() < 10.0 && (pos.y - old_y).abs() < 10.0;
+        let size_match = (size.width - window.frame.width as f64).abs() < 10.0
+            && (size.height - window.frame.height as f64).abs() < 10.0;
+
+        if pos_match || size_match {
+            let new_pos = CGPoint::new(x as f64, y as f64);
+            if let Err(e) = ax_win.set_position(new_pos) {
+                tracing::warn!(
+                    "Failed to move window {} to ({}, {}): {}",
+                    window_id,
+                    x,
+                    y,
+                    e
+                );
+            } else {
+                tracing::info!("Moved window {} to ({}, {})", window_id, x, y);
+            }
+            return;
+        }
+    }
+
+    // Fallback: move first window
+    if let Some(ax_win) = ax_windows.first() {
+        let new_pos = CGPoint::new(x as f64, y as f64);
+        if let Err(e) = ax_win.set_position(new_pos) {
+            tracing::warn!(
+                "Failed to move window {} to ({}, {}): {}",
+                window_id,
+                x,
+                y,
+                e
+            );
+        } else {
+            tracing::info!("Moved window {} to ({}, {}) (fallback)", window_id, x, y);
         }
     }
 }
@@ -525,8 +656,12 @@ fn apply_window_moves(moves: &[WindowMove]) {
     }
 }
 
-fn apply_layout(state: &State, geometries: &[WindowGeometry]) {
+fn apply_layout_on_display(state: &State, disp: &Display, geometries: &[WindowGeometry]) {
     use std::collections::HashMap;
+
+    // Display offset
+    let offset_x = disp.frame.x;
+    let offset_y = disp.frame.y;
 
     // Build a map of window_id -> (pid, geometry)
     let mut by_pid: HashMap<i32, Vec<(u32, &WindowGeometry)>> = HashMap::new();
@@ -566,8 +701,10 @@ fn apply_layout(state: &State, geometries: &[WindowGeometry]) {
                         && (size.height - window.frame.height as f64).abs() < 10.0;
 
                     if pos_match && size_match {
-                        // Apply new geometry
-                        let new_pos = CGPoint::new(geom.x as f64, geom.y as f64);
+                        // Apply new geometry with display offset
+                        let new_x = geom.x as i32 + offset_x;
+                        let new_y = geom.y as i32 + offset_y;
+                        let new_pos = CGPoint::new(new_x as f64, new_y as f64);
                         let new_size = CGSize::new(geom.width as f64, geom.height as f64);
 
                         if let Err(e) = ax_win.set_position(new_pos) {
@@ -582,11 +719,12 @@ fn apply_layout(state: &State, geometries: &[WindowGeometry]) {
                         }
 
                         tracing::debug!(
-                            "Applied layout to window {} (pid={}): ({}, {}) {}x{}",
+                            "Applied layout to window {} (pid={}) on display {}: ({}, {}) {}x{}",
                             window_id,
                             pid,
-                            geom.x,
-                            geom.y,
+                            disp.id,
+                            new_x,
+                            new_y,
                             geom.width,
                             geom.height
                         );

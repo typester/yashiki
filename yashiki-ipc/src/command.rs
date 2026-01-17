@@ -15,6 +15,10 @@ pub enum Command {
     MoveToTag { tag: u32 },
     ToggleWindowTag { tag: u32 },
 
+    // Output (display) operations
+    FocusOutput { direction: OutputDirection },
+    SendToOutput { direction: OutputDirection },
+
     // Layout operations
     LayoutCommand { cmd: String, args: Vec<String> },
     Retile,
@@ -39,6 +43,13 @@ pub enum Direction {
     Right,
     Up,
     Down,
+    Next,
+    Prev,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputDirection {
     Next,
     Prev,
 }

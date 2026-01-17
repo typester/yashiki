@@ -41,6 +41,11 @@ Like AeroSpace, uses virtual workspaces instead of macOS native Spaces:
 
 ## Key Features
 
+- **Multi-monitor support** (river-style)
+  - Each display has independent visible tags
+  - Tag operations affect the focused display
+  - Windows belong to a display (determined by center point)
+  - Layout applied per-display
 - **Tag-based workspace management** (like dwm/awesomewm/river)
   - Windows can have multiple tags (bitmask)
   - View any combination of tags
@@ -84,6 +89,10 @@ yashiki move-to-tag 1             # Move focused window to tag 1
 yashiki focus-window next         # Focus next window
 yashiki focus-window prev         # Focus previous window
 yashiki focus-window left         # Focus window to the left
+yashiki focus-output next         # Focus next display
+yashiki focus-output prev         # Focus previous display
+yashiki send-to-output next       # Move focused window to next display
+yashiki send-to-output prev       # Move focused window to previous display
 yashiki retile                    # Apply layout
 yashiki layout-cmd set-main-ratio 0.6   # Send command to layout engine
 yashiki layout-cmd inc-main-count       # Increase main window count
@@ -107,6 +116,8 @@ yashiki bind alt-return retile
 yashiki bind alt-comma layout-cmd inc-main-count
 yashiki bind alt-period layout-cmd dec-main-count
 yashiki bind alt-h layout-cmd set-main-ratio 0.5
+yashiki bind alt-o focus-output next
+yashiki bind alt-shift-o send-to-output next
 ```
 
 ## Implementation Status
@@ -114,17 +125,20 @@ yashiki bind alt-h layout-cmd set-main-ratio 0.5
 ### Completed
 - **macos/accessibility.rs** - AXUIElement FFI bindings
   - Permission check, window manipulation (position, size), `raise()` for focus
-- **macos/display.rs** - CGWindowList window enumeration
-  - `get_on_screen_windows()`, `get_main_display_size()`
+- **macos/display.rs** - CGWindowList window enumeration, display info
+  - `get_on_screen_windows()`, `get_all_displays()`
 - **macos/observer.rs** - AXObserver for window events
 - **macos/workspace.rs** - NSWorkspace app launch/terminate notifications, `activate_application()`
 - **macos/hotkey.rs** - CGEventTap global hotkeys
   - `HotkeyManager` with dynamic bind/unbind
   - Tap recreation on binding changes
-- **core/state.rs** - Window state management
+- **core/display.rs** - Display struct with visible_tags per display
+- **core/state.rs** - Window and display state management
+  - Multi-monitor: `displays`, `focused_display`, per-display visible_tags
   - Tag operations: `view_tag()`, `toggle_view_tag()`, `move_focused_to_tag()`, `toggle_focused_window_tag()`
   - Focus: `focus_window()` - stack-based (next/prev) and geometry-based (left/right/up/down)
-- **core/window.rs** - Window struct with tags, saved_frame for off-screen
+  - Output: `focus_output()`, `send_to_output()` - move focus/window between displays
+- **core/window.rs** - Window struct with tags, display_id, saved_frame for off-screen
 - **core/tag.rs** - Tag bitmask
 - **ipc/server.rs** - IPC server on `/tmp/yashiki.sock`
 - **ipc/client.rs** - IPC client for CLI
@@ -187,3 +201,13 @@ Implemented in core (layout-agnostic):
 - `left`/`right`/`up`/`down`: Geometry-based, finds nearest window using Manhattan distance
 
 Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
+
+### Multi-monitor (river-style)
+- Each `Display` has its own `visible_tags`
+- `State.focused_display` tracks which display has focus
+- Focus changes update `focused_display` based on window's `display_id`
+- Tag operations (`view_tag`, etc.) affect only `focused_display`
+- Window's display determined by center point location
+- Layout applied independently per display with display offset
+- `focus_output`: cycles displays by sorted ID, focuses first visible window on target
+- `send_to_output`: moves window to target display, updates `focused_display`, retiles both displays

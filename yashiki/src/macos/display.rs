@@ -1,12 +1,22 @@
 use core_foundation::{
     array::CFArray, base::TCFType, dictionary::CFDictionary, number::CFNumber, string::CFString,
 };
-use core_graphics::display::{CGDisplay, CGMainDisplayID};
+use core_graphics::display::{CGDisplay, CGGetActiveDisplayList, CGMainDisplayID};
+use core_graphics::geometry::CGRect;
 use core_graphics::window::{
     kCGNullWindowID, kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly,
     CGWindowListCopyWindowInfo,
 };
 use std::collections::HashSet;
+
+pub type DisplayId = u32;
+
+#[derive(Debug, Clone)]
+pub struct DisplayInfo {
+    pub id: DisplayId,
+    pub frame: Bounds,
+    pub is_main: bool,
+}
 
 #[derive(Debug, Clone)]
 pub struct WindowInfo {
@@ -119,4 +129,42 @@ pub fn get_main_display_size() -> (u32, u32) {
     let width = display.pixels_wide() as u32;
     let height = display.pixels_high() as u32;
     (width, height)
+}
+
+pub fn get_all_displays() -> Vec<DisplayInfo> {
+    let main_display_id = unsafe { CGMainDisplayID() };
+
+    // Get count of active displays
+    let mut display_count: u32 = 0;
+    unsafe {
+        CGGetActiveDisplayList(0, std::ptr::null_mut(), &mut display_count);
+    }
+
+    if display_count == 0 {
+        return vec![];
+    }
+
+    // Get all display IDs
+    let mut display_ids: Vec<u32> = vec![0; display_count as usize];
+    unsafe {
+        CGGetActiveDisplayList(display_count, display_ids.as_mut_ptr(), &mut display_count);
+    }
+
+    display_ids
+        .into_iter()
+        .map(|id| {
+            let display = CGDisplay::new(id);
+            let bounds: CGRect = display.bounds();
+            DisplayInfo {
+                id,
+                frame: Bounds {
+                    x: bounds.origin.x,
+                    y: bounds.origin.y,
+                    width: bounds.size.width,
+                    height: bounds.size.height,
+                },
+                is_main: id == main_display_id,
+            }
+        })
+        .collect()
 }

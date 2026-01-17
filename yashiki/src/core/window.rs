@@ -1,5 +1,5 @@
 use super::Tag;
-use crate::macos::{Bounds, WindowInfo};
+use crate::macos::{Bounds, DisplayId, WindowInfo};
 
 pub type WindowId = u32;
 
@@ -9,6 +9,7 @@ const OFFSCREEN_X: i32 = -10000;
 pub struct Window {
     pub id: WindowId,
     pub pid: i32,
+    pub display_id: DisplayId,
     pub tags: Tag,
     pub title: String,
     pub app_name: String,
@@ -18,10 +19,11 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn from_window_info(info: &WindowInfo, default_tag: Tag) -> Self {
+    pub fn from_window_info(info: &WindowInfo, default_tag: Tag, display_id: DisplayId) -> Self {
         Self {
             id: info.window_id,
             pid: info.pid,
+            display_id,
             tags: default_tag,
             title: info.name.clone().unwrap_or_default(),
             app_name: info.owner_name.clone(),
@@ -29,6 +31,13 @@ impl Window {
             saved_frame: None,
             is_minimized: false,
         }
+    }
+
+    pub fn center(&self) -> (i32, i32) {
+        (
+            self.frame.x + self.frame.width as i32 / 2,
+            self.frame.y + self.frame.height as i32 / 2,
+        )
     }
 
     pub fn is_offscreen(&self) -> bool {
