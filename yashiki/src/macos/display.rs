@@ -1,6 +1,7 @@
 use core_foundation::{
     array::CFArray, base::TCFType, dictionary::CFDictionary, number::CFNumber, string::CFString,
 };
+use core_graphics::display::{CGDisplay, CGMainDisplayID};
 use core_graphics::window::{
     kCGNullWindowID, kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly,
     CGWindowListCopyWindowInfo,
@@ -110,4 +111,12 @@ fn parse_bounds(dict: &CFDictionary, key: &str) -> Option<Bounds> {
             height,
         })
     }
+}
+
+pub fn get_main_display_size() -> (u32, u32) {
+    let display_id = unsafe { CGMainDisplayID() };
+    let display = CGDisplay::new(display_id);
+    let width = display.pixels_wide() as u32;
+    let height = display.pixels_high() as u32;
+    (width, height)
 }

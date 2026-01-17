@@ -1,16 +1,19 @@
 use crate::core::{State, WindowMove};
 use crate::event::Event;
 use crate::ipc::IpcServer;
+use crate::layout::LayoutEngine;
 use crate::macos;
-use crate::macos::{AXUIElement, ObserverManager, WorkspaceEvent, WorkspaceWatcher};
+use crate::macos::{
+    get_main_display_size, AXUIElement, ObserverManager, WorkspaceEvent, WorkspaceWatcher,
+};
 use anyhow::Result;
 use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop};
-use core_graphics::geometry::CGPoint;
+use core_graphics::geometry::{CGPoint, CGSize};
 use objc2_foundation::MainThreadMarker;
 use std::cell::RefCell;
 use std::sync::mpsc as std_mpsc;
 use tokio::sync::mpsc;
-use yashiki_ipc::{Command, Response, StateInfo, WindowInfo};
+use yashiki_ipc::{Command, Response, StateInfo, WindowGeometry, WindowInfo};
 
 type IpcCommandWithResponse = (Command, mpsc::Sender<Response>);
 
@@ -21,6 +24,7 @@ struct RunLoopContext {
     event_tx: mpsc::Sender<Event>,
     observer_manager: RefCell<ObserverManager>,
     state: RefCell<State>,
+    layout_engine: RefCell<Option<LayoutEngine>>,
 }
 
 pub struct App {}
@@ -118,6 +122,15 @@ impl App {
         let mut state = State::new();
         state.sync_all();
 
+        // Spawn layout engine
+        let layout_engine = match LayoutEngine::spawn("tatami") {
+            Ok(engine) => Some(engine),
+            Err(e) => {
+                tracing::warn!("Failed to spawn layout engine: {}", e);
+                None
+            }
+        };
+
         // Set up a timer to check for commands and events periodically
         let context = Box::new(RunLoopContext {
             ipc_cmd_rx,
@@ -126,6 +139,7 @@ impl App {
             event_tx,
             observer_manager: RefCell::new(observer_manager),
             state: RefCell::new(state),
+            layout_engine: RefCell::new(layout_engine),
         });
         let mut timer_context = core_foundation::runloop::CFRunLoopTimerContext {
             version: 0,
@@ -144,7 +158,7 @@ impl App {
             // Process IPC commands
             while let Ok((cmd, resp_tx)) = ctx.ipc_cmd_rx.try_recv() {
                 tracing::debug!("Received IPC command: {:?}", cmd);
-                let response = handle_ipc_command(&ctx.state, &cmd);
+                let response = handle_ipc_command(&ctx.state, &ctx.layout_engine, &cmd);
                 let _ = resp_tx.blocking_send(response);
 
                 // Handle Quit command after sending response
@@ -198,7 +212,11 @@ impl App {
     }
 }
 
-fn handle_ipc_command(state: &RefCell<State>, cmd: &Command) -> Response {
+fn handle_ipc_command(
+    state: &RefCell<State>,
+    layout_engine: &RefCell<Option<LayoutEngine>>,
+    cmd: &Command,
+) -> Response {
     match cmd {
         Command::ListWindows => {
             let state = state.borrow();
@@ -250,6 +268,54 @@ fn handle_ipc_command(state: &RefCell<State>, cmd: &Command) -> Response {
             apply_window_moves(&moves);
             Response::Ok
         }
+        Command::LayoutCommand { cmd, args } => {
+            let mut engine = layout_engine.borrow_mut();
+            if let Some(ref mut engine) = *engine {
+                match engine.send_command(cmd, args) {
+                    Ok(()) => Response::Ok,
+                    Err(e) => Response::Error {
+                        message: format!("Layout command failed: {}", e),
+                    },
+                }
+            } else {
+                Response::Error {
+                    message: "No layout engine available".to_string(),
+                }
+            }
+        }
+        Command::Retile => {
+            let state = state.borrow();
+            let mut engine = layout_engine.borrow_mut();
+            if let Some(ref mut engine) = *engine {
+                // Get visible windows
+                let visible_windows: Vec<_> = state
+                    .windows
+                    .values()
+                    .filter(|w| w.tags.intersects(state.visible_tags) && !w.is_offscreen())
+                    .collect();
+
+                if visible_windows.is_empty() {
+                    return Response::Ok;
+                }
+
+                let window_ids: Vec<u32> = visible_windows.iter().map(|w| w.id).collect();
+                let (width, height) = get_main_display_size();
+
+                match engine.request_layout(width, height, &window_ids) {
+                    Ok(geometries) => {
+                        apply_layout(&state, &geometries);
+                        Response::Ok
+                    }
+                    Err(e) => Response::Error {
+                        message: format!("Layout request failed: {}", e),
+                    },
+                }
+            } else {
+                Response::Error {
+                    message: "No layout engine available".to_string(),
+                }
+            }
+        }
         Command::Quit => {
             tracing::info!("Quit command received");
             Response::Ok
@@ -297,6 +363,79 @@ fn apply_window_moves(moves: &[WindowMove]) {
                 } else {
                     tracing::debug!("Moved window (pid={}) to ({}, {})", m.pid, m.x, m.y);
                     break;
+                }
+            }
+        }
+    }
+}
+
+fn apply_layout(state: &State, geometries: &[WindowGeometry]) {
+    use std::collections::HashMap;
+
+    // Build a map of window_id -> (pid, geometry)
+    let mut by_pid: HashMap<i32, Vec<(u32, &WindowGeometry)>> = HashMap::new();
+    for geom in geometries {
+        if let Some(window) = state.windows.get(&geom.id) {
+            by_pid.entry(window.pid).or_default().push((geom.id, geom));
+        }
+    }
+
+    for (pid, windows) in by_pid {
+        let app = AXUIElement::application(pid);
+        let ax_windows = match app.windows() {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!("Failed to get windows for pid {}: {}", pid, e);
+                continue;
+            }
+        };
+
+        for (window_id, geom) in windows {
+            // Find matching AX window by current position/size
+            if let Some(window) = state.windows.get(&window_id) {
+                for ax_win in &ax_windows {
+                    // Match by approximate position
+                    let pos = match ax_win.position() {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
+                    let size = match ax_win.size() {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+
+                    let pos_match = (pos.x - window.frame.x as f64).abs() < 10.0
+                        && (pos.y - window.frame.y as f64).abs() < 10.0;
+                    let size_match = (size.width - window.frame.width as f64).abs() < 10.0
+                        && (size.height - window.frame.height as f64).abs() < 10.0;
+
+                    if pos_match && size_match {
+                        // Apply new geometry
+                        let new_pos = CGPoint::new(geom.x as f64, geom.y as f64);
+                        let new_size = CGSize::new(geom.width as f64, geom.height as f64);
+
+                        if let Err(e) = ax_win.set_position(new_pos) {
+                            tracing::warn!(
+                                "Failed to set position for window {}: {}",
+                                window_id,
+                                e
+                            );
+                        }
+                        if let Err(e) = ax_win.set_size(new_size) {
+                            tracing::warn!("Failed to set size for window {}: {}", window_id, e);
+                        }
+
+                        tracing::debug!(
+                            "Applied layout to window {} (pid={}): ({}, {}) {}x{}",
+                            window_id,
+                            pid,
+                            geom.x,
+                            geom.y,
+                            geom.width,
+                            geom.height
+                        );
+                        break;
+                    }
                 }
             }
         }

@@ -16,9 +16,8 @@ pub enum Command {
     ToggleWindowTag { tag: u32 },
 
     // Layout operations
-    SetMainRatio { ratio: f64 },
-    IncMainCount,
-    DecMainCount,
+    LayoutCommand { cmd: String, args: Vec<String> },
+    Retile,
 
     // Queries
     ListWindows,

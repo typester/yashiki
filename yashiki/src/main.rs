@@ -2,6 +2,7 @@ mod app;
 mod core;
 mod event;
 mod ipc;
+mod layout;
 mod macos;
 
 use anyhow::Result;
