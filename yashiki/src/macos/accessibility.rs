@@ -3,6 +3,7 @@ use core_foundation::{
     base::{CFTypeID, TCFType},
     boolean::CFBoolean,
     declare_TCFType, impl_TCFType,
+    runloop::CFRunLoopSource,
     string::{CFString, CFStringRef},
 };
 use core_graphics::geometry::{CGPoint, CGSize};
@@ -20,12 +21,27 @@ pub const AX_ERROR_NO_VALUE: AXError = -25212;
 pub struct __AXUIElement(c_void);
 pub type AXUIElementRef = *mut __AXUIElement;
 
+#[repr(C)]
+pub struct __AXObserver(c_void);
+pub type AXObserverRef = *mut __AXObserver;
+
+pub type AXObserverCallback = extern "C" fn(
+    observer: AXObserverRef,
+    element: AXUIElementRef,
+    notification: CFStringRef,
+    refcon: *mut c_void,
+);
+
 declare_TCFType!(AXUIElement, AXUIElementRef);
 impl_TCFType!(AXUIElement, AXUIElementRef, AXUIElementGetTypeID);
+
+declare_TCFType!(AXObserver, AXObserverRef);
+impl_TCFType!(AXObserver, AXObserverRef, AXObserverGetTypeID);
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXUIElementGetTypeID() -> CFTypeID;
+    fn AXObserverGetTypeID() -> CFTypeID;
     fn AXIsProcessTrusted() -> bool;
     fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
     fn AXUIElementCreateSystemWide() -> AXUIElementRef;
@@ -43,6 +59,24 @@ extern "C" {
     fn AXUIElementGetPid(element: AXUIElementRef, pid: *mut i32) -> AXError;
     fn AXValueCreate(value_type: u32, value: *const c_void) -> *mut c_void;
     fn AXValueGetValue(value: *const c_void, value_type: u32, value_ptr: *mut c_void) -> bool;
+
+    fn AXObserverCreate(
+        application: i32,
+        callback: AXObserverCallback,
+        out_observer: *mut AXObserverRef,
+    ) -> AXError;
+    fn AXObserverAddNotification(
+        observer: AXObserverRef,
+        element: AXUIElementRef,
+        notification: CFStringRef,
+        refcon: *mut c_void,
+    ) -> AXError;
+    fn AXObserverRemoveNotification(
+        observer: AXObserverRef,
+        element: AXUIElementRef,
+        notification: CFStringRef,
+    ) -> AXError;
+    fn AXObserverGetRunLoopSource(observer: AXObserverRef) -> *mut c_void;
 }
 
 const AX_VALUE_TYPE_CGPOINT: u32 = 1;
@@ -56,6 +90,20 @@ mod attr {
     pub const POSITION: &str = "AXPosition";
     pub const SIZE: &str = "AXSize";
     pub const MINIMIZED: &str = "AXMinimized";
+}
+
+pub mod notification {
+    pub const WINDOW_CREATED: &str = "AXWindowCreated";
+    pub const WINDOW_MOVED: &str = "AXWindowMoved";
+    pub const WINDOW_RESIZED: &str = "AXWindowResized";
+    pub const WINDOW_MINIATURIZED: &str = "AXWindowMiniaturized";
+    pub const WINDOW_DEMINIATURIZED: &str = "AXWindowDeminiaturized";
+    pub const FOCUSED_WINDOW_CHANGED: &str = "AXFocusedWindowChanged";
+    pub const UI_ELEMENT_DESTROYED: &str = "AXUIElementDestroyed";
+    pub const APPLICATION_ACTIVATED: &str = "AXApplicationActivated";
+    pub const APPLICATION_DEACTIVATED: &str = "AXApplicationDeactivated";
+    pub const APPLICATION_HIDDEN: &str = "AXApplicationHidden";
+    pub const APPLICATION_SHOWN: &str = "AXApplicationShown";
 }
 
 pub fn is_trusted() -> bool {
@@ -223,6 +271,67 @@ impl AXUIElement {
     pub fn focused_application(&self) -> Result<AXUIElement, AXError> {
         let value = self.get_attribute(attr::FOCUSED_APPLICATION)?;
         Ok(unsafe { AXUIElement::wrap_under_create_rule(value as AXUIElementRef) })
+    }
+}
+
+impl AXObserver {
+    pub fn new(pid: i32, callback: AXObserverCallback) -> Result<Self, AXError> {
+        let mut observer: AXObserverRef = ptr::null_mut();
+        let err = unsafe { AXObserverCreate(pid, callback, &mut observer) };
+        if err == AX_ERROR_SUCCESS && !observer.is_null() {
+            Ok(unsafe { Self::wrap_under_create_rule(observer) })
+        } else {
+            Err(err)
+        }
+    }
+
+    pub fn add_notification(
+        &self,
+        element: &AXUIElement,
+        notification: &str,
+        refcon: *mut c_void,
+    ) -> Result<(), AXError> {
+        let notif = CFString::new(notification);
+        let err = unsafe {
+            AXObserverAddNotification(
+                self.as_concrete_TypeRef(),
+                element.as_concrete_TypeRef(),
+                notif.as_concrete_TypeRef(),
+                refcon,
+            )
+        };
+        if err == AX_ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(err)
+        }
+    }
+
+    pub fn remove_notification(
+        &self,
+        element: &AXUIElement,
+        notification: &str,
+    ) -> Result<(), AXError> {
+        let notif = CFString::new(notification);
+        let err = unsafe {
+            AXObserverRemoveNotification(
+                self.as_concrete_TypeRef(),
+                element.as_concrete_TypeRef(),
+                notif.as_concrete_TypeRef(),
+            )
+        };
+        if err == AX_ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(err)
+        }
+    }
+
+    pub fn run_loop_source(&self) -> CFRunLoopSource {
+        unsafe {
+            let source = AXObserverGetRunLoopSource(self.as_concrete_TypeRef());
+            CFRunLoopSource::wrap_under_get_rule(source as *mut _)
+        }
     }
 }
 

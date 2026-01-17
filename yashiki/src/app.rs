@@ -1,14 +1,22 @@
-use crate::event::Command;
+use crate::event::{Command, Event};
 use crate::macos;
+use crate::macos::{ObserverManager, WorkspaceEvent, WorkspaceWatcher};
 use anyhow::Result;
 use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop};
+use objc2_foundation::MainThreadMarker;
+use std::cell::RefCell;
 use std::sync::mpsc as std_mpsc;
-use std::time::Duration;
 use tokio::sync::mpsc;
 
-pub struct App {
+struct RunLoopContext {
     cmd_rx: std_mpsc::Receiver<Command>,
+    observer_event_rx: std_mpsc::Receiver<Event>,
+    workspace_event_rx: std_mpsc::Receiver<WorkspaceEvent>,
+    event_tx: mpsc::Sender<Event>,
+    observer_manager: RefCell<ObserverManager>,
 }
+
+pub struct App {}
 
 impl App {
     pub fn run() -> Result<()> {
@@ -19,11 +27,13 @@ impl App {
         }
 
         // Channel: tokio -> main thread (via dispatch)
-        // We use std::sync::mpsc because dispatch callback needs 'static + Send
         let (cmd_tx, cmd_rx) = std_mpsc::channel::<Command>();
 
+        // Channel: observer -> main thread
+        let (observer_event_tx, observer_event_rx) = std_mpsc::channel::<Event>();
+
         // Channel: main thread -> tokio
-        let (event_tx, event_rx) = mpsc::channel::<crate::event::Event>(256);
+        let (event_tx, event_rx) = mpsc::channel::<Event>(256);
 
         // Spawn tokio runtime in separate thread
         std::thread::spawn(move || {
@@ -33,32 +43,14 @@ impl App {
             });
         });
 
-        let app = App { cmd_rx };
-        app.run_main_loop(event_tx);
+        let app = App {};
+        app.run_main_loop(cmd_rx, observer_event_tx, observer_event_rx, event_tx);
 
         Ok(())
     }
 
-    async fn run_async(
-        cmd_tx: std_mpsc::Sender<Command>,
-        mut event_rx: mpsc::Receiver<crate::event::Event>,
-    ) {
+    async fn run_async(_cmd_tx: std_mpsc::Sender<Command>, mut event_rx: mpsc::Receiver<Event>) {
         tracing::info!("Tokio runtime started");
-
-        // Test: send a command after 3 seconds
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(3)).await;
-            tracing::info!("Sending test command to move focused window");
-
-            let position = core_graphics::geometry::CGPoint::new(200.0, 200.0);
-            let cmd = Command::MoveFocusedWindow { position };
-
-            dispatch::Queue::main().exec_async(move || {
-                if let Err(e) = cmd_tx.send(cmd) {
-                    tracing::error!("Failed to send command: {}", e);
-                }
-            });
-        });
 
         // Process events from main thread
         while let Some(event) = event_rx.recv().await {
@@ -68,16 +60,37 @@ impl App {
         tracing::info!("Tokio runtime exiting");
     }
 
-    fn run_main_loop(self, _event_tx: mpsc::Sender<crate::event::Event>) {
+    fn run_main_loop(
+        self,
+        cmd_rx: std_mpsc::Receiver<Command>,
+        observer_event_tx: std_mpsc::Sender<Event>,
+        observer_event_rx: std_mpsc::Receiver<Event>,
+        event_tx: mpsc::Sender<Event>,
+    ) {
         tracing::info!("Starting main loop");
 
-        // Set up a timer to check for commands periodically
-        let cmd_rx = self.cmd_rx;
+        // Get MainThreadMarker - we're on the main thread
+        let mtm = MainThreadMarker::new().expect("Must be called from main thread");
 
-        let timer_context = Box::new(cmd_rx);
-        let mut context = core_foundation::runloop::CFRunLoopTimerContext {
+        // Start observer manager
+        let mut observer_manager = ObserverManager::new(observer_event_tx);
+        observer_manager.start();
+
+        // Start workspace watcher for app launch/terminate notifications
+        let (workspace_event_tx, workspace_event_rx) = std_mpsc::channel::<WorkspaceEvent>();
+        let _workspace_watcher = WorkspaceWatcher::new(workspace_event_tx, mtm);
+
+        // Set up a timer to check for commands and events periodically
+        let context = Box::new(RunLoopContext {
+            cmd_rx,
+            observer_event_rx,
+            workspace_event_rx,
+            event_tx,
+            observer_manager: RefCell::new(observer_manager),
+        });
+        let mut timer_context = core_foundation::runloop::CFRunLoopTimerContext {
             version: 0,
-            info: Box::into_raw(timer_context) as *mut _,
+            info: Box::into_raw(context) as *mut _,
             retain: None,
             release: None,
             copyDescription: None,
@@ -87,9 +100,10 @@ impl App {
             _timer: core_foundation::runloop::CFRunLoopTimerRef,
             info: *mut std::ffi::c_void,
         ) {
-            let cmd_rx = unsafe { &*(info as *const std_mpsc::Receiver<Command>) };
+            let ctx = unsafe { &*(info as *const RunLoopContext) };
 
-            while let Ok(cmd) = cmd_rx.try_recv() {
+            // Process commands from tokio
+            while let Ok(cmd) = ctx.cmd_rx.try_recv() {
                 tracing::debug!("Received command: {:?}", cmd);
                 match cmd {
                     Command::MoveFocusedWindow { position } => match macos::get_focused_window() {
@@ -115,6 +129,29 @@ impl App {
                     _ => {}
                 }
             }
+
+            // Process workspace events (app launch/terminate)
+            while let Ok(event) = ctx.workspace_event_rx.try_recv() {
+                match event {
+                    WorkspaceEvent::AppLaunched { pid } => {
+                        tracing::info!("App launched, adding observer for pid {}", pid);
+                        if let Err(e) = ctx.observer_manager.borrow_mut().add_observer(pid) {
+                            tracing::warn!("Failed to add observer for pid {}: {}", pid, e);
+                        }
+                    }
+                    WorkspaceEvent::AppTerminated { pid } => {
+                        tracing::info!("App terminated, removing observer for pid {}", pid);
+                        ctx.observer_manager.borrow_mut().remove_observer(pid);
+                    }
+                }
+            }
+
+            // Forward observer events to tokio
+            while let Ok(event) = ctx.observer_event_rx.try_recv() {
+                if ctx.event_tx.blocking_send(event).is_err() {
+                    tracing::error!("Failed to forward event to tokio");
+                }
+            }
         }
 
         let timer = unsafe {
@@ -124,7 +161,7 @@ impl App {
                 0,
                 0,
                 timer_callback,
-                &mut context,
+                &mut timer_context,
             )
         };
 
