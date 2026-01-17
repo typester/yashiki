@@ -355,18 +355,24 @@ fn handle_ipc_command(
             Response::Ok
         }
         Command::LayoutCommand { cmd, args } => {
-            let mut engine = layout_engine.borrow_mut();
-            if let Some(ref mut engine) = *engine {
-                match engine.send_command(cmd, args) {
-                    Ok(()) => Response::Ok,
-                    Err(e) => Response::Error {
-                        message: format!("Layout command failed: {}", e),
-                    },
+            let result = {
+                let mut engine = layout_engine.borrow_mut();
+                if let Some(ref mut engine) = *engine {
+                    match engine.send_command(cmd, args) {
+                        Ok(()) => Ok(()),
+                        Err(e) => Err(format!("Layout command failed: {}", e)),
+                    }
+                } else {
+                    Err("No layout engine available".to_string())
                 }
-            } else {
-                Response::Error {
-                    message: "No layout engine available".to_string(),
+            };
+            match result {
+                Ok(()) => {
+                    // Retile to apply layout changes
+                    do_retile(&state.borrow(), &mut layout_engine.borrow_mut());
+                    Response::Ok
                 }
+                Err(message) => Response::Error { message },
             }
         }
         Command::Retile => {

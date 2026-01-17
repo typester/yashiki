@@ -1,12 +1,13 @@
 use core_foundation::{
     array::CFArray, base::TCFType, dictionary::CFDictionary, number::CFNumber, string::CFString,
 };
-use core_graphics::display::{CGDisplay, CGGetActiveDisplayList, CGMainDisplayID};
-use core_graphics::geometry::CGRect;
+use core_graphics::display::{CGDisplay, CGMainDisplayID};
 use core_graphics::window::{
     kCGNullWindowID, kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly,
     CGWindowListCopyWindowInfo,
 };
+use objc2::MainThreadMarker;
+use objc2_app_kit::NSScreen;
 use std::collections::HashSet;
 
 pub type DisplayId = u32;
@@ -143,37 +144,47 @@ pub fn get_main_display_size() -> (u32, u32) {
 pub fn get_all_displays() -> Vec<DisplayInfo> {
     let main_display_id = unsafe { CGMainDisplayID() };
 
-    // Get count of active displays
-    let mut display_count: u32 = 0;
-    unsafe {
-        CGGetActiveDisplayList(0, std::ptr::null_mut(), &mut display_count);
-    }
+    // Get MainThreadMarker - this is safe because we're called from the main thread
+    let mtm = unsafe { MainThreadMarker::new_unchecked() };
 
-    if display_count == 0 {
-        return vec![];
-    }
+    // Use NSScreen to get visible frames (excluding menu bar and dock)
+    let screens = NSScreen::screens(mtm);
 
-    // Get all display IDs
-    let mut display_ids: Vec<u32> = vec![0; display_count as usize];
-    unsafe {
-        CGGetActiveDisplayList(display_count, display_ids.as_mut_ptr(), &mut display_count);
-    }
+    screens
+        .iter()
+        .filter_map(|screen| {
+            // Get CGDirectDisplayID from screen's deviceDescription
+            let display_id = get_display_id_for_screen(&screen)?;
+            let visible_frame = screen.visibleFrame();
 
-    display_ids
-        .into_iter()
-        .map(|id| {
-            let display = CGDisplay::new(id);
-            let bounds: CGRect = display.bounds();
-            DisplayInfo {
-                id,
+            // NSScreen uses bottom-left origin, convert to top-left
+            // visibleFrame.origin.y is distance from bottom of screen
+            let full_frame = screen.frame();
+            let top_left_y =
+                full_frame.size.height - visible_frame.origin.y - visible_frame.size.height;
+
+            Some(DisplayInfo {
+                id: display_id,
                 frame: Bounds {
-                    x: bounds.origin.x,
-                    y: bounds.origin.y,
-                    width: bounds.size.width,
-                    height: bounds.size.height,
+                    x: visible_frame.origin.x,
+                    y: top_left_y,
+                    width: visible_frame.size.width,
+                    height: visible_frame.size.height,
                 },
-                is_main: id == main_display_id,
-            }
+                is_main: display_id == main_display_id,
+            })
         })
         .collect()
+}
+
+fn get_display_id_for_screen(screen: &NSScreen) -> Option<DisplayId> {
+    use objc2_foundation::NSNumber;
+
+    let desc = screen.deviceDescription();
+    let key = objc2_foundation::ns_string!("NSScreenNumber");
+    let value = desc.objectForKey(key)?;
+
+    // The value is an NSNumber containing the CGDirectDisplayID
+    let number: &NSNumber = unsafe { &*(&*value as *const _ as *const NSNumber) };
+    Some(number.unsignedIntValue())
 }
