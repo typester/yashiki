@@ -69,11 +69,28 @@ LayoutResponse { windows: Vec<WindowGeometry> }
 - `macos/display.rs` - CGWindowList based window enumeration
   - `get_on_screen_windows()` - list on-screen windows
   - `get_running_app_pids()` - get PIDs of apps with windows
+- `macos/observer.rs` - AXObserver for window events
+  - `ObserverManager` - manages per-app observers
+  - Monitors: window created/destroyed, moved, resized, focused, miniaturized
+- `macos/workspace.rs` - NSWorkspace notifications
+  - `WorkspaceWatcher` - app launch/terminate events
+- `app.rs` - Main event loop
+  - CFRunLoop + tokio runtime integration
+  - Timer-based event polling (50ms)
+  - Command/Event channel setup
+- `core/state.rs` - Window state management
+  - `State::sync_all()` - initial window sync from CGWindowList
+  - `State::sync_pid()` - per-process window sync
+  - `State::handle_event()` - event-driven state updates
+- `core/window.rs` - Window representation
+  - `Window` struct with id, pid, tags, title, app_name, frame, is_minimized
+  - `Window::from_window_info()` - conversion from CGWindowList data
+- `core/tag.rs` - Tag bitmask for workspace management
+- `event.rs` - Event/Command definitions
 
 ### Not Yet Implemented
-- Main event loop (CFRunLoop + tokio integration)
-- IPC server
-- Tag/workspace management
+- IPC server (Unix Domain Socket)
+- Tag/workspace switching logic
 - Layout engine communication
 - Config file parsing
 - Global hotkeys (CGEventTap)
