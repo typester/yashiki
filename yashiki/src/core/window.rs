@@ -3,6 +3,8 @@ use crate::macos::{Bounds, WindowInfo};
 
 pub type WindowId = u32;
 
+const OFFSCREEN_X: i32 = -10000;
+
 #[derive(Debug, Clone)]
 pub struct Window {
     pub id: WindowId,
@@ -11,6 +13,7 @@ pub struct Window {
     pub title: String,
     pub app_name: String,
     pub frame: Rect,
+    pub saved_frame: Option<Rect>,
     pub is_minimized: bool,
 }
 
@@ -23,9 +26,18 @@ impl Window {
             title: info.name.clone().unwrap_or_default(),
             app_name: info.owner_name.clone(),
             frame: Rect::from_bounds(&info.bounds),
+            saved_frame: None,
             is_minimized: false,
         }
     }
+
+    pub fn is_offscreen(&self) -> bool {
+        self.frame.x <= OFFSCREEN_X
+    }
+}
+
+pub fn offscreen_x() -> i32 {
+    OFFSCREEN_X
 }
 
 #[derive(Debug, Clone, Copy, Default)]

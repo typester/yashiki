@@ -1,10 +1,11 @@
-use crate::core::State;
+use crate::core::{State, WindowMove};
 use crate::event::Event;
 use crate::ipc::IpcServer;
 use crate::macos;
-use crate::macos::{ObserverManager, WorkspaceEvent, WorkspaceWatcher};
+use crate::macos::{AXUIElement, ObserverManager, WorkspaceEvent, WorkspaceWatcher};
 use anyhow::Result;
 use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop};
+use core_graphics::geometry::CGPoint;
 use objc2_foundation::MainThreadMarker;
 use std::cell::RefCell;
 use std::sync::mpsc as std_mpsc;
@@ -229,6 +230,26 @@ fn handle_ipc_command(state: &RefCell<State>, cmd: &Command) -> Response {
                 },
             }
         }
+        Command::ViewTag { tag } => {
+            let moves = state.borrow_mut().view_tag(*tag);
+            apply_window_moves(&moves);
+            Response::Ok
+        }
+        Command::ToggleViewTag { tag } => {
+            let moves = state.borrow_mut().toggle_view_tag(*tag);
+            apply_window_moves(&moves);
+            Response::Ok
+        }
+        Command::MoveToTag { tag } => {
+            let moves = state.borrow_mut().move_focused_to_tag(*tag);
+            apply_window_moves(&moves);
+            Response::Ok
+        }
+        Command::ToggleWindowTag { tag } => {
+            let moves = state.borrow_mut().toggle_focused_window_tag(*tag);
+            apply_window_moves(&moves);
+            Response::Ok
+        }
         Command::Quit => {
             tracing::info!("Quit command received");
             Response::Ok
@@ -237,6 +258,46 @@ fn handle_ipc_command(state: &RefCell<State>, cmd: &Command) -> Response {
             tracing::warn!("Unhandled command: {:?}", cmd);
             Response::Error {
                 message: "Command not yet implemented".to_string(),
+            }
+        }
+    }
+}
+
+fn apply_window_moves(moves: &[WindowMove]) {
+    // Group moves by PID to minimize AX calls
+    use std::collections::HashMap;
+    let mut by_pid: HashMap<i32, Vec<&WindowMove>> = HashMap::new();
+    for m in moves {
+        by_pid.entry(m.pid).or_default().push(m);
+    }
+
+    for (pid, pid_moves) in by_pid {
+        let app = AXUIElement::application(pid);
+        let windows = match app.windows() {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!("Failed to get windows for pid {}: {}", pid, e);
+                continue;
+            }
+        };
+
+        for m in pid_moves {
+            // Find the window to move - for now, just move all windows of this app
+            // In the future, we should match by position/size
+            for win in &windows {
+                let pos = CGPoint::new(m.x as f64, m.y as f64);
+                if let Err(e) = win.set_position(pos) {
+                    tracing::warn!(
+                        "Failed to move window (pid={}, target=({}, {})): {}",
+                        m.pid,
+                        m.x,
+                        m.y,
+                        e
+                    );
+                } else {
+                    tracing::debug!("Moved window (pid={}) to ({}, {})", m.pid, m.x, m.y);
+                    break;
+                }
             }
         }
     }

@@ -1,7 +1,15 @@
-use super::{Tag, Window, WindowId};
+use super::{offscreen_x, Rect, Tag, Window, WindowId};
 use crate::event::Event;
 use crate::macos::{get_focused_window, get_on_screen_windows, WindowInfo};
 use std::collections::{HashMap, HashSet};
+
+#[derive(Debug, Clone)]
+pub struct WindowMove {
+    pub window_id: WindowId,
+    pub pid: i32,
+    pub x: i32,
+    pub y: i32,
+}
 
 pub struct State {
     pub windows: HashMap<WindowId, Window>,
@@ -194,9 +202,117 @@ impl State {
         for info in window_infos {
             if let Some(window) = self.windows.get_mut(&info.window_id) {
                 window.title = info.name.clone().unwrap_or_default();
-                window.frame = super::Rect::from_bounds(&info.bounds);
+                window.frame = Rect::from_bounds(&info.bounds);
             }
         }
+    }
+
+    // Tag operations
+
+    pub fn view_tag(&mut self, tag: u32) -> Vec<WindowMove> {
+        let new_visible = Tag::new(tag);
+        if self.visible_tags == new_visible {
+            return vec![];
+        }
+        tracing::info!(
+            "View tag: {} -> {}",
+            self.visible_tags.mask(),
+            new_visible.mask()
+        );
+        self.visible_tags = new_visible;
+        self.compute_layout_changes()
+    }
+
+    pub fn toggle_view_tag(&mut self, tag: u32) -> Vec<WindowMove> {
+        let tag = Tag::new(tag);
+        let new_visible = self.visible_tags.toggle(tag);
+        // Don't allow empty visible tags
+        if new_visible.mask() == 0 {
+            return vec![];
+        }
+        tracing::info!(
+            "Toggle view tag: {} -> {}",
+            self.visible_tags.mask(),
+            new_visible.mask()
+        );
+        self.visible_tags = new_visible;
+        self.compute_layout_changes()
+    }
+
+    pub fn move_focused_to_tag(&mut self, tag: u32) -> Vec<WindowMove> {
+        let Some(focused_id) = self.focused else {
+            return vec![];
+        };
+        let new_tag = Tag::new(tag);
+        if let Some(window) = self.windows.get_mut(&focused_id) {
+            tracing::info!("Move window {} to tag {}", window.id, new_tag.mask());
+            window.tags = new_tag;
+        }
+        self.compute_layout_changes()
+    }
+
+    pub fn toggle_focused_window_tag(&mut self, tag: u32) -> Vec<WindowMove> {
+        let Some(focused_id) = self.focused else {
+            return vec![];
+        };
+        let tag = Tag::new(tag);
+        if let Some(window) = self.windows.get_mut(&focused_id) {
+            let new_tags = window.tags.toggle(tag);
+            // Don't allow empty tags
+            if new_tags.mask() == 0 {
+                return vec![];
+            }
+            tracing::info!(
+                "Toggle window {} tag: {} -> {}",
+                window.id,
+                window.tags.mask(),
+                new_tags.mask()
+            );
+            window.tags = new_tags;
+        }
+        self.compute_layout_changes()
+    }
+
+    fn compute_layout_changes(&mut self) -> Vec<WindowMove> {
+        let mut moves = Vec::new();
+
+        for window in self.windows.values_mut() {
+            let should_be_visible = window.tags.intersects(self.visible_tags);
+            let is_visible = !window.is_offscreen();
+
+            if should_be_visible && !is_visible {
+                // Window should be shown - restore from saved position
+                if let Some(saved) = window.saved_frame.take() {
+                    tracing::debug!("Showing window {} at ({}, {})", window.id, saved.x, saved.y);
+                    moves.push(WindowMove {
+                        window_id: window.id,
+                        pid: window.pid,
+                        x: saved.x,
+                        y: saved.y,
+                    });
+                    window.frame.x = saved.x;
+                    window.frame.y = saved.y;
+                }
+            } else if !should_be_visible && is_visible {
+                // Window should be hidden - save position and move offscreen
+                tracing::debug!(
+                    "Hiding window {} (was at ({}, {}))",
+                    window.id,
+                    window.frame.x,
+                    window.frame.y
+                );
+                window.saved_frame = Some(window.frame);
+                moves.push(WindowMove {
+                    window_id: window.id,
+                    pid: window.pid,
+                    x: offscreen_x(),
+                    y: window.frame.y,
+                });
+                window.frame.x = offscreen_x();
+            }
+        }
+
+        moves
     }
 }
 

@@ -91,14 +91,17 @@ LayoutResponse { windows: Vec<WindowGeometry> }
 - `ipc.rs` - IPC server (Unix Domain Socket)
   - `IpcServer` - listens on `/tmp/yashiki.sock`
   - JSON protocol (newline-delimited)
-  - Supported commands: `ListWindows`, `GetState`, `Quit`
+  - Supported commands: `ListWindows`, `GetState`, `ViewTag`, `ToggleViewTag`, `MoveToTag`, `ToggleWindowTag`, `Quit`
 - `yashiki-ipc/` - Shared protocol definitions
   - `Command` enum - IPC commands
   - `Response` enum - IPC responses
   - `WindowInfo`, `StateInfo` - query response types
+- Tag/workspace switching
+  - AeroSpace-style virtual workspaces (windows moved off-screen at x=-10000)
+  - `State::view_tag()`, `toggle_view_tag()`, `move_focused_to_tag()`, `toggle_focused_window_tag()`
+  - `Window::saved_frame` - stores original position when hidden
 
 ### Not Yet Implemented
-- Tag/workspace switching logic
 - Layout engine communication
 - Config file parsing
 - Global hotkeys (CGEventTap)
