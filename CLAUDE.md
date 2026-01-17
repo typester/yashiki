@@ -59,8 +59,42 @@ LayoutRequest { output_width, output_height, window_count, main_count, main_rati
 LayoutResponse { windows: Vec<WindowGeometry> }
 ```
 
+## Implementation Status
+
+### Completed
+- `macos/accessibility.rs` - AXUIElement FFI bindings
+  - `is_trusted()`, `is_trusted_with_prompt()` - permission check
+  - `AXUIElement::application(pid)`, `windows()`, `title()`, `position()`, `size()`
+  - `set_position()`, `set_size()` - window manipulation
+- `macos/display.rs` - CGWindowList based window enumeration
+  - `get_on_screen_windows()` - list on-screen windows
+  - `get_running_app_pids()` - get PIDs of apps with windows
+
+### Not Yet Implemented
+- Main event loop (CFRunLoop + tokio integration)
+- IPC server
+- Tag/workspace management
+- Layout engine communication
+- Config file parsing
+- Global hotkeys (CGEventTap)
+
+## Development Notes
+
+- Requires Accessibility permission (System Preferences → Privacy & Security → Accessibility)
+- During development, grant permission to the terminal (e.g., Ghostty)
+- Run with: `cargo run -p yashiki`
+
+## Dependencies
+
+Key crates:
+- `core-foundation` (0.10) - macOS Core Foundation bindings
+- `core-graphics` (0.25) - CGWindowList, display info
+- `tokio` - async runtime for IPC
+- `dispatch` - GCD for main thread communication
+
 ## Code Style
 
 - All code in English
 - Minimal comments - only where logic is non-obvious
 - No unnecessary comments explaining what the next line does
+- When adding dependencies, always use the latest version
