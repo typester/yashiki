@@ -6,6 +6,7 @@ pub enum Command {
     // Window operations
     FocusWindow { direction: Direction },
     SwapWindow { direction: Direction },
+    Zoom,
     CloseWindow,
     ToggleFloat,
 
@@ -32,6 +33,7 @@ pub enum Command {
     // Queries
     ListWindows,
     GetState,
+    FocusedWindow,
 
     // Control
     Quit,
@@ -63,6 +65,7 @@ pub enum Response {
     Windows { windows: Vec<WindowInfo> },
     State { state: StateInfo },
     Bindings { bindings: Vec<BindingInfo> },
+    WindowId { id: Option<u32> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

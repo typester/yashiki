@@ -8,6 +8,7 @@ struct LayoutState {
     inner_gap: u32,
     outer_gap: u32,
     smart_gaps: bool,
+    main_window_id: Option<u32>,
 }
 
 impl Default for LayoutState {
@@ -18,6 +19,7 @@ impl Default for LayoutState {
             inner_gap: 0,
             outer_gap: 0,
             smart_gaps: true,
+            main_window_id: None,
         }
     }
 }
@@ -67,6 +69,22 @@ fn handle_command(state: &mut LayoutState, cmd: &str, args: &[String]) -> Layout
             LayoutResult::Error {
                 message: "invalid ratio (must be 0.1-0.9)".to_string(),
             }
+        }
+        "inc-main-ratio" => {
+            let delta = args
+                .first()
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.05);
+            state.main_ratio = (state.main_ratio + delta).min(0.9);
+            LayoutResult::Ok
+        }
+        "dec-main-ratio" => {
+            let delta = args
+                .first()
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.05);
+            state.main_ratio = (state.main_ratio - delta).max(0.1);
+            LayoutResult::Ok
         }
         "inc-main-count" => {
             state.main_count = state.main_count.saturating_add(1);
@@ -157,6 +175,16 @@ fn handle_command(state: &mut LayoutState, cmd: &str, args: &[String]) -> Layout
                 message: "invalid value (use on/off)".to_string(),
             }
         }
+        "zoom" => {
+            if let Some(id) = args.first().and_then(|s| s.parse::<u32>().ok()) {
+                state.main_window_id = Some(id);
+                LayoutResult::Ok
+            } else {
+                LayoutResult::Error {
+                    message: "usage: zoom <window_id>".to_string(),
+                }
+            }
+        }
         _ => LayoutResult::Error {
             message: format!("unknown command: {}", cmd),
         },
@@ -172,6 +200,19 @@ fn generate_layout(
     if window_ids.is_empty() {
         return vec![];
     }
+
+    // Reorder windows so main_window_id is first (if present)
+    let window_ids: Vec<u32> = if let Some(main_id) = state.main_window_id {
+        if window_ids.contains(&main_id) {
+            let mut reordered = vec![main_id];
+            reordered.extend(window_ids.iter().filter(|&&id| id != main_id));
+            reordered
+        } else {
+            window_ids.to_vec()
+        }
+    } else {
+        window_ids.to_vec()
+    };
 
     let window_count = window_ids.len() as u32;
 

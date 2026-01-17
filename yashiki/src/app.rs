@@ -1,4 +1,4 @@
-use crate::core::{Display, State, WindowMove};
+use crate::core::{Rect, State, WindowMove};
 use crate::event::Event;
 use crate::ipc::IpcServer;
 use crate::layout::LayoutEngine;
@@ -124,6 +124,7 @@ impl App {
         // Initialize state with current windows
         let mut state = State::new();
         state.sync_all();
+        let state = RefCell::new(state);
 
         // Spawn layout engine
         let mut layout_engine = match LayoutEngine::spawn("tatami") {
@@ -154,7 +155,7 @@ impl App {
             workspace_event_rx,
             event_tx,
             observer_manager: RefCell::new(observer_manager),
-            state: RefCell::new(state),
+            state,
             layout_engine: RefCell::new(layout_engine),
             hotkey_manager: RefCell::new(hotkey_manager),
         });
@@ -219,7 +220,7 @@ impl App {
                 }
             }
             if needs_retile {
-                do_retile(&ctx.state.borrow(), &mut ctx.layout_engine.borrow_mut());
+                do_retile(&ctx.state, &mut ctx.layout_engine.borrow_mut());
             }
         }
 
@@ -322,11 +323,14 @@ fn handle_ipc_command(
                 },
             }
         }
+        Command::FocusedWindow => Response::WindowId {
+            id: state.borrow().focused,
+        },
         Command::ViewTag { tag } => {
             let moves = state.borrow_mut().view_tag(*tag);
             apply_window_moves(&moves);
             // Retile after switching tag to layout shown windows
-            do_retile(&state.borrow(), &mut layout_engine.borrow_mut());
+            do_retile(&state, &mut layout_engine.borrow_mut());
             // Focus a visible window if none is focused
             focus_visible_window_if_needed(&state);
             Response::Ok
@@ -335,7 +339,7 @@ fn handle_ipc_command(
             let moves = state.borrow_mut().toggle_view_tag(*tag);
             apply_window_moves(&moves);
             // Retile after toggling tag
-            do_retile(&state.borrow(), &mut layout_engine.borrow_mut());
+            do_retile(&state, &mut layout_engine.borrow_mut());
             // Focus a visible window if none is focused
             focus_visible_window_if_needed(&state);
             Response::Ok
@@ -343,7 +347,7 @@ fn handle_ipc_command(
         Command::ViewTagLast => {
             let moves = state.borrow_mut().view_tag_last();
             apply_window_moves(&moves);
-            do_retile(&state.borrow(), &mut layout_engine.borrow_mut());
+            do_retile(&state, &mut layout_engine.borrow_mut());
             focus_visible_window_if_needed(&state);
             Response::Ok
         }
@@ -351,7 +355,7 @@ fn handle_ipc_command(
             let moves = state.borrow_mut().move_focused_to_tag(*tag);
             apply_window_moves(&moves);
             // Retile after moving window to tag
-            do_retile(&state.borrow(), &mut layout_engine.borrow_mut());
+            do_retile(&state, &mut layout_engine.borrow_mut());
             // Focus a visible window since the moved window may now be hidden
             focus_visible_window_if_needed(&state);
             Response::Ok
@@ -360,7 +364,7 @@ fn handle_ipc_command(
             let moves = state.borrow_mut().toggle_focused_window_tag(*tag);
             apply_window_moves(&moves);
             // Retile after toggling window tag
-            do_retile(&state.borrow(), &mut layout_engine.borrow_mut());
+            do_retile(&state, &mut layout_engine.borrow_mut());
             // Focus a visible window if needed
             focus_visible_window_if_needed(&state);
             Response::Ok
@@ -380,14 +384,14 @@ fn handle_ipc_command(
             match result {
                 Ok(()) => {
                     // Retile to apply layout changes
-                    do_retile(&state.borrow(), &mut layout_engine.borrow_mut());
+                    do_retile(&state, &mut layout_engine.borrow_mut());
                     Response::Ok
                 }
                 Err(message) => Response::Error { message },
             }
         }
         Command::Retile => {
-            do_retile(&state.borrow(), &mut layout_engine.borrow_mut());
+            do_retile(&state, &mut layout_engine.borrow_mut());
             Response::Ok
         }
         Command::Bind { key, action } => {
@@ -424,6 +428,32 @@ fn handle_ipc_command(
             }
             Response::Ok
         }
+        Command::Zoom => {
+            let focused_id = state.borrow().focused;
+            if let Some(window_id) = focused_id {
+                let result = {
+                    let mut engine = layout_engine.borrow_mut();
+                    if let Some(ref mut engine) = *engine {
+                        engine.send_command("zoom", &[window_id.to_string()])
+                    } else {
+                        Err(anyhow::anyhow!("No layout engine"))
+                    }
+                };
+                match result {
+                    Ok(()) => {
+                        do_retile(&state, &mut layout_engine.borrow_mut());
+                        Response::Ok
+                    }
+                    Err(e) => Response::Error {
+                        message: e.to_string(),
+                    },
+                }
+            } else {
+                Response::Error {
+                    message: "No focused window".to_string(),
+                }
+            }
+        }
         Command::FocusOutput { direction } => {
             let result = state.borrow_mut().focus_output(*direction);
             if let Some((window_id, pid)) = result {
@@ -451,16 +481,8 @@ fn handle_ipc_command(
                     }
                 }
                 // Retile both displays
-                do_retile_display(
-                    &state.borrow(),
-                    &mut layout_engine.borrow_mut(),
-                    source_display,
-                );
-                do_retile_display(
-                    &state.borrow(),
-                    &mut layout_engine.borrow_mut(),
-                    target_display,
-                );
+                do_retile_display(state, &mut layout_engine.borrow_mut(), source_display);
+                do_retile_display(state, &mut layout_engine.borrow_mut(), target_display);
             }
             Response::Ok
         }
@@ -477,50 +499,69 @@ fn handle_ipc_command(
     }
 }
 
-fn do_retile(state: &State, layout_engine: &mut Option<LayoutEngine>) {
+fn do_retile(state: &RefCell<State>, layout_engine: &mut Option<LayoutEngine>) {
     let Some(ref mut engine) = layout_engine else {
         return;
     };
 
-    // Retile each display independently
-    for (display_id, display) in &state.displays {
-        retile_single_display(state, engine, *display_id, display);
+    // Collect display IDs first to avoid borrow issues
+    let display_ids: Vec<_> = state.borrow().displays.keys().copied().collect();
+
+    for display_id in display_ids {
+        retile_single_display(state, engine, display_id);
     }
 }
 
 fn do_retile_display(
-    state: &State,
+    state: &RefCell<State>,
     layout_engine: &mut Option<LayoutEngine>,
     display_id: crate::macos::DisplayId,
 ) {
     let Some(ref mut engine) = layout_engine else {
         return;
     };
-    let Some(display) = state.displays.get(&display_id) else {
+    if !state.borrow().displays.contains_key(&display_id) {
         return;
-    };
-    retile_single_display(state, engine, display_id, display);
+    }
+    retile_single_display(state, engine, display_id);
 }
 
 fn retile_single_display(
-    state: &State,
+    state: &RefCell<State>,
     engine: &mut LayoutEngine,
     display_id: crate::macos::DisplayId,
-    display: &Display,
 ) {
-    let visible_windows = state.visible_windows_on_display(display_id);
-
-    if visible_windows.is_empty() {
-        return;
-    }
-
-    let window_ids: Vec<u32> = visible_windows.iter().map(|w| w.id).collect();
-    let width = display.frame.width;
-    let height = display.frame.height;
+    // Get layout parameters with immutable borrow
+    let (window_ids, width, height, display_frame) = {
+        let state = state.borrow();
+        let Some(display) = state.displays.get(&display_id) else {
+            return;
+        };
+        let visible_windows = state.visible_windows_on_display(display_id);
+        if visible_windows.is_empty() {
+            return;
+        }
+        let window_ids: Vec<u32> = visible_windows.iter().map(|w| w.id).collect();
+        (
+            window_ids,
+            display.frame.width,
+            display.frame.height,
+            display.frame,
+        )
+    };
 
     match engine.request_layout(width, height, &window_ids) {
         Ok(geometries) => {
-            apply_layout_on_display(state, display, &geometries);
+            // Update window_order based on geometries order from layout engine
+            {
+                let mut state = state.borrow_mut();
+                if let Some(display) = state.displays.get_mut(&display_id) {
+                    display.window_order = geometries.iter().map(|g| g.id).collect();
+                }
+            }
+            // Apply layout
+            let state = state.borrow();
+            apply_layout_on_display(&state, display_id, &display_frame, &geometries);
         }
         Err(e) => {
             tracing::error!("Layout request failed for display {}: {}", display_id, e);
@@ -734,12 +775,17 @@ fn apply_window_moves(moves: &[WindowMove]) {
     }
 }
 
-fn apply_layout_on_display(state: &State, disp: &Display, geometries: &[WindowGeometry]) {
+fn apply_layout_on_display(
+    state: &State,
+    display_id: crate::macos::DisplayId,
+    frame: &Rect,
+    geometries: &[WindowGeometry],
+) {
     use std::collections::HashMap;
 
     // Display offset
-    let offset_x = disp.frame.x;
-    let offset_y = disp.frame.y;
+    let offset_x = frame.x;
+    let offset_y = frame.y;
 
     // Build a map of window_id -> (pid, geometry)
     let mut by_pid: HashMap<i32, Vec<(u32, &WindowGeometry)>> = HashMap::new();
@@ -800,7 +846,7 @@ fn apply_layout_on_display(state: &State, disp: &Display, geometries: &[WindowGe
                             "Applied layout to window {} (pid={}) on display {}: ({}, {}) {}x{}",
                             window_id,
                             pid,
-                            disp.id,
+                            display_id,
                             new_x,
                             new_y,
                             geom.width,

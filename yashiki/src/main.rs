@@ -65,6 +65,13 @@ fn run_cli(args: &[String]) -> Result<()> {
                 println!("{} -> {}", b.key, b.action);
             }
         }
+        Response::WindowId { id } => {
+            if let Some(id) = id {
+                println!("{}", id);
+            } else {
+                std::process::exit(1);
+            }
+        }
     }
 
     Ok(())
@@ -142,6 +149,7 @@ fn parse_command(args: &[String]) -> Result<Command> {
             let direction = parse_direction(&rest[0])?;
             Ok(Command::SwapWindow { direction })
         }
+        "zoom" => Ok(Command::Zoom),
         "focus-output" => {
             if rest.is_empty() {
                 bail!("Usage: yashiki focus-output <next|prev>");
@@ -168,6 +176,7 @@ fn parse_command(args: &[String]) -> Result<Command> {
         }
         "list-windows" => Ok(Command::ListWindows),
         "get-state" => Ok(Command::GetState),
+        "focused-window" => Ok(Command::FocusedWindow),
         "quit" => Ok(Command::Quit),
         _ => bail!("Unknown command: {}", cmd),
     }

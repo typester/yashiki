@@ -274,6 +274,7 @@ impl State {
 
         // Remove windows that no longer exist
         for id in current_ids.difference(&new_ids) {
+            self.remove_from_window_order(*id);
             self.windows.remove(id);
         }
 
@@ -282,6 +283,7 @@ impl State {
             if !self.windows.contains_key(&info.window_id) {
                 let display_id = self.find_display_for_bounds(&info.bounds);
                 let window = Window::from_window_info(info, self.default_tag, display_id);
+                self.add_to_window_order(window.id, display_id);
                 self.windows.insert(window.id, window);
             }
         }
@@ -655,19 +657,47 @@ impl State {
         moves
     }
 
-    /// Get windows visible on a specific display
+    /// Get windows visible on a specific display, sorted by window_order
     pub fn visible_windows_on_display(&self, display_id: DisplayId) -> Vec<&Window> {
         let Some(display) = self.displays.get(&display_id) else {
             return vec![];
         };
-        self.windows
+        let mut windows: Vec<&Window> = self
+            .windows
             .values()
             .filter(|w| {
                 w.display_id == display_id
                     && w.tags.intersects(display.visible_tags)
                     && !w.is_hidden()
             })
-            .collect()
+            .collect();
+
+        // Sort by window_order (windows not in order go to end, sorted by ID)
+        windows.sort_by_key(|w| {
+            display
+                .window_order
+                .iter()
+                .position(|&id| id == w.id)
+                .map(|p| (0, p))
+                .unwrap_or((1, w.id as usize))
+        });
+        windows
+    }
+
+    /// Add window to display's window_order if not present
+    fn add_to_window_order(&mut self, window_id: WindowId, display_id: DisplayId) {
+        if let Some(display) = self.displays.get_mut(&display_id) {
+            if !display.window_order.contains(&window_id) {
+                display.window_order.push(window_id);
+            }
+        }
+    }
+
+    /// Remove window from all display window_orders
+    fn remove_from_window_order(&mut self, window_id: WindowId) {
+        for display in self.displays.values_mut() {
+            display.window_order.retain(|&id| id != window_id);
+        }
     }
 }
 

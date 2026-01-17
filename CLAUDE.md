@@ -117,7 +117,8 @@ yashiki bind alt-shift-tab focus-window prev
 yashiki bind alt-return retile
 yashiki bind alt-comma layout-cmd inc-main-count
 yashiki bind alt-period layout-cmd dec-main-count
-yashiki bind alt-h layout-cmd set-main-ratio 0.5
+yashiki bind alt-h layout-cmd dec-main-ratio
+yashiki bind alt-l layout-cmd inc-main-ratio
 yashiki bind alt-o focus-output next
 yashiki bind alt-shift-o send-to-output next
 
@@ -161,7 +162,8 @@ yashiki layout-cmd set-smart-gaps off
 - Master-stack layout
 - Internal state: main_count, main_ratio, inner_gap, outer_gap, smart_gaps
 - Commands:
-  - `set-main-ratio <0.1-0.9>`, `inc-main-count`, `dec-main-count`, `set-main-count <n>`
+  - `set-main-ratio <0.1-0.9>`, `inc-main-ratio [delta]`, `dec-main-ratio [delta]` (default delta: 0.05)
+  - `inc-main-count`, `dec-main-count`, `set-main-count <n>`
   - `set-inner-gap <px>`, `set-outer-gap <px>` - gap between windows / screen edges
   - `inc-inner-gap [delta]`, `dec-inner-gap [delta]`, `inc-outer-gap [delta]`, `dec-outer-gap [delta]`
   - `set-smart-gaps <on|off>` - disable gaps when only one window (default: on)

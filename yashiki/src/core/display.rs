@@ -1,4 +1,4 @@
-use super::{Rect, Tag};
+use super::{Rect, Tag, WindowId};
 use crate::macos::DisplayId;
 
 #[derive(Debug, Clone)]
@@ -7,6 +7,7 @@ pub struct Display {
     pub frame: Rect,
     pub visible_tags: Tag,
     pub previous_visible_tags: Tag,
+    pub window_order: Vec<WindowId>,
 }
 
 impl Display {
@@ -16,6 +17,7 @@ impl Display {
             frame,
             visible_tags: Tag::new(1),
             previous_visible_tags: Tag::new(1),
+            window_order: Vec::new(),
         }
     }
 }
