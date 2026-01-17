@@ -5,6 +5,7 @@ mod ipc;
 mod layout;
 mod macos;
 mod pid;
+mod platform;
 
 use anyhow::{bail, Result};
 use argh::FromArgs;

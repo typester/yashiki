@@ -335,3 +335,173 @@ fn key_code_to_str(code: u16) -> &'static str {
         _ => "unknown",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_simple_key() {
+        let hotkey = parse_hotkey("a").unwrap();
+        assert_eq!(hotkey.key_code, 0x00);
+        assert!(!hotkey.modifiers.cmd);
+        assert!(!hotkey.modifiers.alt);
+        assert!(!hotkey.modifiers.ctrl);
+        assert!(!hotkey.modifiers.shift);
+    }
+
+    #[test]
+    fn test_parse_with_alt_modifier() {
+        let hotkey = parse_hotkey("alt-1").unwrap();
+        assert_eq!(hotkey.key_code, 0x12); // key code for 1
+        assert!(hotkey.modifiers.alt);
+        assert!(!hotkey.modifiers.cmd);
+        assert!(!hotkey.modifiers.ctrl);
+        assert!(!hotkey.modifiers.shift);
+    }
+
+    #[test]
+    fn test_parse_multiple_modifiers() {
+        let hotkey = parse_hotkey("cmd-shift-a").unwrap();
+        assert_eq!(hotkey.key_code, 0x00);
+        assert!(hotkey.modifiers.cmd);
+        assert!(hotkey.modifiers.shift);
+        assert!(!hotkey.modifiers.alt);
+        assert!(!hotkey.modifiers.ctrl);
+    }
+
+    #[test]
+    fn test_parse_all_modifiers() {
+        let hotkey = parse_hotkey("cmd-alt-ctrl-shift-space").unwrap();
+        assert_eq!(hotkey.key_code, 0x31); // space
+        assert!(hotkey.modifiers.cmd);
+        assert!(hotkey.modifiers.alt);
+        assert!(hotkey.modifiers.ctrl);
+        assert!(hotkey.modifiers.shift);
+    }
+
+    #[test]
+    fn test_parse_modifier_aliases() {
+        // super = cmd
+        let h1 = parse_hotkey("super-a").unwrap();
+        assert!(h1.modifiers.cmd);
+
+        // command = cmd
+        let h2 = parse_hotkey("command-a").unwrap();
+        assert!(h2.modifiers.cmd);
+
+        // opt = alt
+        let h3 = parse_hotkey("opt-a").unwrap();
+        assert!(h3.modifiers.alt);
+
+        // option = alt
+        let h4 = parse_hotkey("option-a").unwrap();
+        assert!(h4.modifiers.alt);
+
+        // control = ctrl
+        let h5 = parse_hotkey("control-a").unwrap();
+        assert!(h5.modifiers.ctrl);
+    }
+
+    #[test]
+    fn test_parse_case_insensitive() {
+        let h1 = parse_hotkey("ALT-A").unwrap();
+        assert!(h1.modifiers.alt);
+        assert_eq!(h1.key_code, 0x00);
+
+        let h2 = parse_hotkey("Alt-Return").unwrap();
+        assert!(h2.modifiers.alt);
+        assert_eq!(h2.key_code, 0x24);
+    }
+
+    #[test]
+    fn test_parse_special_keys() {
+        assert_eq!(parse_hotkey("return").unwrap().key_code, 0x24);
+        assert_eq!(parse_hotkey("enter").unwrap().key_code, 0x24);
+        assert_eq!(parse_hotkey("tab").unwrap().key_code, 0x30);
+        assert_eq!(parse_hotkey("space").unwrap().key_code, 0x31);
+        assert_eq!(parse_hotkey("escape").unwrap().key_code, 0x35);
+        assert_eq!(parse_hotkey("esc").unwrap().key_code, 0x35);
+        assert_eq!(parse_hotkey("delete").unwrap().key_code, 0x33);
+        assert_eq!(parse_hotkey("backspace").unwrap().key_code, 0x33);
+    }
+
+    #[test]
+    fn test_parse_arrow_keys() {
+        assert_eq!(parse_hotkey("left").unwrap().key_code, 0x7B);
+        assert_eq!(parse_hotkey("right").unwrap().key_code, 0x7C);
+        assert_eq!(parse_hotkey("up").unwrap().key_code, 0x7E);
+        assert_eq!(parse_hotkey("down").unwrap().key_code, 0x7D);
+    }
+
+    #[test]
+    fn test_parse_function_keys() {
+        assert_eq!(parse_hotkey("f1").unwrap().key_code, 0x7A);
+        assert_eq!(parse_hotkey("f12").unwrap().key_code, 0x6F);
+    }
+
+    #[test]
+    fn test_parse_error_unknown_key() {
+        assert!(parse_hotkey("alt-unknown").is_err());
+    }
+
+    #[test]
+    fn test_parse_error_unknown_modifier() {
+        assert!(parse_hotkey("meta-a").is_err());
+    }
+
+    #[test]
+    fn test_format_hotkey_simple() {
+        let hotkey = Hotkey {
+            key_code: 0x00,
+            modifiers: Modifiers::default(),
+        };
+        assert_eq!(format_hotkey(&hotkey), "a");
+    }
+
+    #[test]
+    fn test_format_hotkey_with_modifiers() {
+        let hotkey = Hotkey {
+            key_code: 0x12, // 1
+            modifiers: Modifiers {
+                cmd: false,
+                alt: true,
+                ctrl: false,
+                shift: false,
+            },
+        };
+        assert_eq!(format_hotkey(&hotkey), "alt-1");
+    }
+
+    #[test]
+    fn test_format_hotkey_all_modifiers() {
+        let hotkey = Hotkey {
+            key_code: 0x31, // space
+            modifiers: Modifiers {
+                cmd: true,
+                alt: true,
+                ctrl: true,
+                shift: true,
+            },
+        };
+        assert_eq!(format_hotkey(&hotkey), "cmd-alt-ctrl-shift-space");
+    }
+
+    #[test]
+    fn test_parse_format_roundtrip() {
+        let inputs = [
+            "a",
+            "alt-1",
+            "cmd-shift-a",
+            "ctrl-f1",
+            "cmd-alt-ctrl-shift-space",
+        ];
+
+        for input in inputs {
+            let hotkey = parse_hotkey(input).unwrap();
+            let formatted = format_hotkey(&hotkey);
+            let reparsed = parse_hotkey(&formatted).unwrap();
+            assert_eq!(hotkey, reparsed, "Roundtrip failed for: {}", input);
+        }
+    }
+}

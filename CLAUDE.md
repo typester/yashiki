@@ -256,3 +256,87 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
 - If focused window is hidden (on different tag), yashiki switches to that window's tag
 - Unlike Wayland compositors, macOS cannot prevent external focus changes
 - This ensures the focused window is always visible
+
+## Testing
+
+### Current Test Coverage (54 tests)
+
+Run tests: `cargo test --all`
+
+**Tested modules:**
+- `core/tag.rs` - Tag bitmask operations (9 tests)
+- `macos/hotkey.rs` - `parse_hotkey()`, `format_hotkey()` (15 tests)
+- `yashiki-ipc` - Command/Response/LayoutMessage serialization (17 tests)
+- `core/state.rs` - State management with MockWindowSystem (13 tests)
+
+### Platform Abstraction Layer
+
+`platform.rs` provides `WindowSystem` trait for testability:
+
+```rust
+pub trait WindowSystem {
+    fn get_on_screen_windows(&self) -> Vec<WindowInfo>;
+    fn get_all_displays(&self) -> Vec<DisplayInfo>;
+    fn get_focused_window(&self) -> Option<FocusedWindowInfo>;
+}
+```
+
+- `MacOSWindowSystem` - Production implementation (wraps macos/ module)
+- `MockWindowSystem` - Test implementation (`#[cfg(test)]` only)
+
+State methods now take `WindowSystem` as parameter:
+- `state.sync_all(&window_system)`
+- `state.sync_pid(&window_system, pid)`
+- `state.handle_event(&window_system, &event)`
+
+### TODO: Phase 4 - Effect Pattern (Not Yet Implemented)
+
+Goal: Separate `handle_ipc_command()` (~300 lines in app.rs) into pure computation and side effects.
+
+**Current architecture (tightly coupled):**
+```rust
+fn handle_ipc_command(...) -> Response {
+    let moves = state.borrow_mut().view_tag(tag);
+    apply_window_moves(&moves);  // ← Direct macOS API call
+    do_retile(...);              // ← More side effects
+    Response::Ok
+}
+```
+
+**Target architecture (Effect pattern):**
+```rust
+// Pure function - fully testable
+fn process_command(state: &mut State, cmd: Command) -> (Response, Vec<Effect>) {
+    match cmd {
+        Command::ViewTag(tag) => {
+            state.view_tag(tag);
+            let moves = state.compute_layout_changes(...);
+            (Response::Ok, vec![Effect::ApplyWindowMoves(moves), Effect::Retile])
+        }
+        ...
+    }
+}
+
+// Side effects - separated
+enum Effect {
+    ApplyWindowMoves(Vec<WindowMove>),
+    ApplyLayout { display_id: DisplayId, geometries: Vec<WindowGeometry> },
+    FocusWindow { pid: i32, window_id: u32 },
+    ActivateApp { pid: i32 },
+    SendLayoutCommand { cmd: String, args: Vec<String> },
+    ExecCommand(String),
+}
+
+// Executor - can be mocked
+fn execute_effects<M: WindowManipulator>(effects: Vec<Effect>, manipulator: &M) { ... }
+```
+
+**Benefits:**
+- `process_command()` becomes a pure function, fully testable
+- Command handling logic can be tested without macOS APIs
+- Effects can be inspected/verified in tests
+
+**Files to modify:**
+- New: `effect.rs` (Effect enum definition)
+- Modify: `app.rs` (split handle_ipc_command)
+- New: `platform.rs` additions (WindowManipulator trait)

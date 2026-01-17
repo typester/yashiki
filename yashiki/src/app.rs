@@ -8,6 +8,7 @@ use crate::macos::{
     WorkspaceWatcher,
 };
 use crate::pid;
+use crate::platform::MacOSWindowSystem;
 use anyhow::Result;
 use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop};
 use core_graphics::geometry::{CGPoint, CGSize};
@@ -29,6 +30,7 @@ struct RunLoopContext {
     state: RefCell<State>,
     layout_engine: RefCell<Option<LayoutEngine>>,
     hotkey_manager: RefCell<HotkeyManager>,
+    window_system: MacOSWindowSystem,
 }
 
 pub struct App {}
@@ -136,8 +138,9 @@ impl App {
         let _workspace_watcher = WorkspaceWatcher::new(workspace_event_tx, mtm);
 
         // Initialize state with current windows
+        let window_system = MacOSWindowSystem::default();
         let mut state = State::new();
-        state.sync_all();
+        state.sync_all(&window_system);
         let state = RefCell::new(state);
 
         // Spawn layout engine
@@ -172,6 +175,7 @@ impl App {
             state,
             layout_engine: RefCell::new(layout_engine),
             hotkey_manager: RefCell::new(hotkey_manager),
+            window_system,
         });
         let mut timer_context = core_foundation::runloop::CFRunLoopTimerContext {
             version: 0,
@@ -220,7 +224,7 @@ impl App {
                         tracing::info!("App terminated, removing observer for pid {}", pid);
                         ctx.observer_manager.borrow_mut().remove_observer(pid);
                         // Remove windows belonging to this PID from state
-                        if ctx.state.borrow_mut().sync_pid(pid) {
+                        if ctx.state.borrow_mut().sync_pid(&ctx.window_system, pid) {
                             do_retile(&ctx.state, &mut ctx.layout_engine.borrow_mut());
                         }
                     }
@@ -235,7 +239,11 @@ impl App {
                     Event::FocusedWindowChanged { .. } | Event::ApplicationActivated { .. }
                 );
 
-                if ctx.state.borrow_mut().handle_event(&event) {
+                if ctx
+                    .state
+                    .borrow_mut()
+                    .handle_event(&ctx.window_system, &event)
+                {
                     needs_retile = true;
                 }
 

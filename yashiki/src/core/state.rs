@@ -1,6 +1,7 @@
 use super::{Display, Rect, Tag, Window, WindowId};
 use crate::event::Event;
-use crate::macos::{get_all_displays, get_focused_window, get_on_screen_windows, DisplayId};
+use crate::macos::DisplayId;
+use crate::platform::WindowSystem;
 use std::collections::{HashMap, HashSet};
 use yashiki_ipc::{Direction, OutputDirection};
 
@@ -40,9 +41,9 @@ impl State {
             .unwrap_or(Tag::new(1))
     }
 
-    pub fn sync_all(&mut self) {
+    pub fn sync_all<W: WindowSystem>(&mut self, ws: &W) {
         // Sync displays
-        let display_infos = get_all_displays();
+        let display_infos = ws.get_all_displays();
         for info in &display_infos {
             if !self.displays.contains_key(&info.id) {
                 let display = Display::new(info.id, Rect::from_bounds(&info.frame));
@@ -60,9 +61,9 @@ impl State {
         self.displays.retain(|id, _| current_ids.contains(id));
 
         // Sync windows
-        let window_infos = get_on_screen_windows();
+        let window_infos = ws.get_on_screen_windows();
         self.sync_with_window_infos(&window_infos);
-        self.sync_focused_window();
+        self.sync_focused_window(ws);
 
         tracing::info!(
             "State initialized with {} displays, {} windows",
@@ -83,29 +84,32 @@ impl State {
         }
     }
 
-    pub fn sync_focused_window(&mut self) {
-        self.sync_focused_window_with_hint(None);
+    pub fn sync_focused_window<W: WindowSystem>(&mut self, ws: &W) {
+        self.sync_focused_window_with_hint(ws, None);
     }
 
     /// Sync focused window, with optional PID hint for fallback when accessibility API fails
     /// (common with Electron apps like Microsoft Teams)
-    pub fn sync_focused_window_with_hint(&mut self, pid_hint: Option<i32>) {
+    pub fn sync_focused_window_with_hint<W: WindowSystem>(
+        &mut self,
+        ws: &W,
+        pid_hint: Option<i32>,
+    ) {
         // Try the normal accessibility API first
-        if let Ok(focused_window) = get_focused_window() {
-            if let Some(window_id) = focused_window.window_id() {
-                if let Some(window) = self.windows.get(&window_id) {
-                    let display_id = window.display_id;
-                    self.set_focused(Some(window_id));
-                    if self.focused_display != display_id {
-                        tracing::info!(
-                            "Focused display changed: {} -> {}",
-                            self.focused_display,
-                            display_id
-                        );
-                        self.focused_display = display_id;
-                    }
-                    return;
+        if let Some(focused_info) = ws.get_focused_window() {
+            let window_id = focused_info.window_id;
+            if let Some(window) = self.windows.get(&window_id) {
+                let display_id = window.display_id;
+                self.set_focused(Some(window_id));
+                if self.focused_display != display_id {
+                    tracing::info!(
+                        "Focused display changed: {} -> {}",
+                        self.focused_display,
+                        display_id
+                    );
+                    self.focused_display = display_id;
                 }
+                return;
             }
         }
 
@@ -139,8 +143,8 @@ impl State {
     }
 
     /// Sync windows for a specific PID. Returns true if window count changed.
-    pub fn sync_pid(&mut self, pid: i32) -> bool {
-        let window_infos = get_on_screen_windows();
+    pub fn sync_pid<W: WindowSystem>(&mut self, ws: &W, pid: i32) -> bool {
+        let window_infos = ws.get_on_screen_windows();
         let pid_window_infos: Vec<_> = window_infos.iter().filter(|w| w.pid == pid).collect();
 
         let current_ids: HashSet<WindowId> = self
@@ -243,22 +247,24 @@ impl State {
     }
 
     /// Handle an event. Returns true if window count changed (needs retile).
-    pub fn handle_event(&mut self, event: &Event) -> bool {
+    pub fn handle_event<W: WindowSystem>(&mut self, ws: &W, event: &Event) -> bool {
         match event {
-            Event::WindowCreated { pid } | Event::WindowDestroyed { pid } => self.sync_pid(*pid),
+            Event::WindowCreated { pid } | Event::WindowDestroyed { pid } => {
+                self.sync_pid(ws, *pid)
+            }
             Event::WindowMoved { pid }
             | Event::WindowResized { pid }
             | Event::WindowMiniaturized { pid }
             | Event::WindowDeminiaturized { pid } => {
-                self.sync_pid(*pid);
+                self.sync_pid(ws, *pid);
                 false
             }
             Event::FocusedWindowChanged { .. } => {
-                self.sync_focused_window();
+                self.sync_focused_window(ws);
                 false
             }
             Event::ApplicationActivated { pid } => {
-                self.sync_focused_window_with_hint(Some(*pid));
+                self.sync_focused_window_with_hint(ws, Some(*pid));
                 false
             }
             Event::ApplicationDeactivated { .. }
@@ -710,5 +716,240 @@ impl State {
 impl Default for State {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::mock::{create_test_display, create_test_window, MockWindowSystem};
+
+    fn setup_mock_system() -> MockWindowSystem {
+        MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 0.0, 0.0, 960.0, 1080.0),
+                create_test_window(101, 1001, "Terminal", 960.0, 0.0, 960.0, 1080.0),
+                create_test_window(102, 1002, "VSCode", 0.0, 0.0, 960.0, 540.0),
+            ])
+            .with_focused(Some(100))
+    }
+
+    #[test]
+    fn test_sync_all_initializes_state() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        assert_eq!(state.windows.len(), 3);
+        assert_eq!(state.displays.len(), 1);
+        assert_eq!(state.focused, Some(100));
+        assert_eq!(state.focused_display, 1);
+    }
+
+    #[test]
+    fn test_view_tag_switches_tags() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Initial visible tag is 1
+        assert_eq!(state.visible_tags().mask(), 0b1);
+
+        // Switch to tag 2
+        let moves = state.view_tag(2);
+        assert_eq!(state.visible_tags().mask(), 0b10);
+
+        // All windows should be hidden (moved off-screen)
+        assert_eq!(moves.len(), 3);
+    }
+
+    #[test]
+    fn test_view_tag_last_toggles_back() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        state.view_tag(2);
+        assert_eq!(state.visible_tags().mask(), 0b10);
+
+        state.view_tag_last();
+        assert_eq!(state.visible_tags().mask(), 0b1);
+    }
+
+    #[test]
+    fn test_toggle_view_tag() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Toggle tag 2 on (so visible = tag 1 | tag 2)
+        state.toggle_view_tag(2);
+        assert_eq!(state.visible_tags().mask(), 0b11);
+
+        // Toggle tag 1 off (so visible = tag 2 only)
+        state.toggle_view_tag(1);
+        assert_eq!(state.visible_tags().mask(), 0b10);
+    }
+
+    #[test]
+    fn test_toggle_view_tag_prevents_empty() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Try to toggle off the only visible tag - should do nothing
+        let moves = state.toggle_view_tag(1);
+        assert_eq!(state.visible_tags().mask(), 0b1);
+        assert!(moves.is_empty());
+    }
+
+    #[test]
+    fn test_move_focused_to_tag() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Move focused window (100) to tag 2
+        let moves = state.move_focused_to_tag(2);
+
+        // Window 100 should now have tag 2
+        assert_eq!(state.windows.get(&100).unwrap().tags.mask(), 0b10);
+
+        // Window should be hidden (moved off-screen) since tag 2 is not visible
+        assert!(!moves.is_empty());
+    }
+
+    #[test]
+    fn test_focus_window_next() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Focus next from window 100
+        let result = state.focus_window(Direction::Next);
+        assert!(result.is_some());
+
+        let (window_id, _pid) = result.unwrap();
+        // Should cycle to next window (sorted by ID)
+        assert_eq!(window_id, 101);
+    }
+
+    #[test]
+    fn test_focus_window_prev() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Focus prev from window 100 should wrap around
+        let result = state.focus_window(Direction::Prev);
+        assert!(result.is_some());
+
+        let (window_id, _pid) = result.unwrap();
+        // Should wrap around to last window
+        assert_eq!(window_id, 102);
+    }
+
+    #[test]
+    fn test_focus_window_directional() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Focus right from window 100 (at 0,0) should find window 101 (at 960,0)
+        let result = state.focus_window(Direction::Right);
+        assert!(result.is_some());
+
+        let (window_id, _pid) = result.unwrap();
+        assert_eq!(window_id, 101);
+    }
+
+    #[test]
+    fn test_multi_display_focus_output() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        assert_eq!(state.focused_display, 1);
+
+        // Focus next output
+        let result = state.focus_output(OutputDirection::Next);
+        assert!(result.is_some());
+        assert_eq!(state.focused_display, 2);
+
+        // Should return window on display 2
+        let (window_id, _) = result.unwrap();
+        assert_eq!(window_id, 101);
+    }
+
+    #[test]
+    fn test_sync_pid_adds_new_windows() {
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 0.0, 0.0, 800.0, 600.0,
+            )]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        assert_eq!(state.windows.len(), 1);
+
+        // Add a new window for PID 1000
+        ws.add_window(create_test_window(
+            101, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+        ));
+
+        let changed = state.sync_pid(&ws, 1000);
+        assert!(changed);
+        assert_eq!(state.windows.len(), 2);
+    }
+
+    #[test]
+    fn test_sync_pid_removes_closed_windows() {
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 0.0, 0.0, 800.0, 600.0),
+                create_test_window(101, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+            ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        assert_eq!(state.windows.len(), 2);
+
+        // Remove window 101
+        ws.remove_window(101);
+
+        let changed = state.sync_pid(&ws, 1000);
+        assert!(changed);
+        assert_eq!(state.windows.len(), 1);
+        assert!(state.windows.contains_key(&100));
+        assert!(!state.windows.contains_key(&101));
+    }
+
+    #[test]
+    fn test_visible_windows_on_display() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        let visible = state.visible_windows_on_display(1);
+        assert_eq!(visible.len(), 3);
+
+        // Move one window to tag 2
+        state.move_focused_to_tag(2);
+
+        let visible = state.visible_windows_on_display(1);
+        assert_eq!(visible.len(), 2);
     }
 }
