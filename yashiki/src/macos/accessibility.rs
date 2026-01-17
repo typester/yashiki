@@ -227,7 +227,23 @@ impl AXUIElement {
 }
 
 pub fn get_focused_window() -> Result<AXUIElement, AXError> {
+    // Warm up the accessibility system by calling CGWindowList first.
+    // Without this, AXFocusedApplication may fail with -25204 (kAXErrorCannotComplete).
+    let _ = super::display::get_on_screen_windows();
+
     let system = AXUIElement::system_wide();
-    let app = system.focused_application()?;
-    app.focused_window()
+    let app = match system.focused_application() {
+        Ok(app) => app,
+        Err(e) => {
+            tracing::error!("focused_application failed: {}", e);
+            return Err(e);
+        }
+    };
+    match app.focused_window() {
+        Ok(win) => Ok(win),
+        Err(e) => {
+            tracing::error!("focused_window failed: {}", e);
+            Err(e)
+        }
+    }
 }
