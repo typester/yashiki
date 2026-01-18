@@ -432,11 +432,23 @@ fn run_init_script() {
     // Small delay to ensure IPC server is ready
     std::thread::sleep(std::time::Duration::from_millis(100));
 
+    // Add yashiki's directory to PATH so init script can use `yashiki` command
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+
+    let mut cmd = std::process::Command::new(&init_script);
+    cmd.current_dir(&config_dir);
+
+    if let Some(exe_dir) = &exe_dir {
+        let path = std::env::var("PATH").unwrap_or_default();
+        let new_path = format!("{}:{}", exe_dir.display(), path);
+        cmd.env("PATH", new_path);
+        tracing::debug!("Added {:?} to PATH for init script", exe_dir);
+    }
+
     let start = std::time::Instant::now();
-    match std::process::Command::new(&init_script)
-        .current_dir(&config_dir)
-        .status()
-    {
+    match cmd.status() {
         Ok(status) => {
             let elapsed = start.elapsed();
             if status.success() {
