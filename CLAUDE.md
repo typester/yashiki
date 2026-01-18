@@ -120,6 +120,8 @@ yashiki window-toggle-tag 2       # Toggle tag 2 on focused window
 yashiki window-focus next         # Focus next window
 yashiki window-focus prev         # Focus previous window
 yashiki window-focus left         # Focus window to the left
+yashiki window-swap next          # Swap with next window (not yet implemented)
+yashiki focused-window            # Get focused window ID
 yashiki output-focus next         # Focus next display
 yashiki output-focus prev         # Focus previous display
 yashiki output-send next          # Move focused window to next display
@@ -258,7 +260,7 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
   - `set-orientation <horizontal|h|vertical|v>`, `toggle-orientation`
 
 ### Not Yet Implemented
-- `WindowSwap` command (swap positions with window in direction)
+- `WindowSwap` command - CLI parsing done, but handler not implemented
 - `WindowClose` / `WindowToggleFloat`
 
 ## Development Notes
@@ -268,6 +270,53 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
 - Run daemon: `RUST_LOG=info cargo run -p yashiki -- start`
 - Run CLI: `cargo run -p yashiki -- list-windows`
 - PID file: `/tmp/yashiki.pid` (prevents double startup)
+
+## Release & Distribution
+
+### Homebrew
+
+Users install via Homebrew cask:
+```sh
+brew tap typester/yashiki
+brew install --cask yashiki
+```
+
+Homebrew tap repository: `typester/homebrew-yashiki` (separate repo)
+
+### Release Process
+
+1. **release-plz** creates release PR with version bumps and changelog
+2. Merging the PR triggers `release-plz release` which creates GitHub releases
+3. `release.yml` detects new `yashiki-v*` releases and builds app bundles
+4. App bundles (arm64, x86_64) are uploaded to GitHub releases
+5. Manually update Homebrew cask formula with new version and SHA256
+
+### App Bundle
+
+Build locally:
+```sh
+./scripts/build-app.sh --release                    # Current arch
+./scripts/build-app.sh --target aarch64-apple-darwin --release  # ARM64
+./scripts/build-app.sh --target x86_64-apple-darwin --release   # Intel
+```
+
+Output: `target/Yashiki.app` and `target/Yashiki-{arch}-{version}.zip`
+
+**Bundle structure:**
+```
+Yashiki.app/
+  Contents/
+    MacOS/
+      yashiki              # Main binary
+      yashiki-launcher     # Wrapper script (runs `yashiki start`)
+    Resources/
+      layouts/
+        yashiki-layout-tatami
+        yashiki-layout-byobu
+    Info.plist
+```
+
+**Note:** App is ad-hoc signed (not notarized). Users need to allow in System Settings or use `--no-quarantine`.
 
 ## Dependencies
 
@@ -367,7 +416,7 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
 
 ## Testing
 
-### Current Test Coverage (74 tests)
+### Current Test Coverage (75 tests)
 
 Run tests: `cargo test --all`
 
@@ -462,7 +511,7 @@ pub enum Effect {
     MoveWindowToPosition { window_id: u32, pid: i32, x: i32, y: i32 },
     Retile,
     RetileDisplays(Vec<DisplayId>),
-    SendLayoutCommand { cmd: String, args: Vec<String> },
+    SendLayoutCommand { layout: Option<String>, cmd: String, args: Vec<String> },
     ExecCommand(String),
     FocusVisibleWindowIfNeeded,
 }

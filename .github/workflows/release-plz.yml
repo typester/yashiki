@@ -9,7 +9,7 @@ jobs:
   # Release unpublished packages.
   release-plz-release:
     name: Release-plz release
-    runs-on: macos
+    runs-on: macos-latest
     permissions:
       contents: write
     steps:
