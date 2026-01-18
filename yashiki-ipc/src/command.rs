@@ -296,6 +296,7 @@ pub enum Command {
         action: RuleAction,
     },
     ListRules,
+    ApplyRules,
 
     // Control
     Quit,

@@ -1057,7 +1057,7 @@ impl State {
 
     /// Apply rules to a newly created window.
     /// Modifies the window in place (tags, display_id, is_floating) and returns
-    /// Vec<Effect> for position and dimensions to be executed.
+    /// Vec<Effect> for position, dimensions, and window hiding to be executed.
     pub fn apply_rules_to_new_window(&mut self, window_id: WindowId) -> Vec<Effect> {
         // Get app_name, app_id, title, and pid from the window
         let (app_name, app_id, title, pid) = {
@@ -1134,7 +1134,183 @@ impl State {
             });
         }
 
+        // Check if the window should be hidden (tags don't match visible tags)
+        // This handles the case where a rule sets tags to a non-visible tag
+        let hide_move = self.compute_hide_for_window(window_id);
+        if let Some(window_move) = hide_move {
+            effects.push(Effect::ApplyWindowMoves(vec![window_move]));
+        }
+
         effects
+    }
+
+    /// Compute whether a window should be hidden based on its tags and display's visible_tags.
+    /// Returns Some(WindowMove) if the window should be hidden, None otherwise.
+    fn compute_hide_for_window(&mut self, window_id: WindowId) -> Option<WindowMove> {
+        let (display_id, window_tags, window_frame, window_pid, is_already_hidden) = {
+            let window = self.windows.get(&window_id)?;
+            (
+                window.display_id,
+                window.tags,
+                window.frame,
+                window.pid,
+                window.is_hidden(),
+            )
+        };
+
+        // If window is already hidden, nothing to do
+        if is_already_hidden {
+            return None;
+        }
+
+        let (visible_tags, hide_x, hide_y) = {
+            let display = self.displays.get(&display_id)?;
+            let hide_x = display.frame.x + display.frame.width as i32 - 1;
+            let hide_y = display.frame.y + display.frame.height as i32 - 1;
+            (display.visible_tags, hide_x, hide_y)
+        };
+
+        // Check if window should be visible
+        let should_be_visible = window_tags.intersects(visible_tags);
+
+        if !should_be_visible {
+            // Window should be hidden
+            tracing::info!(
+                "Hiding window {} (tags {} don't match visible {})",
+                window_id,
+                window_tags.mask(),
+                visible_tags.mask()
+            );
+
+            // Save the current frame before hiding
+            if let Some(window) = self.windows.get_mut(&window_id) {
+                window.saved_frame = Some(window.frame);
+                window.frame.x = hide_x;
+                window.frame.y = hide_y;
+            }
+
+            Some(WindowMove {
+                window_id,
+                pid: window_pid,
+                old_x: window_frame.x,
+                old_y: window_frame.y,
+                new_x: hide_x,
+                new_y: hide_y,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Apply rules to all existing windows.
+    /// Returns (affected_display_ids, effects) where:
+    /// - affected_display_ids: displays that need retiling due to tag/display changes
+    /// - effects: position and dimension effects to execute
+    pub fn apply_rules_to_all_windows(&mut self) -> (Vec<DisplayId>, Vec<Effect>) {
+        if self.rules.is_empty() {
+            return (vec![], vec![]);
+        }
+
+        let mut affected_displays = HashSet::new();
+        let mut effects = Vec::new();
+
+        // Collect window IDs first to avoid borrow issues
+        let window_ids: Vec<WindowId> = self.windows.keys().copied().collect();
+
+        for window_id in window_ids {
+            // Get window info for rule matching
+            let (app_name, app_id, title, pid, original_tags, original_display_id) = {
+                let Some(window) = self.windows.get(&window_id) else {
+                    continue;
+                };
+                (
+                    window.app_name.clone(),
+                    window.app_id.clone(),
+                    window.title.clone(),
+                    window.pid,
+                    window.tags,
+                    window.display_id,
+                )
+            };
+
+            // Apply rules
+            let rule_result = self.apply_rules_to_window(&app_name, app_id.as_deref(), &title);
+
+            // Check if any rules matched that would change tags or display_id
+            let new_tags = rule_result.tags.map(Tag::new);
+            let new_display_id = rule_result.display_id;
+
+            let tags_changed = new_tags.is_some() && new_tags != Some(original_tags);
+            let display_changed =
+                new_display_id.is_some() && new_display_id != Some(original_display_id);
+
+            // Modify the window
+            if let Some(window) = self.windows.get_mut(&window_id) {
+                if let Some(tag_mask) = rule_result.tags {
+                    window.tags = Tag::new(tag_mask);
+                    tracing::info!(
+                        "Applied rule: window {} ({}) tags set to {}",
+                        window_id,
+                        app_name,
+                        tag_mask
+                    );
+                }
+                if let Some(display_id) = rule_result.display_id {
+                    window.display_id = display_id;
+                    tracing::info!(
+                        "Applied rule: window {} ({}) display set to {}",
+                        window_id,
+                        app_name,
+                        display_id
+                    );
+                }
+                if rule_result.is_floating {
+                    window.is_floating = true;
+                    tracing::info!(
+                        "Applied rule: window {} ({}) set to floating",
+                        window_id,
+                        app_name
+                    );
+                }
+            }
+
+            // Track affected displays
+            if tags_changed || display_changed {
+                affected_displays.insert(original_display_id);
+                if let Some(new_disp) = new_display_id {
+                    affected_displays.insert(new_disp);
+                }
+            }
+
+            // Collect position and dimension effects
+            if let Some((x, y)) = rule_result.position {
+                effects.push(Effect::MoveWindowToPosition {
+                    window_id,
+                    pid,
+                    x,
+                    y,
+                });
+            }
+
+            if let Some((width, height)) = rule_result.dimensions {
+                effects.push(Effect::SetWindowDimensions {
+                    window_id,
+                    pid,
+                    width,
+                    height,
+                });
+            }
+        }
+
+        let display_ids: Vec<_> = affected_displays.into_iter().collect();
+        (display_ids, effects)
+    }
+
+    /// Compute window moves (hide/show) for a display and return the moves.
+    /// This is used by ApplyRules command to properly hide windows that were
+    /// moved to non-visible tags.
+    pub(crate) fn compute_layout_changes(&mut self, display_id: DisplayId) -> Vec<WindowMove> {
+        self.compute_layout_changes_for_display(display_id)
     }
 }
 
