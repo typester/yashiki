@@ -2,3 +2,8 @@
 changelog_update = true
 git_release_enable = true
 git_release_draft = false
+
+# yashiki-ipc is internal crate, skip semver check
+[[package]]
+name = "yashiki-ipc"
+semver_check = false
