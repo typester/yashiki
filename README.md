@@ -7,6 +7,7 @@ macOS tiling window manager written in Rust.
 - **Tag-based workspaces** - Bitmask tags (like awesome/river) allow windows to belong to multiple tags and view any combination
 - **External layout engines** - Stdin/stdout JSON protocol lets you write custom layouts in any language
 - **Multi-monitor support** - Each display has independent tags
+- **Window rules** - Automatically configure windows by app name, bundle identifier, or title
 - **No SIP disable required** - Uses only public Accessibility API
 - **Shell script configuration** - Config is just a shell script (`~/.config/yashiki/init`)
 
@@ -212,6 +213,48 @@ yashiki add-exec-path --append /usr/local/bin # Add to end (low priority)
 ```
 
 Default exec path: `<yashiki_executable_dir>:<system_PATH>`
+
+### Window Rules
+
+Automatically configure window properties based on app name, bundle identifier, or title.
+
+```sh
+# Match by app name
+yashiki rule-add --app-name Finder float
+yashiki rule-add --app-name Safari tags 2
+
+# Match by bundle identifier (app-id)
+yashiki rule-add --app-id com.apple.finder float
+yashiki rule-add --app-id "com.google.*" output 2    # Glob pattern
+
+# Match by window title
+yashiki rule-add --title "*Preferences*" float
+
+# Combined matching (more specific)
+yashiki rule-add --app-name Safari --title "*Preferences*" float
+
+# Other actions
+yashiki rule-add --app-name Preview dimensions 800 600
+yashiki rule-add --app-name Preview position 100 100
+
+# Remove rule
+yashiki rule-del --app-name Finder float
+
+# List all rules
+yashiki list-rules
+```
+
+**Available actions:**
+| Action | Example | Description |
+|--------|---------|-------------|
+| `float` | `float` | Window floats (excluded from tiling) |
+| `no-float` | `no-float` | Override float rule |
+| `tags` | `tags 2` | Set window tags |
+| `output` | `output 2` | Move to display |
+| `position` | `position 100 200` | Set position |
+| `dimensions` | `dimensions 800 600` | Set size |
+
+Rules are sorted by specificity - more specific rules take priority.
 
 ## Built-in Layout Engines
 

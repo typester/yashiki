@@ -11,8 +11,11 @@ pub struct Window {
     pub tags: Tag,
     pub title: String,
     pub app_name: String,
+    pub app_id: Option<String>,
     pub frame: Rect,
     pub saved_frame: Option<Rect>,
+    pub is_floating: bool,
+    pub is_fullscreen: bool,
 }
 
 impl Window {
@@ -24,9 +27,16 @@ impl Window {
             tags: default_tag,
             title: info.name.clone().unwrap_or_default(),
             app_name: info.owner_name.clone(),
+            app_id: info.bundle_id.clone(),
             frame: Rect::from_bounds(&info.bounds),
             saved_frame: None,
+            is_floating: false,
+            is_fullscreen: false,
         }
+    }
+
+    pub fn is_tiled(&self) -> bool {
+        !self.is_floating && !self.is_fullscreen
     }
 
     pub fn center(&self) -> (i32, i32) {

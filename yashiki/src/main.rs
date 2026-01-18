@@ -12,7 +12,10 @@ use anyhow::{bail, Result};
 use argh::FromArgs;
 use ipc::IpcClient;
 use tracing_subscriber::EnvFilter;
-use yashiki_ipc::{Command, Direction, OutputDirection, OutputSpecifier, Response};
+use yashiki_ipc::{
+    Command, Direction, GlobPattern, OutputDirection, OutputSpecifier, Response, RuleAction,
+    RuleMatcher, WindowRule,
+};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -38,6 +41,7 @@ enum SubCommand {
     WindowToggleTag(WindowToggleTagCmd),
     WindowFocus(WindowFocusCmd),
     WindowSwap(WindowSwapCmd),
+    WindowToggleFullscreen(WindowToggleFullscreenCmd),
     OutputFocus(OutputFocusCmd),
     OutputSend(OutputSendCmd),
     Retile(RetileCmd),
@@ -54,6 +58,9 @@ enum SubCommand {
     ExecPath(ExecPathCmd),
     SetExecPath(SetExecPathCmd),
     AddExecPath(AddExecPathCmd),
+    RuleAdd(RuleAddCmd),
+    RuleDel(RuleDelCmd),
+    ListRules(ListRulesCmd),
     Quit(QuitCmd),
 }
 
@@ -157,6 +164,11 @@ struct WindowSwapCmd {
     #[argh(positional)]
     direction: String,
 }
+
+/// Toggle fullscreen for focused window (AeroSpace-style, not macOS native)
+#[derive(FromArgs)]
+#[argh(subcommand, name = "window-toggle-fullscreen")]
+struct WindowToggleFullscreenCmd {}
 
 /// Focus the next or previous display
 #[derive(FromArgs)]
@@ -303,6 +315,47 @@ struct AddExecPathCmd {
     path: String,
 }
 
+/// Add a window rule
+#[derive(FromArgs)]
+#[argh(subcommand, name = "rule-add")]
+struct RuleAddCmd {
+    /// application name pattern (glob, e.g., "Safari", "*Chrome*")
+    #[argh(option)]
+    app_name: Option<String>,
+    /// bundle identifier pattern (glob, e.g., "com.apple.Safari", "com.google.*")
+    #[argh(option)]
+    app_id: Option<String>,
+    /// window title pattern (glob)
+    #[argh(option)]
+    title: Option<String>,
+    /// action and arguments (e.g., "float", "tags 2", "dimensions 800 600")
+    #[argh(positional, greedy)]
+    action: Vec<String>,
+}
+
+/// Remove a window rule
+#[derive(FromArgs)]
+#[argh(subcommand, name = "rule-del")]
+struct RuleDelCmd {
+    /// application name pattern (glob)
+    #[argh(option)]
+    app_name: Option<String>,
+    /// bundle identifier pattern (glob)
+    #[argh(option)]
+    app_id: Option<String>,
+    /// window title pattern (glob)
+    #[argh(option)]
+    title: Option<String>,
+    /// action to remove (e.g., "float", "tags")
+    #[argh(positional, greedy)]
+    action: Vec<String>,
+}
+
+/// List all window rules
+#[derive(FromArgs)]
+#[argh(subcommand, name = "list-rules")]
+struct ListRulesCmd {}
+
 /// Quit the yashiki daemon
 #[derive(FromArgs)]
 #[argh(subcommand, name = "quit")]
@@ -353,17 +406,33 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
         }
         Response::Windows { windows } => {
             for w in windows {
+                let mut flags = Vec::new();
+                if w.is_focused {
+                    flags.push("*");
+                }
+                if w.is_floating {
+                    flags.push("float");
+                }
+                if w.is_fullscreen {
+                    flags.push("full");
+                }
+                let flag_str = if flags.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", flags.join(","))
+                };
                 println!(
-                    "{}: {} - {} [tags={}, {}x{} @ ({},{})]{}",
+                    "{}: {} ({}) - {} [tags={}, {}x{} @ ({},{})]{}",
                     w.id,
                     w.app_name,
+                    w.app_id.as_deref().unwrap_or("-"),
                     w.title,
                     w.tags,
                     w.width,
                     w.height,
                     w.x,
                     w.y,
-                    if w.is_focused { " *" } else { "" }
+                    flag_str
                 );
             }
         }
@@ -408,6 +477,24 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
         Response::ExecPath { path } => {
             println!("{}", path);
         }
+        Response::Rules { rules } => {
+            for r in rules {
+                let mut matchers = Vec::new();
+                if let Some(app) = &r.app_name {
+                    matchers.push(format!("--app-name {}", app));
+                }
+                if let Some(app_id) = &r.app_id {
+                    matchers.push(format!("--app-id {}", app_id));
+                }
+                if let Some(title) = &r.title {
+                    matchers.push(format!("--title {}", title));
+                }
+                if matchers.is_empty() {
+                    matchers.push("*".to_string());
+                }
+                println!("{} -> {}", matchers.join(" "), r.action);
+            }
+        }
     }
 
     Ok(())
@@ -447,6 +534,7 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
         SubCommand::WindowSwap(cmd) => Ok(Command::WindowSwap {
             direction: parse_direction(&cmd.direction)?,
         }),
+        SubCommand::WindowToggleFullscreen(_) => Ok(Command::WindowToggleFullscreen),
         SubCommand::OutputFocus(cmd) => Ok(Command::OutputFocus {
             direction: parse_output_direction(&cmd.direction)?,
         }),
@@ -488,6 +576,39 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             path: cmd.path,
             append: cmd.append,
         }),
+        SubCommand::RuleAdd(cmd) => {
+            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
+                bail!("rule-add requires --app-name, --app-id, or --title");
+            }
+            if cmd.action.is_empty() {
+                bail!("rule-add requires an action");
+            }
+            let matcher = RuleMatcher::with_app_id(
+                cmd.app_name.map(GlobPattern::new),
+                cmd.app_id.map(GlobPattern::new),
+                cmd.title.map(GlobPattern::new),
+            );
+            let action = parse_rule_action(&cmd.action)?;
+            Ok(Command::RuleAdd {
+                rule: WindowRule::new(matcher, action),
+            })
+        }
+        SubCommand::RuleDel(cmd) => {
+            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
+                bail!("rule-del requires --app-name, --app-id, or --title");
+            }
+            if cmd.action.is_empty() {
+                bail!("rule-del requires an action");
+            }
+            let matcher = RuleMatcher::with_app_id(
+                cmd.app_name.map(GlobPattern::new),
+                cmd.app_id.map(GlobPattern::new),
+                cmd.title.map(GlobPattern::new),
+            );
+            let action = parse_rule_action(&cmd.action)?;
+            Ok(Command::RuleDel { matcher, action })
+        }
+        SubCommand::ListRules(_) => Ok(Command::ListRules),
         SubCommand::Quit(_) => Ok(Command::Quit),
     }
 }
@@ -556,6 +677,7 @@ fn parse_command(args: &[String]) -> Result<Command> {
                 direction: parse_direction(&cmd.direction)?,
             })
         }
+        "window-toggle-fullscreen" => Ok(Command::WindowToggleFullscreen),
         "output-focus" => {
             let cmd: OutputFocusCmd = from_argh(cmd_name, &cmd_args)?;
             Ok(Command::OutputFocus {
@@ -630,6 +752,41 @@ fn parse_command(args: &[String]) -> Result<Command> {
                 append: cmd.append,
             })
         }
+        "rule-add" => {
+            let cmd: RuleAddCmd = from_argh(cmd_name, &cmd_args)?;
+            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
+                bail!("rule-add requires --app-name, --app-id, or --title");
+            }
+            if cmd.action.is_empty() {
+                bail!("rule-add requires an action");
+            }
+            let matcher = RuleMatcher::with_app_id(
+                cmd.app_name.map(GlobPattern::new),
+                cmd.app_id.map(GlobPattern::new),
+                cmd.title.map(GlobPattern::new),
+            );
+            let action = parse_rule_action(&cmd.action)?;
+            Ok(Command::RuleAdd {
+                rule: WindowRule::new(matcher, action),
+            })
+        }
+        "rule-del" => {
+            let cmd: RuleDelCmd = from_argh(cmd_name, &cmd_args)?;
+            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
+                bail!("rule-del requires --app-name, --app-id, or --title");
+            }
+            if cmd.action.is_empty() {
+                bail!("rule-del requires an action");
+            }
+            let matcher = RuleMatcher::with_app_id(
+                cmd.app_name.map(GlobPattern::new),
+                cmd.app_id.map(GlobPattern::new),
+                cmd.title.map(GlobPattern::new),
+            );
+            let action = parse_rule_action(&cmd.action)?;
+            Ok(Command::RuleDel { matcher, action })
+        }
+        "list-rules" => Ok(Command::ListRules),
         "quit" => Ok(Command::Quit),
         _ => bail!("Unknown command: {}", cmd_name),
     }
@@ -666,4 +823,66 @@ fn parse_output_specifier(s: Option<String>) -> Option<OutputSpecifier> {
             OutputSpecifier::Name(s)
         }
     })
+}
+
+fn parse_rule_action(args: &[String]) -> Result<RuleAction> {
+    if args.is_empty() {
+        bail!("No action provided");
+    }
+
+    let action_name = args[0].to_lowercase();
+    let action_args = &args[1..];
+
+    match action_name.as_str() {
+        "float" => Ok(RuleAction::Float),
+        "no-float" => Ok(RuleAction::NoFloat),
+        "tags" => {
+            if action_args.is_empty() {
+                bail!("tags action requires a bitmask argument");
+            }
+            let tags = action_args[0]
+                .parse::<u32>()
+                .map_err(|_| anyhow::anyhow!("Invalid tags bitmask: {}", action_args[0]))?;
+            Ok(RuleAction::Tags { tags })
+        }
+        "output" => {
+            if action_args.is_empty() {
+                bail!("output action requires an output ID or name");
+            }
+            let output = if let Ok(id) = action_args[0].parse::<u32>() {
+                OutputSpecifier::Id(id)
+            } else {
+                OutputSpecifier::Name(action_args[0].clone())
+            };
+            Ok(RuleAction::Output { output })
+        }
+        "position" => {
+            if action_args.len() < 2 {
+                bail!("position action requires x and y arguments");
+            }
+            let x = action_args[0]
+                .parse::<i32>()
+                .map_err(|_| anyhow::anyhow!("Invalid x position: {}", action_args[0]))?;
+            let y = action_args[1]
+                .parse::<i32>()
+                .map_err(|_| anyhow::anyhow!("Invalid y position: {}", action_args[1]))?;
+            Ok(RuleAction::Position { x, y })
+        }
+        "dimensions" => {
+            if action_args.len() < 2 {
+                bail!("dimensions action requires width and height arguments");
+            }
+            let width = action_args[0]
+                .parse::<u32>()
+                .map_err(|_| anyhow::anyhow!("Invalid width: {}", action_args[0]))?;
+            let height = action_args[1]
+                .parse::<u32>()
+                .map_err(|_| anyhow::anyhow!("Invalid height: {}", action_args[1]))?;
+            Ok(RuleAction::Dimensions { width, height })
+        }
+        _ => bail!(
+            "Unknown rule action: {} (use float, no-float, tags, output, position, dimensions)",
+            action_name
+        ),
+    }
 }

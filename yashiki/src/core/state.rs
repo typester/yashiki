@@ -1,9 +1,22 @@
 use super::{Display, Rect, Tag, Window, WindowId};
+use crate::effect::Effect;
 use crate::event::Event;
 use crate::macos::DisplayId;
 use crate::platform::WindowSystem;
 use std::collections::{HashMap, HashSet};
-use yashiki_ipc::{Direction, OutputDirection, OutputSpecifier};
+use yashiki_ipc::{
+    Direction, OutputDirection, OutputSpecifier, RuleAction, RuleMatcher, WindowRule,
+};
+
+/// Result of applying rules to a window
+#[derive(Debug, Default)]
+pub struct RuleApplicationResult {
+    pub tags: Option<u32>,
+    pub display_id: Option<DisplayId>,
+    pub position: Option<(i32, i32)>,
+    pub dimensions: Option<(u32, u32)>,
+    pub is_floating: bool,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowMove {
@@ -24,6 +37,7 @@ pub struct State {
     pub default_layout: String,
     pub tag_layouts: HashMap<u8, String>,
     pub exec_path: String,
+    pub rules: Vec<WindowRule>,
 }
 
 impl State {
@@ -37,6 +51,7 @@ impl State {
             default_layout: "tatami".to_string(),
             tag_layouts: HashMap::new(),
             exec_path: String::new(),
+            rules: Vec::new(),
         }
     }
 
@@ -343,8 +358,10 @@ impl State {
         self.set_focused(None);
     }
 
-    /// Sync windows for a specific PID. Returns true if window count changed.
-    pub fn sync_pid<W: WindowSystem>(&mut self, ws: &W, pid: i32) -> bool {
+    /// Sync windows for a specific PID.
+    /// Returns (changed, new_window_ids) where changed is true if window count changed,
+    /// and new_window_ids contains the IDs of newly added windows.
+    pub fn sync_pid<W: WindowSystem>(&mut self, ws: &W, pid: i32) -> (bool, Vec<WindowId>) {
         let window_infos = ws.get_on_screen_windows();
         let pid_window_infos: Vec<_> = window_infos.iter().filter(|w| w.pid == pid).collect();
 
@@ -357,6 +374,7 @@ impl State {
         let new_ids: HashSet<WindowId> = pid_window_infos.iter().map(|w| w.window_id).collect();
 
         let mut changed = false;
+        let mut added_window_ids = Vec::new();
 
         // Remove windows that no longer exist
         for id in current_ids.difference(&new_ids) {
@@ -384,6 +402,7 @@ impl State {
                     display_id
                 );
                 self.windows.insert(window.id, window);
+                added_window_ids.push(*id);
                 changed = true;
             }
         }
@@ -421,7 +440,7 @@ impl State {
             }
         }
 
-        changed
+        (changed, added_window_ids)
     }
 
     fn find_display_for_bounds(&self, bounds: &crate::macos::Bounds) -> DisplayId {
@@ -447,8 +466,13 @@ impl State {
         }
     }
 
-    /// Handle an event. Returns true if window count changed (needs retile).
-    pub fn handle_event<W: WindowSystem>(&mut self, ws: &W, event: &Event) -> bool {
+    /// Handle an event.
+    /// Returns (needs_retile, new_window_ids) where needs_retile is true if window count changed.
+    pub fn handle_event<W: WindowSystem>(
+        &mut self,
+        ws: &W,
+        event: &Event,
+    ) -> (bool, Vec<WindowId>) {
         match event {
             Event::WindowCreated { pid } | Event::WindowDestroyed { pid } => {
                 self.sync_pid(ws, *pid)
@@ -457,19 +481,19 @@ impl State {
             | Event::WindowResized { pid }
             | Event::WindowMiniaturized { pid }
             | Event::WindowDeminiaturized { pid } => {
-                self.sync_pid(ws, *pid);
-                false
+                let (_, _) = self.sync_pid(ws, *pid);
+                (false, vec![])
             }
             Event::FocusedWindowChanged => {
                 self.sync_focused_window(ws);
-                false
+                (false, vec![])
             }
             Event::ApplicationActivated { pid } => {
                 self.sync_focused_window_with_hint(ws, Some(*pid));
-                false
+                (false, vec![])
             }
             Event::ApplicationDeactivated | Event::ApplicationHidden | Event::ApplicationShown => {
-                false
+                (false, vec![])
             }
         }
     }
@@ -620,6 +644,27 @@ impl State {
             return vec![];
         };
         self.compute_layout_changes_for_display(display_id)
+    }
+
+    /// Toggle fullscreen state for focused window.
+    /// Returns Some((display_id, is_now_fullscreen, window_id, pid)) if toggled successfully.
+    pub fn toggle_focused_fullscreen(&mut self) -> Option<(DisplayId, bool, u32, i32)> {
+        let focused_id = self.focused?;
+        let window = self.windows.get_mut(&focused_id)?;
+
+        window.is_fullscreen = !window.is_fullscreen;
+        tracing::info!(
+            "Toggle fullscreen for window {}: {}",
+            window.id,
+            window.is_fullscreen
+        );
+
+        Some((
+            window.display_id,
+            window.is_fullscreen,
+            window.id,
+            window.pid,
+        ))
     }
 
     pub fn focus_window(&self, direction: Direction) -> Option<(WindowId, i32)> {
@@ -883,7 +928,8 @@ impl State {
         moves
     }
 
-    /// Get windows visible on a specific display, sorted by window_order
+    /// Get windows visible on a specific display for tiling, sorted by window_order.
+    /// Excludes floating and fullscreen windows.
     pub fn visible_windows_on_display(&self, display_id: DisplayId) -> Vec<&Window> {
         let Some(display) = self.displays.get(&display_id) else {
             return vec![];
@@ -895,6 +941,7 @@ impl State {
                 w.display_id == display_id
                     && w.tags.intersects(display.visible_tags)
                     && !w.is_hidden()
+                    && w.is_tiled()
             })
             .collect();
 
@@ -924,6 +971,170 @@ impl State {
         for display in self.displays.values_mut() {
             display.window_order.retain(|&id| id != window_id);
         }
+    }
+
+    // Rule management
+
+    /// Add a rule and sort by specificity (more specific rules first)
+    pub fn add_rule(&mut self, rule: WindowRule) {
+        tracing::info!("Adding rule: {:?} -> {:?}", rule.matcher, rule.action);
+        self.rules.push(rule);
+        // Sort by specificity in descending order (more specific first)
+        self.rules
+            .sort_by_key(|r| std::cmp::Reverse(r.specificity()));
+    }
+
+    /// Remove a rule matching the given matcher and action
+    pub fn remove_rule(&mut self, matcher: &RuleMatcher, action: &RuleAction) -> bool {
+        let initial_len = self.rules.len();
+        self.rules
+            .retain(|r| &r.matcher != matcher || &r.action != action);
+        let removed = self.rules.len() < initial_len;
+        if removed {
+            tracing::info!("Removed rule: {:?} -> {:?}", matcher, action);
+        }
+        removed
+    }
+
+    /// Get all rules that match a window
+    pub fn get_matching_rules(
+        &self,
+        app_name: &str,
+        app_id: Option<&str>,
+        title: &str,
+    ) -> Vec<&WindowRule> {
+        self.rules
+            .iter()
+            .filter(|rule| rule.matcher.matches(app_name, app_id, title))
+            .collect()
+    }
+
+    /// Apply matching rules to a window and return effects to execute.
+    pub fn apply_rules_to_window(
+        &self,
+        app_name: &str,
+        app_id: Option<&str>,
+        title: &str,
+    ) -> RuleApplicationResult {
+        let matching_rules = self.get_matching_rules(app_name, app_id, title);
+        let mut result = RuleApplicationResult::default();
+
+        // Apply rules in order (most specific first due to sorting)
+        for rule in matching_rules {
+            match &rule.action {
+                RuleAction::Float => {
+                    result.is_floating = true;
+                }
+                RuleAction::NoFloat => {
+                    result.is_floating = false;
+                }
+                RuleAction::Tags { tags: t } => {
+                    if result.tags.is_none() {
+                        result.tags = Some(*t);
+                    }
+                }
+                RuleAction::Output { output: o } => {
+                    if result.display_id.is_none() {
+                        // Resolve output specifier to display ID
+                        result.display_id = self.resolve_output(o);
+                    }
+                }
+                RuleAction::Position { x, y } => {
+                    if result.position.is_none() {
+                        result.position = Some((*x, *y));
+                    }
+                }
+                RuleAction::Dimensions { width, height } => {
+                    if result.dimensions.is_none() {
+                        result.dimensions = Some((*width, *height));
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Apply rules to a newly created window.
+    /// Modifies the window in place (tags, display_id, is_floating) and returns
+    /// Vec<Effect> for position and dimensions to be executed.
+    pub fn apply_rules_to_new_window(&mut self, window_id: WindowId) -> Vec<Effect> {
+        // Get app_name, app_id, title, and pid from the window
+        let (app_name, app_id, title, pid) = {
+            let Some(window) = self.windows.get(&window_id) else {
+                return vec![];
+            };
+            (
+                window.app_name.clone(),
+                window.app_id.clone(),
+                window.title.clone(),
+                window.pid,
+            )
+        };
+
+        // Apply rules
+        let rule_result = self.apply_rules_to_window(&app_name, app_id.as_deref(), &title);
+
+        // Modify the window
+        if let Some(window) = self.windows.get_mut(&window_id) {
+            if let Some(tag_mask) = rule_result.tags {
+                window.tags = Tag::new(tag_mask);
+                tracing::info!(
+                    "Applied rule: window {} tags set to {}",
+                    window_id,
+                    tag_mask
+                );
+            }
+            if let Some(display_id) = rule_result.display_id {
+                window.display_id = display_id;
+                tracing::info!(
+                    "Applied rule: window {} display set to {}",
+                    window_id,
+                    display_id
+                );
+            }
+            if rule_result.is_floating {
+                window.is_floating = true;
+                tracing::info!("Applied rule: window {} set to floating", window_id);
+            }
+        }
+
+        // Build effects for position and dimensions
+        let mut effects = Vec::new();
+
+        if let Some((x, y)) = rule_result.position {
+            tracing::info!(
+                "Rule requires position for window {} (pid {}): ({}, {})",
+                window_id,
+                pid,
+                x,
+                y
+            );
+            effects.push(Effect::MoveWindowToPosition {
+                window_id,
+                pid,
+                x,
+                y,
+            });
+        }
+
+        if let Some((width, height)) = rule_result.dimensions {
+            tracing::info!(
+                "Rule requires dimensions for window {} (pid {}): ({}, {})",
+                window_id,
+                pid,
+                width,
+                height
+            );
+            effects.push(Effect::SetWindowDimensions {
+                window_id,
+                pid,
+                width,
+                height,
+            });
+        }
+
+        effects
     }
 }
 
@@ -1125,9 +1336,10 @@ mod tests {
             101, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
         ));
 
-        let changed = state.sync_pid(&ws, 1000);
+        let (changed, new_ids) = state.sync_pid(&ws, 1000);
         assert!(changed);
         assert_eq!(state.windows.len(), 2);
+        assert_eq!(new_ids, vec![101]);
     }
 
     #[test]
@@ -1146,8 +1358,9 @@ mod tests {
         // Remove window 101
         ws.remove_window(101);
 
-        let changed = state.sync_pid(&ws, 1000);
+        let (changed, new_ids) = state.sync_pid(&ws, 1000);
         assert!(changed);
+        assert!(new_ids.is_empty()); // No new windows when removing
         assert_eq!(state.windows.len(), 1);
         assert!(state.windows.contains_key(&100));
         assert!(!state.windows.contains_key(&101));
