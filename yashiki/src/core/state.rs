@@ -1094,7 +1094,7 @@ impl State {
         // Modify the window
         if let Some(window) = self.windows.get_mut(&window_id) {
             if let Some(tag_mask) = rule_result.tags {
-                window.tags = Tag::new(tag_mask);
+                window.tags = Tag::from_mask(tag_mask);
                 tracing::info!(
                     "Applied rule: window {} tags set to {}",
                     window_id,
@@ -1253,7 +1253,7 @@ impl State {
             let rule_result = self.apply_rules_to_window(&app_name, app_id.as_deref(), &title);
 
             // Check if any rules matched that would change tags or display_id
-            let new_tags = rule_result.tags.map(Tag::new);
+            let new_tags = rule_result.tags.map(Tag::from_mask);
             let new_display_id = rule_result.display_id;
 
             let tags_changed = new_tags.is_some() && new_tags != Some(original_tags);
@@ -1263,7 +1263,7 @@ impl State {
             // Modify the window
             if let Some(window) = self.windows.get_mut(&window_id) {
                 if let Some(tag_mask) = rule_result.tags {
-                    window.tags = Tag::new(tag_mask);
+                    window.tags = Tag::from_mask(tag_mask);
                     tracing::info!(
                         "Applied rule: window {} ({}) tags set to {}",
                         window_id,
