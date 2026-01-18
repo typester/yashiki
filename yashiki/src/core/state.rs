@@ -567,8 +567,10 @@ impl State {
             | Event::WindowResized { pid }
             | Event::WindowMiniaturized { pid }
             | Event::WindowDeminiaturized { pid } => {
-                let (_, _) = self.sync_pid(ws, *pid);
-                (false, vec![])
+                // Propagate changed flag if window count changed (e.g., popup window disappeared)
+                // but don't return new_window_ids (we don't want to apply rules again)
+                let (changed, _) = self.sync_pid(ws, *pid);
+                (changed, vec![])
             }
             Event::FocusedWindowChanged => {
                 self.sync_focused_window(ws);

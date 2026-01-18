@@ -315,6 +315,8 @@ Rules are sorted by specificity - more specific rules take priority.
 
 For detailed window rules configuration including how to find AX attributes (`--ax-id`, `--subrole`), see [docs/window-rules.md](docs/window-rules.md).
 
+For app-specific workarounds (Firefox flickering, etc.), see [docs/workarounds.md](docs/workarounds.md).
+
 ## Built-in Layout Engines
 
 ### tatami (master-stack)
