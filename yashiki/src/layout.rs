@@ -39,30 +39,6 @@ fn find_layout_engine(name: &str) -> Option<PathBuf> {
     None
 }
 
-fn build_extended_path() -> String {
-    let mut paths: Vec<String> = Vec::new();
-
-    // Read from ~/.config/yashiki/path
-    if let Some(home) = dirs::home_dir() {
-        let path_file = home.join(".config").join("yashiki").join("path");
-        if let Ok(content) = std::fs::read_to_string(&path_file) {
-            for line in content.lines() {
-                let line = line.trim();
-                if !line.is_empty() && !line.starts_with('#') {
-                    paths.push(line.to_string());
-                }
-            }
-        }
-    }
-
-    // Append system PATH
-    if let Ok(system_path) = std::env::var("PATH") {
-        paths.push(system_path);
-    }
-
-    paths.join(":")
-}
-
 pub struct LayoutEngine {
     #[allow(dead_code)]
     child: Child,
@@ -71,17 +47,18 @@ pub struct LayoutEngine {
 }
 
 impl LayoutEngine {
-    pub fn spawn(name: &str) -> Result<Self> {
+    pub fn spawn(name: &str, exec_path: &str) -> Result<Self> {
         let command_name = format!("yashiki-layout-{}", name);
 
         let mut cmd = if let Some(path) = find_layout_engine(name) {
             // Found in bundle or exe directory
             Command::new(path)
         } else {
-            // Search in extended PATH (includes ~/.config/yashiki/path entries)
-            let extended_path = build_extended_path();
+            // Search in exec_path
             let mut cmd = Command::new(&command_name);
-            cmd.env("PATH", extended_path);
+            if !exec_path.is_empty() {
+                cmd.env("PATH", exec_path);
+            }
             cmd
         };
 
@@ -168,18 +145,24 @@ impl LayoutEngine {
 
 pub struct LayoutEngineManager {
     engines: HashMap<String, LayoutEngine>,
+    exec_path: String,
 }
 
 impl LayoutEngineManager {
     pub fn new() -> Self {
         Self {
             engines: HashMap::new(),
+            exec_path: String::new(),
         }
+    }
+
+    pub fn set_exec_path(&mut self, exec_path: &str) {
+        self.exec_path = exec_path.to_string();
     }
 
     pub fn get_or_spawn(&mut self, name: &str) -> Result<&mut LayoutEngine> {
         if !self.engines.contains_key(name) {
-            let engine = LayoutEngine::spawn(name)?;
+            let engine = LayoutEngine::spawn(name, &self.exec_path)?;
             self.engines.insert(name.to_string(), engine);
         }
         Ok(self.engines.get_mut(name).unwrap())

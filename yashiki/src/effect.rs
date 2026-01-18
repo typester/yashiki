@@ -22,7 +22,13 @@ pub enum Effect {
         cmd: String,
         args: Vec<String>,
     },
-    ExecCommand(String),
+    ExecCommand {
+        command: String,
+        path: String,
+    },
+    UpdateLayoutExecPath {
+        path: String,
+    },
     FocusVisibleWindowIfNeeded,
 }
 

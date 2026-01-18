@@ -145,6 +145,8 @@ yashiki list-outputs              # List all displays/outputs
 yashiki get-state                 # Get current state
 yashiki exec "open -a Safari"     # Execute shell command
 yashiki exec-or-focus --app-name Safari "open -a Safari"  # Focus if running, else exec
+yashiki exec-path                 # Get current exec path
+yashiki set-exec-path "/opt/homebrew/bin:$(yashiki exec-path)"  # Set exec path
 yashiki quit                      # Quit daemon
 ```
 
@@ -153,6 +155,9 @@ yashiki quit                      # Quit daemon
 ```sh
 # ~/.config/yashiki/init
 #!/bin/sh
+
+# Extend exec path (for layout engines and exec commands)
+yashiki set-exec-path "/opt/homebrew/bin:$(yashiki exec-path)"
 
 # Layout configuration (per-tag)
 yashiki layout-set-default tatami       # Default layout for all tags

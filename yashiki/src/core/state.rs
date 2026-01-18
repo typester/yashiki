@@ -23,6 +23,7 @@ pub struct State {
     default_tag: Tag,
     pub default_layout: String,
     pub tag_layouts: HashMap<u8, String>,
+    pub exec_path: String,
 }
 
 impl State {
@@ -35,6 +36,7 @@ impl State {
             default_tag: Tag::new(1),
             default_layout: "tatami".to_string(),
             tag_layouts: HashMap::new(),
+            exec_path: String::new(),
         }
     }
 

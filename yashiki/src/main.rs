@@ -51,6 +51,8 @@ enum SubCommand {
     FocusedWindow(FocusedWindowCmd),
     Exec(ExecCmd),
     ExecOrFocus(ExecOrFocusCmd),
+    ExecPath(ExecPathCmd),
+    SetExecPath(SetExecPathCmd),
     Quit(QuitCmd),
 }
 
@@ -274,6 +276,20 @@ struct ExecOrFocusCmd {
     command: String,
 }
 
+/// Get the current exec path
+#[derive(FromArgs)]
+#[argh(subcommand, name = "exec-path")]
+struct ExecPathCmd {}
+
+/// Set the exec path
+#[derive(FromArgs)]
+#[argh(subcommand, name = "set-exec-path")]
+struct SetExecPathCmd {
+    /// the path to set
+    #[argh(positional)]
+    path: String,
+}
+
 /// Quit the yashiki daemon
 #[derive(FromArgs)]
 #[argh(subcommand, name = "quit")]
@@ -376,6 +392,9 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
         Response::Layout { layout } => {
             println!("{}", layout);
         }
+        Response::ExecPath { path } => {
+            println!("{}", path);
+        }
     }
 
     Ok(())
@@ -450,6 +469,8 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             app_name: cmd.app_name,
             command: cmd.command,
         }),
+        SubCommand::ExecPath(_) => Ok(Command::GetExecPath),
+        SubCommand::SetExecPath(cmd) => Ok(Command::SetExecPath { path: cmd.path }),
         SubCommand::Quit(_) => Ok(Command::Quit),
     }
 }
@@ -579,6 +600,11 @@ fn parse_command(args: &[String]) -> Result<Command> {
                 app_name: cmd.app_name,
                 command: cmd.command,
             })
+        }
+        "exec-path" => Ok(Command::GetExecPath),
+        "set-exec-path" => {
+            let cmd: SetExecPathCmd = from_argh(cmd_name, &cmd_args)?;
+            Ok(Command::SetExecPath { path: cmd.path })
         }
         "quit" => Ok(Command::Quit),
         _ => bail!("Unknown command: {}", cmd_name),

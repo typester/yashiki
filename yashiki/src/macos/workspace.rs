@@ -26,12 +26,15 @@ pub fn activate_application(pid: i32) -> bool {
     false
 }
 
-pub fn exec_command(command: &str) -> Result<(), String> {
-    match std::process::Command::new("/bin/bash")
-        .arg("-c")
-        .arg(command)
-        .spawn()
-    {
+pub fn exec_command(command: &str, path: &str) -> Result<(), String> {
+    let mut cmd = std::process::Command::new("/bin/bash");
+    cmd.arg("-c").arg(command);
+
+    if !path.is_empty() {
+        cmd.env("PATH", path);
+    }
+
+    match cmd.spawn() {
         Ok(_) => {
             tracing::info!("Executed command: {}", command);
             Ok(())

@@ -166,11 +166,15 @@ impl App {
         // Initialize state with current windows
         let window_system = MacOSWindowSystem;
         let mut state = State::new();
+        state.exec_path = build_initial_exec_path();
         state.sync_all(&window_system);
-        let state = RefCell::new(state);
 
         // Create layout engine manager (lazy spawning)
-        let layout_engine_manager = RefCell::new(LayoutEngineManager::new());
+        let mut layout_engine_manager = LayoutEngineManager::new();
+        layout_engine_manager.set_exec_path(&state.exec_path);
+        let layout_engine_manager = RefCell::new(layout_engine_manager);
+
+        let state = RefCell::new(state);
 
         // Create window manipulator
         let window_manipulator = MacOSWindowManipulator;
@@ -410,6 +414,24 @@ impl App {
         CFRunLoop::run_current();
         tracing::info!("CFRunLoop exited");
     }
+}
+
+fn build_initial_exec_path() -> String {
+    let mut paths = Vec::new();
+
+    // yashiki executable directory
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            paths.push(dir.to_string_lossy().to_string());
+        }
+    }
+
+    // system PATH
+    if let Ok(system_path) = std::env::var("PATH") {
+        paths.push(system_path);
+    }
+
+    paths.join(":")
 }
 
 fn run_init_script() {
@@ -702,10 +724,23 @@ fn process_command(
             }
         }
 
-        // Exec commands
-        Command::Exec { command } => {
-            CommandResult::ok_with_effects(vec![Effect::ExecCommand(command.clone())])
+        // Exec path commands
+        Command::GetExecPath => CommandResult::with_response(Response::ExecPath {
+            path: state.exec_path.clone(),
+        }),
+        Command::SetExecPath { path } => {
+            tracing::info!("Set exec path: {}", path);
+            state.exec_path = path.clone();
+            CommandResult::ok_with_effects(vec![Effect::UpdateLayoutExecPath {
+                path: path.clone(),
+            }])
         }
+
+        // Exec commands
+        Command::Exec { command } => CommandResult::ok_with_effects(vec![Effect::ExecCommand {
+            command: command.clone(),
+            path: state.exec_path.clone(),
+        }]),
         Command::ExecOrFocus { app_name, command } => {
             // Check if a window with the given app_name exists
             let existing_window = state
@@ -757,7 +792,10 @@ fn process_command(
                     "No existing window for app '{}', executing command",
                     app_name
                 );
-                CommandResult::ok_with_effects(vec![Effect::ExecCommand(command.clone())])
+                CommandResult::ok_with_effects(vec![Effect::ExecCommand {
+                    command: command.clone(),
+                    path: state.exec_path.clone(),
+                }])
             }
         }
 
@@ -818,8 +856,11 @@ fn execute_effects<M: WindowManipulator>(
                     return Err(format!("Layout command failed: {}", e));
                 }
             }
-            Effect::ExecCommand(command) => {
-                manipulator.exec_command(&command)?;
+            Effect::ExecCommand { command, path } => {
+                manipulator.exec_command(&command, &path)?;
+            }
+            Effect::UpdateLayoutExecPath { path } => {
+                layout_engine_manager.borrow_mut().set_exec_path(&path);
             }
             Effect::FocusVisibleWindowIfNeeded => {
                 focus_visible_window_if_needed(state, manipulator);
@@ -1123,8 +1164,8 @@ mod tests {
         assert_eq!(result.effects.len(), 1);
 
         match &result.effects[0] {
-            Effect::ExecCommand(cmd) => {
-                assert_eq!(cmd, "open -a Safari");
+            Effect::ExecCommand { command, .. } => {
+                assert_eq!(command, "open -a Safari");
             }
             _ => panic!("Expected ExecCommand effect"),
         }
@@ -1174,8 +1215,8 @@ mod tests {
 
         // Should execute command since Slack is not running
         match &result.effects[0] {
-            Effect::ExecCommand(cmd) => {
-                assert_eq!(cmd, "open -a Slack");
+            Effect::ExecCommand { command, .. } => {
+                assert_eq!(command, "open -a Slack");
             }
             _ => panic!("Expected ExecCommand effect, got {:?}", result.effects[0]),
         }

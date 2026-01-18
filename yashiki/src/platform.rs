@@ -50,7 +50,7 @@ pub trait WindowManipulator {
     fn apply_layout(&self, display_id: DisplayId, frame: &Rect, geometries: &[WindowGeometry]);
     fn focus_window(&self, window_id: u32, pid: i32);
     fn move_window_to_position(&self, window_id: u32, pid: i32, x: i32, y: i32);
-    fn exec_command(&self, command: &str) -> Result<(), String>;
+    fn exec_command(&self, command: &str, path: &str) -> Result<(), String>;
 }
 
 /// macOS implementation of WindowManipulator
@@ -268,8 +268,8 @@ impl WindowManipulator for MacOSWindowManipulator {
         );
     }
 
-    fn exec_command(&self, command: &str) -> Result<(), String> {
-        crate::macos::exec_command(command)
+    fn exec_command(&self, command: &str, path: &str) -> Result<(), String> {
+        crate::macos::exec_command(command, path)
     }
 }
 
