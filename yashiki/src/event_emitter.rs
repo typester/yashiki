@@ -143,3 +143,143 @@ pub fn display_to_info(display: &Display, focused_display: u32) -> OutputInfo {
         is_focused: focused_display == display.id,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{Rect, Tag};
+
+    fn create_test_window(id: u32, pid: i32, app_name: &str) -> Window {
+        Window {
+            id,
+            pid,
+            display_id: 1,
+            tags: Tag::new(1),
+            title: format!("{} Window", app_name),
+            app_name: app_name.to_string(),
+            app_id: Some(format!("com.test.{}", app_name.to_lowercase())),
+            frame: Rect {
+                x: 0,
+                y: 0,
+                width: 800,
+                height: 600,
+            },
+            saved_frame: None,
+            is_floating: false,
+            is_fullscreen: false,
+        }
+    }
+
+    fn create_test_display(id: u32, name: &str, is_main: bool) -> Display {
+        Display::new(
+            id,
+            name.to_string(),
+            Rect {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
+            is_main,
+        )
+    }
+
+    #[test]
+    fn test_create_snapshot() {
+        let mut state = State::new();
+
+        // Add displays
+        state
+            .displays
+            .insert(1, create_test_display(1, "Display 1", true));
+        state
+            .displays
+            .insert(2, create_test_display(2, "Display 2", false));
+
+        // Add windows
+        state
+            .windows
+            .insert(100, create_test_window(100, 1000, "Safari"));
+        state
+            .windows
+            .insert(101, create_test_window(101, 1001, "Terminal"));
+
+        // Set focus
+        state.focused = Some(100);
+        state.focused_display = 1;
+        state.default_layout = "tatami".to_string();
+
+        // Create snapshot
+        let snapshot = create_snapshot(&state);
+
+        // Verify snapshot
+        match snapshot {
+            StateEvent::Snapshot {
+                windows,
+                displays,
+                focused_window_id,
+                focused_display_id,
+                default_layout,
+            } => {
+                assert_eq!(windows.len(), 2);
+                assert_eq!(displays.len(), 2);
+                assert_eq!(focused_window_id, Some(100));
+                assert_eq!(focused_display_id, 1);
+                assert_eq!(default_layout, "tatami");
+
+                // Check that focused window has is_focused = true
+                let safari = windows.iter().find(|w| w.id == 100).unwrap();
+                assert!(safari.is_focused);
+
+                // Check that non-focused window has is_focused = false
+                let terminal = windows.iter().find(|w| w.id == 101).unwrap();
+                assert!(!terminal.is_focused);
+
+                // Check that focused display has is_focused = true
+                let display1 = displays.iter().find(|d| d.id == 1).unwrap();
+                assert!(display1.is_focused);
+
+                // Check that non-focused display has is_focused = false
+                let display2 = displays.iter().find(|d| d.id == 2).unwrap();
+                assert!(!display2.is_focused);
+            }
+            _ => panic!("Expected Snapshot event"),
+        }
+    }
+
+    #[test]
+    fn test_window_to_info_focused() {
+        let window = create_test_window(100, 1000, "Safari");
+
+        // When window is focused
+        let info = window_to_info(&window, Some(100));
+        assert!(info.is_focused);
+        assert_eq!(info.id, 100);
+        assert_eq!(info.pid, 1000);
+        assert_eq!(info.app_name, "Safari");
+
+        // When different window is focused
+        let info = window_to_info(&window, Some(999));
+        assert!(!info.is_focused);
+
+        // When no window is focused
+        let info = window_to_info(&window, None);
+        assert!(!info.is_focused);
+    }
+
+    #[test]
+    fn test_display_to_info_focused() {
+        let display = create_test_display(1, "Main Display", true);
+
+        // When display is focused
+        let info = display_to_info(&display, 1);
+        assert!(info.is_focused);
+        assert_eq!(info.id, 1);
+        assert_eq!(info.name, "Main Display");
+        assert!(info.is_main);
+
+        // When different display is focused
+        let info = display_to_info(&display, 2);
+        assert!(!info.is_focused);
+    }
+}

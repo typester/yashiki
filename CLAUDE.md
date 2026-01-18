@@ -554,7 +554,7 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
 
 ## Testing
 
-### Current Test Coverage (109 tests)
+### Current Test Coverage (122 tests)
 
 Run tests: `cargo test --all`
 
@@ -563,7 +563,8 @@ Run tests: `cargo test --all`
 - `macos/hotkey.rs` - `parse_hotkey()`, `format_hotkey()` (15 tests)
 - `yashiki-ipc` - Command/Response/LayoutMessage/WindowRule/StateEvent serialization (55 tests)
 - `core/state.rs` - State management with MockWindowSystem (13 tests)
-- `app.rs` - `process_command()` effect generation (9 tests)
+- `app.rs` - `process_command()` effect generation, `emit_state_change_events()` event detection (13 tests)
+- `event_emitter.rs` - `create_snapshot()`, `window_to_info()`, `display_to_info()` (3 tests)
 - `yashiki-layout-byobu` - Accordion layout and commands (9 tests)
 
 ### Platform Abstraction Layer

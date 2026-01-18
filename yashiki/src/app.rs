@@ -2018,4 +2018,190 @@ mod tests {
         let events: Vec<_> = rx.try_iter().collect();
         assert!(events.is_empty());
     }
+
+    #[test]
+    fn test_emit_focus_change_detection() {
+        use crate::event_emitter::EventEmitter;
+        use std::cell::RefCell;
+        use std::sync::mpsc as std_mpsc;
+        use yashiki_ipc::StateEvent;
+
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 0.0, 0.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 800.0, 0.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        let state_cell = RefCell::new(state);
+        let (tx, rx) = std_mpsc::channel::<StateEvent>();
+        let event_emitter = EventEmitter::new(tx);
+
+        // Capture initial state (focused = 100)
+        let pre = capture_event_state(&state_cell);
+
+        // Change focused window
+        state_cell.borrow_mut().focused = Some(101);
+
+        // Emit events
+        emit_state_change_events(&event_emitter, &state_cell, &pre);
+
+        // Verify WindowFocused event was emitted
+        let events: Vec<_> = rx.try_iter().collect();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StateEvent::WindowFocused { window_id } => {
+                assert_eq!(*window_id, Some(101));
+            }
+            _ => panic!("Expected WindowFocused event, got {:?}", events[0]),
+        }
+    }
+
+    #[test]
+    fn test_emit_display_focus_change_detection() {
+        use crate::event_emitter::EventEmitter;
+        use std::cell::RefCell;
+        use std::sync::mpsc as std_mpsc;
+        use yashiki_ipc::StateEvent;
+
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 0.0, 0.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        let state_cell = RefCell::new(state);
+        let (tx, rx) = std_mpsc::channel::<StateEvent>();
+        let event_emitter = EventEmitter::new(tx);
+
+        // Capture initial state (focused_display = 1)
+        let pre = capture_event_state(&state_cell);
+        assert_eq!(pre.focused_display, 1);
+
+        // Change focused display
+        state_cell.borrow_mut().focused_display = 2;
+
+        // Emit events
+        emit_state_change_events(&event_emitter, &state_cell, &pre);
+
+        // Verify DisplayFocused event was emitted
+        let events: Vec<_> = rx.try_iter().collect();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StateEvent::DisplayFocused { display_id } => {
+                assert_eq!(*display_id, 2);
+            }
+            _ => panic!("Expected DisplayFocused event, got {:?}", events[0]),
+        }
+    }
+
+    #[test]
+    fn test_emit_tags_changed_detection() {
+        use crate::event_emitter::EventEmitter;
+        use std::cell::RefCell;
+        use std::sync::mpsc as std_mpsc;
+        use yashiki_ipc::StateEvent;
+
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 0.0, 0.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        let state_cell = RefCell::new(state);
+        let (tx, rx) = std_mpsc::channel::<StateEvent>();
+        let event_emitter = EventEmitter::new(tx);
+
+        // Capture initial state (visible_tags = 1 on display 1)
+        let pre = capture_event_state(&state_cell);
+
+        // Change visible tags on display
+        state_cell
+            .borrow_mut()
+            .displays
+            .get_mut(&1)
+            .unwrap()
+            .visible_tags = crate::core::Tag::from_mask(0b10); // Tag 2
+
+        // Emit events
+        emit_state_change_events(&event_emitter, &state_cell, &pre);
+
+        // Verify TagsChanged event was emitted
+        let events: Vec<_> = rx.try_iter().collect();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StateEvent::TagsChanged {
+                display_id,
+                visible_tags,
+                previous_tags,
+            } => {
+                assert_eq!(*display_id, 1);
+                assert_eq!(*visible_tags, 0b10);
+                assert_eq!(*previous_tags, 1);
+            }
+            _ => panic!("Expected TagsChanged event, got {:?}", events[0]),
+        }
+    }
+
+    #[test]
+    fn test_emit_layout_changed_detection() {
+        use crate::event_emitter::EventEmitter;
+        use std::cell::RefCell;
+        use std::sync::mpsc as std_mpsc;
+        use yashiki_ipc::StateEvent;
+
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 0.0, 0.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        let state_cell = RefCell::new(state);
+        let (tx, rx) = std_mpsc::channel::<StateEvent>();
+        let event_emitter = EventEmitter::new(tx);
+
+        // Capture initial state (current_layout = None on display 1)
+        let pre = capture_event_state(&state_cell);
+
+        // Change layout on display
+        state_cell
+            .borrow_mut()
+            .displays
+            .get_mut(&1)
+            .unwrap()
+            .current_layout = Some("byobu".to_string());
+
+        // Emit events
+        emit_state_change_events(&event_emitter, &state_cell, &pre);
+
+        // Verify LayoutChanged event was emitted
+        let events: Vec<_> = rx.try_iter().collect();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StateEvent::LayoutChanged { display_id, layout } => {
+                assert_eq!(*display_id, 1);
+                assert_eq!(layout, "byobu");
+            }
+            _ => panic!("Expected LayoutChanged event, got {:?}", events[0]),
+        }
+    }
 }
