@@ -122,6 +122,13 @@ cp "${BUILD_DIR}/yashiki" "${APP_DIR}/Contents/MacOS/"
 cp "${BUILD_DIR}/yashiki-layout-tatami" "${APP_DIR}/Contents/Resources/layouts/"
 cp "${BUILD_DIR}/yashiki-layout-byobu" "${APP_DIR}/Contents/Resources/layouts/"
 
+# Create launcher wrapper
+cat > "${APP_DIR}/Contents/MacOS/yashiki-launcher" << 'EOF'
+#!/bin/bash
+exec "$(dirname "$0")/yashiki" start "$@"
+EOF
+chmod +x "${APP_DIR}/Contents/MacOS/yashiki-launcher"
+
 # Generate Info.plist
 sed "s/VERSION_PLACEHOLDER/${VERSION}/g" "${PROJECT_ROOT}/Info.plist.template" > "${APP_DIR}/Contents/Info.plist"
 

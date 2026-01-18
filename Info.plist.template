@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>yashiki</string>
+    <string>yashiki-launcher</string>
     <key>CFBundleIdentifier</key>
     <string>dev.typester.yashiki</string>
     <key>CFBundleName</key>
