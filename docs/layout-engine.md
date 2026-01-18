@@ -198,16 +198,25 @@ Built-in layout engines (`tatami`, `byobu`) are bundled with yashiki.
 
 ### Custom Layouts
 
-1. Create an executable that implements the protocol
-2. Place it in your PATH or specify the full path
-3. Use `layout-set` to activate:
+1. Create an executable named `yashiki-layout-<name>` that implements the protocol
+2. Place it in one of these locations:
+   - A directory in your system `PATH`
+   - A directory listed in `~/.config/yashiki/path` (one path per line)
+3. Use `layout-set` with the layout name (not the full executable name):
 
 ```sh
-# If in PATH
+# For a layout engine named yashiki-layout-my-layout
 yashiki layout-set my-layout
+```
 
-# Or use full path
-yashiki layout-set /path/to/my-layout
+**Custom search paths:**
+
+Create `~/.config/yashiki/path` to add custom directories:
+
+```sh
+# ~/.config/yashiki/path
+/home/user/my-layouts
+/opt/yashiki-layouts
 ```
 
 ### Configuration Example
@@ -218,8 +227,8 @@ yashiki layout-set /path/to/my-layout
 # Set default layout
 yashiki layout-set-default tatami
 
-# Use custom layout for specific tag
-yashiki layout-set --tags 4 /path/to/my-custom-layout
+# Use custom layout for specific tag (layout name only, not path)
+yashiki layout-set --tags 4 my-custom-layout
 
 # Configure layout parameters
 yashiki layout-cmd --layout tatami set-outer-gap 10
