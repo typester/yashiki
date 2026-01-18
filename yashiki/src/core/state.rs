@@ -5,7 +5,7 @@ use crate::macos::DisplayId;
 use crate::platform::WindowSystem;
 use std::collections::{HashMap, HashSet};
 use yashiki_ipc::{
-    CursorWarpMode, Direction, OutputDirection, OutputSpecifier, RuleAction, RuleMatcher,
+    CursorWarpMode, Direction, OuterGap, OutputDirection, OutputSpecifier, RuleAction, RuleMatcher,
     WindowRule,
 };
 
@@ -49,6 +49,7 @@ pub struct State {
     pub exec_path: String,
     pub rules: Vec<WindowRule>,
     pub cursor_warp: CursorWarpMode,
+    pub outer_gap: OuterGap,
 }
 
 impl State {
@@ -64,6 +65,7 @@ impl State {
             exec_path: String::new(),
             rules: Vec::new(),
             cursor_warp: CursorWarpMode::default(),
+            outer_gap: OuterGap::default(),
         }
     }
 

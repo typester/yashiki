@@ -21,8 +21,8 @@ Communication uses newline-delimited JSON. Each message is a single JSON object 
 enum LayoutMessage {
     // Request layout calculation
     Layout {
-        width: u32,      // Available width in pixels
-        height: u32,     // Available height in pixels
+        width: u32,      // Usable width in pixels (outer gap already subtracted)
+        height: u32,     // Usable height in pixels (outer gap already subtracted)
         windows: Vec<u32> // Window IDs to layout
     },
     // Send command to layout engine
@@ -32,6 +32,8 @@ enum LayoutMessage {
     }
 }
 ```
+
+> **Note:** The `width` and `height` values already have the outer gap subtracted by yashiki. Layout engines should position windows starting from (0, 0). Yashiki will add the outer gap offset when applying the geometries.
 
 **Example JSON:**
 ```json
@@ -108,7 +110,6 @@ Layout engines define their own commands. Examples from built-in engines:
 - `set-main-count <n>` - Set main window count
 - `zoom [window_id]` - Move window to main area
 - `set-inner-gap <px>` - Gap between windows
-- `set-outer-gap <all>` or `<v h>` or `<t r b l>` - Gap from edges
 
 **byobu (accordion):**
 - `set-padding <px>` - Stagger offset between windows
@@ -244,8 +245,11 @@ yashiki layout-set-default tatami
 # Use custom layout for specific tag (layout name only, not path)
 yashiki layout-set --tags 4 my-custom-layout
 
-# Configure layout parameters
-yashiki layout-cmd --layout tatami set-outer-gap 10
+# Configure outer gap (global, applied by daemon to all layouts)
+yashiki set-outer-gap 10
+
+# Configure inner gap (layout-specific)
+yashiki layout-cmd --layout tatami set-inner-gap 10
 ```
 
 ## Debugging Tips

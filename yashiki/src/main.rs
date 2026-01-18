@@ -66,6 +66,8 @@ enum SubCommand {
     ListRules(ListRulesCmd),
     SetCursorWarp(SetCursorWarpCmd),
     GetCursorWarp(GetCursorWarpCmd),
+    SetOuterGap(SetOuterGapCmd),
+    GetOuterGap(GetOuterGapCmd),
     Subscribe(SubscribeCmd),
     Quit(QuitCmd),
 }
@@ -386,6 +388,20 @@ struct SetCursorWarpCmd {
 #[argh(subcommand, name = "get-cursor-warp")]
 struct GetCursorWarpCmd {}
 
+/// Set the outer gap (gap between windows and screen edges)
+#[derive(FromArgs)]
+#[argh(subcommand, name = "set-outer-gap")]
+struct SetOuterGapCmd {
+    /// gap values: <all> | <v h> | <t r b l> (CSS-style: 1, 2, or 4 values)
+    #[argh(positional, greedy)]
+    values: Vec<String>,
+}
+
+/// Get current outer gap
+#[derive(FromArgs)]
+#[argh(subcommand, name = "get-outer-gap")]
+struct GetOuterGapCmd {}
+
 /// Subscribe to state change events
 #[derive(FromArgs)]
 #[argh(subcommand, name = "subscribe")]
@@ -550,6 +566,9 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
             };
             println!("{}", mode_str);
         }
+        Response::OuterGap { outer_gap } => {
+            println!("{}", outer_gap);
+        }
     }
 
     Ok(())
@@ -671,6 +690,19 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             Ok(Command::SetCursorWarp { mode })
         }
         SubCommand::GetCursorWarp(_) => Ok(Command::GetCursorWarp),
+        SubCommand::SetOuterGap(cmd) => {
+            if cmd.values.is_empty() {
+                bail!("set-outer-gap requires at least one value");
+            }
+            if cmd.values.len() != 1 && cmd.values.len() != 2 && cmd.values.len() != 4 {
+                bail!(
+                    "set-outer-gap: expected 1, 2, or 4 values (got {})",
+                    cmd.values.len()
+                );
+            }
+            Ok(Command::SetOuterGap { values: cmd.values })
+        }
+        SubCommand::GetOuterGap(_) => Ok(Command::GetOuterGap),
         SubCommand::Quit(_) => Ok(Command::Quit),
     }
 }
@@ -857,6 +889,20 @@ fn parse_command(args: &[String]) -> Result<Command> {
             Ok(Command::SetCursorWarp { mode })
         }
         "get-cursor-warp" => Ok(Command::GetCursorWarp),
+        "set-outer-gap" => {
+            let cmd: SetOuterGapCmd = from_argh(cmd_name, &cmd_args)?;
+            if cmd.values.is_empty() {
+                bail!("set-outer-gap requires at least one value");
+            }
+            if cmd.values.len() != 1 && cmd.values.len() != 2 && cmd.values.len() != 4 {
+                bail!(
+                    "set-outer-gap: expected 1, 2, or 4 values (got {})",
+                    cmd.values.len()
+                );
+            }
+            Ok(Command::SetOuterGap { values: cmd.values })
+        }
+        "get-outer-gap" => Ok(Command::GetOuterGap),
         "quit" => Ok(Command::Quit),
         _ => bail!("Unknown command: {}", cmd_name),
     }

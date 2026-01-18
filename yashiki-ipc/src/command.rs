@@ -1,3 +1,4 @@
+use crate::OuterGap;
 use serde::{Deserialize, Serialize};
 
 /// Cursor warp mode - controls when the mouse cursor follows focus
@@ -314,6 +315,12 @@ pub enum Command {
     },
     GetCursorWarp,
 
+    // Outer gap
+    SetOuterGap {
+        values: Vec<String>,
+    },
+    GetOuterGap,
+
     // Control
     Quit,
 }
@@ -357,6 +364,7 @@ pub enum Response {
     Layout { layout: String },
     ExecPath { path: String },
     CursorWarp { mode: CursorWarpMode },
+    OuterGap { outer_gap: OuterGap },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1129,6 +1137,68 @@ mod tests {
             Response::Windows { windows } => {
                 assert_eq!(windows.len(), 1);
                 assert_eq!(windows[0].app_id, Some("com.apple.Safari".to_string()));
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_command_set_outer_gap_serialization() {
+        let cmd = Command::SetOuterGap {
+            values: vec!["10".to_string()],
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"set_outer_gap\""));
+        assert!(json.contains("\"values\":[\"10\"]"));
+
+        let deserialized: Command = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Command::SetOuterGap { values } => {
+                assert_eq!(values, vec!["10"]);
+            }
+            _ => panic!("Wrong variant"),
+        }
+
+        // With two values
+        let cmd = Command::SetOuterGap {
+            values: vec!["10".to_string(), "20".to_string()],
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let deserialized: Command = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Command::SetOuterGap { values } => {
+                assert_eq!(values, vec!["10", "20"]);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_command_get_outer_gap_serialization() {
+        let cmd = Command::GetOuterGap;
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"get_outer_gap\""));
+
+        let deserialized: Command = serde_json::from_str(&json).unwrap();
+        assert!(matches!(deserialized, Command::GetOuterGap));
+    }
+
+    #[test]
+    fn test_response_outer_gap_serialization() {
+        let resp = Response::OuterGap {
+            outer_gap: OuterGap::all(10),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"type\":\"outer_gap\""));
+        assert!(json.contains("\"outer_gap\":{"));
+
+        let deserialized: Response = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Response::OuterGap { outer_gap } => {
+                assert_eq!(outer_gap.top, 10);
+                assert_eq!(outer_gap.right, 10);
+                assert_eq!(outer_gap.bottom, 10);
+                assert_eq!(outer_gap.left, 10);
             }
             _ => panic!("Wrong variant"),
         }

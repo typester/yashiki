@@ -199,7 +199,7 @@ yashiki layout-get                      # Get current layout
 yashiki layout-get --tags 2             # Get layout for specific tags
 yashiki layout-get --output 2           # Get layout for specific display
 yashiki layout-cmd set-main-ratio 0.6   # Send command to current layout engine
-yashiki layout-cmd --layout tatami set-outer-gap 10  # Send command to specific layout
+yashiki layout-cmd --layout tatami set-inner-gap 10  # Send command to specific layout
 yashiki layout-cmd inc-main-count       # Increase main window count
 yashiki layout-cmd zoom                 # Move focused window to main area (tatami)
 yashiki layout-cmd zoom 123             # Move specific window to main area (tatami)
@@ -226,6 +226,10 @@ yashiki set-cursor-warp disabled          # Disable cursor warp (default)
 yashiki set-cursor-warp on-output-change  # Warp on display switch only
 yashiki set-cursor-warp on-focus-change   # Warp on all focus changes
 yashiki get-cursor-warp           # Get current cursor warp mode
+yashiki set-outer-gap 10              # Set outer gap (all sides)
+yashiki set-outer-gap 10 20           # Set outer gap (vertical, horizontal)
+yashiki set-outer-gap 10 20 15 25     # Set outer gap (top, right, bottom, left)
+yashiki get-outer-gap                 # Get current outer gap
 yashiki subscribe                 # Subscribe to all state events
 yashiki subscribe --snapshot      # Subscribe with initial snapshot
 yashiki subscribe --filter focus,tags  # Subscribe to specific events
@@ -277,10 +281,10 @@ yashiki bind alt-f window-toggle-fullscreen
 yashiki bind alt-shift-f window-toggle-float
 yashiki bind alt-shift-c window-close
 
-# Gap configuration (--layout sends to specific engine, without sends to current)
-yashiki layout-cmd --layout tatami set-inner-gap 10
-yashiki layout-cmd --layout tatami set-outer-gap 10
-yashiki layout-cmd --layout byobu set-padding 30
+# Gap configuration
+yashiki set-outer-gap 10  # Outer gap: applied by daemon to all layouts + fullscreen
+yashiki layout-cmd --layout tatami set-inner-gap 10  # Inner gap: layout-specific
+yashiki layout-cmd --layout byobu set-padding 30  # Byobu stagger offset
 
 # Window rules (applied to new windows automatically)
 yashiki rule-add --app-name Finder float          # Finder windows float
@@ -345,15 +349,14 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
 
 ### yashiki-layout-tatami (layout engine)
 - Master-stack layout
-- Internal state: main_count, main_ratio, inner_gap, outer_gap, focused_window_id, main_window_id
+- Internal state: main_count, main_ratio, inner_gap, focused_window_id, main_window_id
 - Commands:
   - `focus-changed <window_id>` - notification from yashiki (returns `Ok`)
   - `zoom [window_id]` - set main window (uses focused window if id omitted)
   - `set-main-ratio <0.1-0.9>`, `inc-main-ratio [delta]`, `dec-main-ratio [delta]` (default delta: 0.05)
   - `inc-main-count`, `dec-main-count`, `set-main-count <n>`
   - `set-inner-gap <px>` - gap between windows
-  - `set-outer-gap <all> | <v h> | <t r b l>` - gap from screen edges (CSS-style: 1/2/4 values)
-  - `inc-inner-gap [delta]`, `dec-inner-gap [delta]`, `inc-outer-gap [delta]`, `dec-outer-gap [delta]`
+  - `inc-inner-gap [delta]`, `dec-inner-gap [delta]`
 
 ### yashiki-layout-byobu (layout engine)
 - Accordion layout (AeroSpace-style)
@@ -552,16 +555,24 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
   | `position X Y` | Move window to position (immediate effect) |
   | `dimensions W H` | Resize window (immediate effect) |
 
+### Outer Gap (Global vs Per-Layout)
+- Outer gap is managed by yashiki daemon, not layout engines
+- Applied uniformly to ALL layouts (tatami, byobu, custom engines)
+- Applied to fullscreen windows as well
+- State: `State.outer_gap: OuterGap`
+- Implementation: yashiki subtracts outer gap from dimensions before sending to layout engines, then adds offset when applying geometries
+- CSS-style syntax: `<all>` | `<v h>` | `<t r b l>`
+
 ## Testing
 
-### Current Test Coverage (122 tests)
+### Current Test Coverage
 
 Run tests: `cargo test --all`
 
 **Tested modules:**
 - `core/tag.rs` - Tag bitmask operations (7 tests)
 - `macos/hotkey.rs` - `parse_hotkey()`, `format_hotkey()` (15 tests)
-- `yashiki-ipc` - Command/Response/LayoutMessage/WindowRule/StateEvent serialization (55 tests)
+- `yashiki-ipc` - Command/Response/LayoutMessage/WindowRule/StateEvent/OuterGap serialization
 - `core/state.rs` - State management with MockWindowSystem (13 tests)
 - `app.rs` - `process_command()` effect generation, `emit_state_change_events()` event detection (13 tests)
 - `event_emitter.rs` - `create_snapshot()`, `window_to_info()`, `display_to_info()` (3 tests)

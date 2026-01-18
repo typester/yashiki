@@ -75,8 +75,8 @@ cargo install --path yashiki-layout-byobu    # Accordion layout
 
    # Layout configuration
    yashiki layout-set-default tatami
-   yashiki layout-cmd --layout tatami set-outer-gap 10
-   yashiki layout-cmd --layout tatami set-inner-gap 10
+   yashiki set-outer-gap 10  # Gap between windows and screen edges (global)
+   yashiki layout-cmd --layout tatami set-inner-gap 10  # Gap between windows (layout-specific)
 
    # Cursor warp (mouse follows focus)
    yashiki set-cursor-warp on-focus-change
@@ -196,7 +196,7 @@ yashiki layout-set byobu              # Set layout for current tag
 yashiki layout-set --tags 4 byobu     # Set layout for tag 3
 yashiki layout-get                    # Get current layout
 yashiki layout-cmd set-main-ratio 0.6 # Send command to layout
-yashiki layout-cmd --layout tatami set-outer-gap 10  # Configure specific layout
+yashiki layout-cmd --layout tatami set-inner-gap 10  # Configure specific layout
 ```
 
 ### Utilities
@@ -218,6 +218,17 @@ yashiki set-cursor-warp disabled          # Don't move cursor (default)
 yashiki set-cursor-warp on-output-change  # Move cursor when switching displays
 yashiki set-cursor-warp on-focus-change   # Always move cursor to focused window
 yashiki get-cursor-warp                   # Get current mode
+```
+
+### Outer Gap
+
+Control the gap between windows and screen edges. Applied globally to all layouts and fullscreen windows.
+
+```sh
+yashiki set-outer-gap 10              # Set all sides to 10px
+yashiki set-outer-gap 10 20           # Set vertical=10px, horizontal=20px
+yashiki set-outer-gap 10 20 15 25     # Set top=10, right=20, bottom=15, left=25 (CSS-style)
+yashiki get-outer-gap                 # Get current outer gap
 ```
 
 ### State Streaming
@@ -305,7 +316,6 @@ Classic tiling layout with main area and stack.
 | `dec-main-count` | Remove window from main area |
 | `zoom [window_id]` | Move window to main area |
 | `set-inner-gap <px>` | Gap between windows |
-| `set-outer-gap <px>` | Gap from screen edges |
 
 ### byobu (accordion)
 
