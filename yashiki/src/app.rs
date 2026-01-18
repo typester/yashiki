@@ -490,6 +490,13 @@ fn run_init_script() {
             let elapsed = start.elapsed();
             if status.success() {
                 tracing::info!("Init script completed in {:.2?}", elapsed);
+                // Apply rules to existing windows after init script completes
+                if let Ok(mut client) = crate::ipc::IpcClient::connect() {
+                    match client.send(&Command::ApplyRules) {
+                        Ok(_) => tracing::info!("Applied rules to existing windows"),
+                        Err(e) => tracing::warn!("Failed to apply rules: {}", e),
+                    }
+                }
             } else {
                 tracing::warn!(
                     "Init script exited with status: {} (took {:.2?})",
@@ -902,6 +909,30 @@ fn process_command(
                 })
                 .collect();
             CommandResult::with_response(Response::Rules { rules })
+        }
+        Command::ApplyRules => {
+            // Apply rules to all existing windows
+            let (affected_displays, mut effects) = state.apply_rules_to_all_windows();
+
+            // For each affected display, compute window hide/show moves
+            let mut all_moves = Vec::new();
+            for display_id in &affected_displays {
+                let moves = state.compute_layout_changes(*display_id);
+                all_moves.extend(moves);
+            }
+
+            // Prepend window moves to effects
+            if !all_moves.is_empty() {
+                effects.insert(0, Effect::ApplyWindowMoves(all_moves));
+            }
+
+            // Add retile for affected displays
+            if !affected_displays.is_empty() {
+                effects.push(Effect::RetileDisplays(affected_displays));
+            }
+
+            tracing::info!("Applied rules to all existing windows");
+            CommandResult::ok_with_effects(effects)
         }
 
         // Control
