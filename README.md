@@ -21,24 +21,47 @@ Early development stage. API and configuration format may change.
 
 ## Installation
 
+### Homebrew (Recommended)
+
+```sh
+brew tap typester/yashiki
+brew install --cask yashiki
+```
+
+The cask installs:
+- `Yashiki.app` to `/Applications`
+- CLI tools: `yashiki`, `yashiki-layout-tatami`, `yashiki-layout-byobu`
+
+**Note:** Yashiki.app is not signed. On first launch, allow it in System Settings → Privacy & Security. Or install with `--no-quarantine`:
+
+```sh
+brew install --cask --no-quarantine yashiki
+```
+
 ### From Source
 
 ```sh
+# Core daemon and CLI
 cargo install --path yashiki
+
+# Install layout engines you want to use
+cargo install --path yashiki-layout-tatami   # Master-stack layout
+cargo install --path yashiki-layout-byobu    # Accordion layout
 ```
 
 ### Grant Accessibility Permission
 
 1. Open System Settings → Privacy & Security → Accessibility
-2. Add your terminal app (e.g., Terminal.app, iTerm2, Ghostty)
-3. Or add the yashiki binary directly after installation
+2. Add `Yashiki.app` (if installed via Homebrew or as app bundle)
+3. Or add your terminal app if running `yashiki start` directly (Not recommended)
 
 ## Quick Start
 
-1. Start the daemon:
-   ```sh
-   yashiki start
-   ```
+1. Launch Yashiki.app:
+   - If installed via Homebrew: Open `/Applications/Yashiki.app`
+   - The app will request Accessibility permission on first launch
+
+   **Note:** Running `yashiki start` from terminal is not recommended as it requires granting Accessibility permission to your terminal app.
 
 2. Create config file `~/.config/yashiki/init`:
    ```sh
@@ -49,13 +72,11 @@ cargo install --path yashiki
    yashiki layout-cmd --layout tatami set-outer-gap 10
    yashiki layout-cmd --layout tatami set-inner-gap 10
 
-   # Tag bindings (tag N = bitmask 1<<(N-1))
-   yashiki bind alt-1 tag-view 1           # Tag 1
-   yashiki bind alt-2 tag-view 2           # Tag 2
-   yashiki bind alt-3 tag-view 4           # Tag 3
-   yashiki bind alt-shift-1 window-move-to-tag 1
-   yashiki bind alt-shift-2 window-move-to-tag 2
-   yashiki bind alt-shift-3 window-move-to-tag 4
+   # Tag bindings (tag N = bitmask $((1<<(N-1))))
+   for i in 1 2 3 4 5 6 7 8 9; do
+     yashiki bind "alt-$i" tag-view "$((1<<(i-1)))"
+     yashiki bind "alt-shift-$i" window-move-to-tag "$((1<<(i-1)))"
+   done
 
    # Window focus
    yashiki bind alt-j window-focus next
@@ -74,10 +95,8 @@ cargo install --path yashiki
    ```
 
 4. Restart yashiki to apply config:
-   ```sh
-   yashiki quit
-   yashiki start
-   ```
+   - Quit with `yashiki quit`
+   - Relaunch Yashiki.app
 
 ## Configuration
 
