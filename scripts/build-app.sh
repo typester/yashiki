@@ -78,7 +78,7 @@ cargo build -p yashiki -p yashiki-layout-tatami -p yashiki-layout-byobu "${CARGO
 VERSION=$(grep '^version' "${PROJECT_ROOT}/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
 echo "Version: ${VERSION}"
 
-# Determine architecture suffix for the app name
+# Determine architecture suffix for zip name
 if [[ -n "$TARGET" ]]; then
     case "$TARGET" in
         aarch64-apple-darwin)
@@ -107,7 +107,7 @@ else
     esac
 fi
 
-APP_NAME="Yashiki${ARCH_SUFFIX}.app"
+APP_NAME="Yashiki.app"
 APP_DIR="${OUTPUT_DIR}/${APP_NAME}"
 
 echo "Creating ${APP_NAME}..."
@@ -124,6 +124,10 @@ cp "${BUILD_DIR}/yashiki-layout-byobu" "${APP_DIR}/Contents/Resources/layouts/"
 
 # Generate Info.plist
 sed "s/VERSION_PLACEHOLDER/${VERSION}/g" "${PROJECT_ROOT}/Info.plist.template" > "${APP_DIR}/Contents/Info.plist"
+
+# Ad-hoc code signing
+echo "Signing ${APP_NAME}..."
+codesign --force --deep -s - "${APP_DIR}"
 
 echo "Created: ${APP_DIR}"
 
