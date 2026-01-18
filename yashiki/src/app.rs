@@ -530,6 +530,7 @@ fn process_command(
                     height: w.frame.height,
                     is_focused: state.focused == Some(w.id),
                     is_floating: w.is_floating,
+                    is_fullscreen: w.is_fullscreen,
                 })
                 .collect();
             CommandResult::with_response(Response::Windows { windows })
@@ -653,6 +654,30 @@ fn process_command(
             if let Some((window_id, pid)) = result {
                 tracing::info!("Focusing output - window {} (pid {})", window_id, pid);
                 CommandResult::ok_with_effects(vec![Effect::FocusWindow { window_id, pid }])
+            } else {
+                CommandResult::ok()
+            }
+        }
+
+        // Fullscreen toggle
+        Command::WindowToggleFullscreen => {
+            if let Some((display_id, is_fullscreen, window_id, pid)) =
+                state.toggle_focused_fullscreen()
+            {
+                if is_fullscreen {
+                    // Going fullscreen - apply fullscreen geometry
+                    CommandResult::ok_with_effects(vec![
+                        Effect::ApplyFullscreen {
+                            window_id,
+                            pid,
+                            display_id,
+                        },
+                        Effect::RetileDisplays(vec![display_id]),
+                    ])
+                } else {
+                    // Exiting fullscreen - just retile (layout will recompute position)
+                    CommandResult::ok_with_effects(vec![Effect::RetileDisplays(vec![display_id])])
+                }
             } else {
                 CommandResult::ok()
             }
@@ -927,6 +952,23 @@ fn execute_effects<M: WindowManipulator>(
             } => {
                 manipulator.set_window_dimensions(window_id, pid, width, height);
             }
+            Effect::ApplyFullscreen {
+                window_id,
+                pid,
+                display_id,
+            } => {
+                let state = state.borrow();
+                if let Some(display) = state.displays.get(&display_id) {
+                    manipulator.set_window_frame(
+                        window_id,
+                        pid,
+                        display.frame.x,
+                        display.frame.y,
+                        display.frame.width,
+                        display.frame.height,
+                    );
+                }
+            }
             Effect::Retile => {
                 do_retile(state, layout_engine_manager, manipulator);
             }
@@ -1011,6 +1053,35 @@ fn retile_single_display<M: WindowManipulator>(
     manipulator: &M,
     display_id: crate::macos::DisplayId,
 ) {
+    // First, handle any fullscreen windows on this display
+    {
+        let state = state.borrow();
+        if let Some(display) = state.displays.get(&display_id) {
+            let fullscreen_windows: Vec<_> = state
+                .windows
+                .values()
+                .filter(|w| {
+                    w.display_id == display_id
+                        && w.is_fullscreen
+                        && w.tags.intersects(display.visible_tags)
+                        && !w.is_hidden()
+                })
+                .map(|w| (w.id, w.pid))
+                .collect();
+
+            for (window_id, pid) in fullscreen_windows {
+                manipulator.set_window_frame(
+                    window_id,
+                    pid,
+                    display.frame.x,
+                    display.frame.y,
+                    display.frame.width,
+                    display.frame.height,
+                );
+            }
+        }
+    }
+
     // Get layout parameters with immutable borrow
     let (window_ids, width, height, display_frame, layout_name) = {
         let state = state.borrow();
@@ -1053,21 +1124,39 @@ fn retile_single_display<M: WindowManipulator>(
 
 fn focus_visible_window_if_needed<M: WindowManipulator>(state: &RefCell<State>, manipulator: &M) {
     let state = state.borrow();
-    let visible_windows = state.visible_windows_on_display(state.focused_display);
+    let display_id = state.focused_display;
+    let Some(display) = state.displays.get(&display_id) else {
+        return;
+    };
 
-    if visible_windows.is_empty() {
+    // Get all visible windows on display (including fullscreen and floating)
+    let all_visible: Vec<_> = state
+        .windows
+        .values()
+        .filter(|w| {
+            w.display_id == display_id && w.tags.intersects(display.visible_tags) && !w.is_hidden()
+        })
+        .collect();
+
+    if all_visible.is_empty() {
         return;
     }
 
     // Check if current focus is on a visible window
     let focus_is_visible = state
         .focused
-        .map(|id| visible_windows.iter().any(|w| w.id == id))
+        .map(|id| all_visible.iter().any(|w| w.id == id))
         .unwrap_or(false);
 
     if !focus_is_visible {
-        // Focus the first visible window
-        if let Some(window) = visible_windows.first() {
+        // Focus the first visible window (prefer tiled, then fullscreen, then floating)
+        let window_to_focus = all_visible
+            .iter()
+            .find(|w| w.is_tiled())
+            .or_else(|| all_visible.iter().find(|w| w.is_fullscreen))
+            .or_else(|| all_visible.first());
+
+        if let Some(window) = window_to_focus {
             tracing::info!(
                 "Focusing visible window {} ({}) after tag switch",
                 window.id,

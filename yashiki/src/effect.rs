@@ -21,6 +21,11 @@ pub enum Effect {
         width: u32,
         height: u32,
     },
+    ApplyFullscreen {
+        window_id: u32,
+        pid: i32,
+        display_id: DisplayId,
+    },
     Retile,
     RetileDisplays(Vec<DisplayId>),
     SendLayoutCommand {

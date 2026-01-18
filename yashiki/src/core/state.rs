@@ -8,6 +8,16 @@ use yashiki_ipc::{
     Direction, OutputDirection, OutputSpecifier, RuleAction, RuleMatcher, WindowRule,
 };
 
+/// Result of applying rules to a window
+#[derive(Debug, Default)]
+pub struct RuleApplicationResult {
+    pub tags: Option<u32>,
+    pub display_id: Option<DisplayId>,
+    pub position: Option<(i32, i32)>,
+    pub dimensions: Option<(u32, u32)>,
+    pub is_floating: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowMove {
     pub window_id: WindowId,
@@ -636,6 +646,27 @@ impl State {
         self.compute_layout_changes_for_display(display_id)
     }
 
+    /// Toggle fullscreen state for focused window.
+    /// Returns Some((display_id, is_now_fullscreen, window_id, pid)) if toggled successfully.
+    pub fn toggle_focused_fullscreen(&mut self) -> Option<(DisplayId, bool, u32, i32)> {
+        let focused_id = self.focused?;
+        let window = self.windows.get_mut(&focused_id)?;
+
+        window.is_fullscreen = !window.is_fullscreen;
+        tracing::info!(
+            "Toggle fullscreen for window {}: {}",
+            window.id,
+            window.is_fullscreen
+        );
+
+        Some((
+            window.display_id,
+            window.is_fullscreen,
+            window.id,
+            window.pid,
+        ))
+    }
+
     pub fn focus_window(&self, direction: Direction) -> Option<(WindowId, i32)> {
         let visible_tags = self.visible_tags();
         let visible: Vec<_> = self
@@ -898,7 +929,7 @@ impl State {
     }
 
     /// Get windows visible on a specific display for tiling, sorted by window_order.
-    /// Excludes floating windows.
+    /// Excludes floating and fullscreen windows.
     pub fn visible_windows_on_display(&self, display_id: DisplayId) -> Vec<&Window> {
         let Some(display) = self.displays.get(&display_id) else {
             return vec![];
@@ -910,7 +941,7 @@ impl State {
                 w.display_id == display_id
                     && w.tags.intersects(display.visible_tags)
                     && !w.is_hidden()
-                    && !w.is_floating
+                    && w.is_tiled()
             })
             .collect();
 
@@ -950,7 +981,7 @@ impl State {
         self.rules.push(rule);
         // Sort by specificity in descending order (more specific first)
         self.rules
-            .sort_by(|a, b| b.specificity().cmp(&a.specificity()));
+            .sort_by_key(|r| std::cmp::Reverse(r.specificity()));
     }
 
     /// Remove a rule matching the given matcher and action
@@ -979,61 +1010,49 @@ impl State {
     }
 
     /// Apply matching rules to a window and return effects to execute.
-    /// Returns (tags, display_id, position, dimensions, is_floating)
     pub fn apply_rules_to_window(
         &self,
         app_name: &str,
         app_id: Option<&str>,
         title: &str,
-    ) -> (
-        Option<u32>,
-        Option<DisplayId>,
-        Option<(i32, i32)>,
-        Option<(u32, u32)>,
-        bool,
-    ) {
+    ) -> RuleApplicationResult {
         let matching_rules = self.get_matching_rules(app_name, app_id, title);
-
-        let mut tags: Option<u32> = None;
-        let mut output: Option<DisplayId> = None;
-        let mut position: Option<(i32, i32)> = None;
-        let mut dimensions: Option<(u32, u32)> = None;
-        let mut is_floating = false;
+        let mut result = RuleApplicationResult::default();
 
         // Apply rules in order (most specific first due to sorting)
         for rule in matching_rules {
             match &rule.action {
                 RuleAction::Float => {
-                    is_floating = true;
+                    result.is_floating = true;
                 }
                 RuleAction::NoFloat => {
-                    is_floating = false;
+                    result.is_floating = false;
                 }
                 RuleAction::Tags { tags: t } => {
-                    if tags.is_none() {
-                        tags = Some(*t);
+                    if result.tags.is_none() {
+                        result.tags = Some(*t);
                     }
                 }
                 RuleAction::Output { output: o } => {
-                    if output.is_none() {
+                    if result.display_id.is_none() {
                         // Resolve output specifier to display ID
-                        output = self.resolve_output(o);
+                        result.display_id = self.resolve_output(o);
                     }
                 }
                 RuleAction::Position { x, y } => {
-                    if position.is_none() {
-                        position = Some((*x, *y));
+                    if result.position.is_none() {
+                        result.position = Some((*x, *y));
                     }
                 }
                 RuleAction::Dimensions { width, height } => {
-                    if dimensions.is_none() {
-                        dimensions = Some((*width, *height));
+                    if result.dimensions.is_none() {
+                        result.dimensions = Some((*width, *height));
                     }
                 }
             }
         }
 
-        (tags, output, position, dimensions, is_floating)
+        result
     }
 
     /// Apply rules to a newly created window.
@@ -1054,12 +1073,11 @@ impl State {
         };
 
         // Apply rules
-        let (tags, output, position, dimensions, is_floating) =
-            self.apply_rules_to_window(&app_name, app_id.as_deref(), &title);
+        let rule_result = self.apply_rules_to_window(&app_name, app_id.as_deref(), &title);
 
         // Modify the window
         if let Some(window) = self.windows.get_mut(&window_id) {
-            if let Some(tag_mask) = tags {
+            if let Some(tag_mask) = rule_result.tags {
                 window.tags = Tag::new(tag_mask);
                 tracing::info!(
                     "Applied rule: window {} tags set to {}",
@@ -1067,7 +1085,7 @@ impl State {
                     tag_mask
                 );
             }
-            if let Some(display_id) = output {
+            if let Some(display_id) = rule_result.display_id {
                 window.display_id = display_id;
                 tracing::info!(
                     "Applied rule: window {} display set to {}",
@@ -1075,7 +1093,7 @@ impl State {
                     display_id
                 );
             }
-            if is_floating {
+            if rule_result.is_floating {
                 window.is_floating = true;
                 tracing::info!("Applied rule: window {} set to floating", window_id);
             }
@@ -1084,7 +1102,7 @@ impl State {
         // Build effects for position and dimensions
         let mut effects = Vec::new();
 
-        if let Some((x, y)) = position {
+        if let Some((x, y)) = rule_result.position {
             tracing::info!(
                 "Rule requires position for window {} (pid {}): ({}, {})",
                 window_id,
@@ -1100,7 +1118,7 @@ impl State {
             });
         }
 
-        if let Some((width, height)) = dimensions {
+        if let Some((width, height)) = rule_result.dimensions {
             tracing::info!(
                 "Rule requires dimensions for window {} (pid {}): ({}, {})",
                 window_id,

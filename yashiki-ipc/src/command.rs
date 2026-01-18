@@ -375,6 +375,7 @@ pub struct WindowInfo {
     pub height: u32,
     pub is_focused: bool,
     pub is_floating: bool,
+    pub is_fullscreen: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -549,6 +550,7 @@ mod tests {
                 height: 600,
                 is_focused: true,
                 is_floating: false,
+                is_fullscreen: false,
             }],
         };
         let json = serde_json::to_string(&resp).unwrap();
@@ -561,6 +563,7 @@ mod tests {
                 assert_eq!(windows[0].title, "Test Window");
                 assert!(windows[0].is_focused);
                 assert!(!windows[0].is_floating);
+                assert!(!windows[0].is_fullscreen);
             }
             _ => panic!("Wrong variant"),
         }
@@ -1097,6 +1100,7 @@ mod tests {
                 height: 600,
                 is_focused: true,
                 is_floating: false,
+                is_fullscreen: false,
             }],
         };
         let json = serde_json::to_string(&resp).unwrap();

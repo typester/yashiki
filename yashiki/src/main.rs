@@ -406,6 +406,21 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
         }
         Response::Windows { windows } => {
             for w in windows {
+                let mut flags = Vec::new();
+                if w.is_focused {
+                    flags.push("*");
+                }
+                if w.is_floating {
+                    flags.push("float");
+                }
+                if w.is_fullscreen {
+                    flags.push("full");
+                }
+                let flag_str = if flags.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", flags.join(","))
+                };
                 println!(
                     "{}: {} ({}) - {} [tags={}, {}x{} @ ({},{})]{}",
                     w.id,
@@ -417,7 +432,7 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
                     w.height,
                     w.x,
                     w.y,
-                    if w.is_focused { " *" } else { "" }
+                    flag_str
                 );
             }
         }
