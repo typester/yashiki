@@ -3,6 +3,8 @@ name = "yashiki"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "macOS tiling window manager"
 
 [dependencies]
 yashiki-ipc.workspace = true

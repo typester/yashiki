@@ -3,6 +3,8 @@ name = "yashiki-layout-byobu"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Accordion stacking layout engine for yashiki window manager"
 
 [dependencies]
 yashiki-ipc.workspace = true

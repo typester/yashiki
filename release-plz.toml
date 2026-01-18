@@ -1,17 +1,4 @@
 [workspace]
 changelog_update = true
-git_only = true
 git_release_enable = true
 git_release_draft = false
-
-[[package]]
-name = "yashiki-ipc"
-release = false
-
-[[package]]
-name = "yashiki-layout-tatami"
-release = false
-
-[[package]]
-name = "yashiki-layout-byobu"
-release = false
