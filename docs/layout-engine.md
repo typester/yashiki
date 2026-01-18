@@ -199,9 +199,10 @@ Built-in layout engines (`tatami`, `byobu`) are bundled with yashiki.
 ### Custom Layouts
 
 1. Create an executable named `yashiki-layout-<name>` that implements the protocol
-2. Place it in one of these locations:
-   - A directory in your system `PATH`
-   - A directory listed in `~/.config/yashiki/path` (one path per line)
+2. Ensure it's discoverable via yashiki's exec path:
+   - Built-in layouts are found in the yashiki executable directory
+   - System `PATH` is included by default
+   - Add custom directories using `add-exec-path` in your init script
 3. Use `layout-set` with the layout name (not the full executable name):
 
 ```sh
@@ -209,20 +210,33 @@ Built-in layout engines (`tatami`, `byobu`) are bundled with yashiki.
 yashiki layout-set my-layout
 ```
 
-**Custom search paths:**
+**Exec path management:**
 
-Create `~/.config/yashiki/path` to add custom directories:
+The exec path controls where yashiki searches for layout engines and where `exec` commands run.
 
 ```sh
-# ~/.config/yashiki/path
-/home/user/my-layouts
-/opt/yashiki-layouts
+# View current exec path
+yashiki exec-path
+
+# Add a directory to the search path (high priority)
+yashiki add-exec-path /home/user/my-layouts
+
+# Add to end of search path (low priority)
+yashiki add-exec-path --append /opt/yashiki-layouts
+
+# Replace entire exec path
+yashiki set-exec-path "/custom/path:/another/path"
 ```
+
+Default exec path: `<yashiki_executable_dir>:<system_PATH>`
 
 ### Configuration Example
 
 ```sh
 # ~/.config/yashiki/init
+
+# Add custom layout directory to exec path
+yashiki add-exec-path /home/user/my-layouts
 
 # Set default layout
 yashiki layout-set-default tatami

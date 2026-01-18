@@ -67,6 +67,9 @@ cargo install --path yashiki-layout-byobu    # Accordion layout
    ```sh
    #!/bin/sh
 
+   # Add Homebrew to exec path (if needed for custom layout engines)
+   # yashiki add-exec-path /opt/homebrew/bin
+
    # Layout configuration
    yashiki layout-set-default tatami
    yashiki layout-cmd --layout tatami set-outer-gap 10
@@ -196,6 +199,19 @@ yashiki get-state                # Get current state
 yashiki exec "open -a Safari"    # Execute command
 yashiki exec-or-focus --app-name Safari "open -a Safari"  # Focus or launch
 ```
+
+### Exec Path
+
+The exec path is used for `exec` commands and custom layout engine discovery.
+
+```sh
+yashiki exec-path                # Get current exec path
+yashiki set-exec-path "/path1:/path2"  # Set exec path
+yashiki add-exec-path /opt/homebrew/bin       # Add to start (high priority)
+yashiki add-exec-path --append /usr/local/bin # Add to end (low priority)
+```
+
+Default exec path: `<yashiki_executable_dir>:<system_PATH>`
 
 ## Built-in Layout Engines
 
