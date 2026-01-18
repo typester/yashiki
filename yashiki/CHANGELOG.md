@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/typester/yashiki/compare/yashiki-v0.4.0...yashiki-v0.4.1) - 2026-01-18
+
+### Fixed
+
+- use Tag::from_mask() for rule tag application ([#27](https://github.com/typester/yashiki/pull/27))
+
 ## [0.4.0](https://github.com/typester/yashiki/compare/yashiki-v0.3.0...yashiki-v0.4.0) - 2026-01-18
 
 ### Added
