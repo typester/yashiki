@@ -363,21 +363,14 @@ impl App {
 
                 // Apply rules to newly created windows
                 for window_id in new_window_ids {
-                    let (position, dimensions) =
-                        ctx.state.borrow_mut().apply_rules_to_new_window(window_id);
-
-                    // Execute effects for position and dimensions
-                    if let Some((window_id, pid)) =
-                        ctx.state.borrow().get_window_info_for_effects(window_id)
-                    {
-                        if let Some((x, y)) = position {
-                            ctx.window_manipulator
-                                .move_window_to_position(window_id, pid, x, y);
-                        }
-                        if let Some((width, height)) = dimensions {
-                            ctx.window_manipulator
-                                .set_window_dimensions(window_id, pid, width, height);
-                        }
+                    let effects = ctx.state.borrow_mut().apply_rules_to_new_window(window_id);
+                    if !effects.is_empty() {
+                        let _ = execute_effects(
+                            effects,
+                            &ctx.state,
+                            &ctx.layout_engine_manager,
+                            &ctx.window_manipulator,
+                        );
                     }
                 }
 

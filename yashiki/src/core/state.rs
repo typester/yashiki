@@ -1,4 +1,5 @@
 use super::{Display, Rect, Tag, Window, WindowId};
+use crate::effect::Effect;
 use crate::event::Event;
 use crate::macos::DisplayId;
 use crate::platform::WindowSystem;
@@ -1031,15 +1032,12 @@ impl State {
 
     /// Apply rules to a newly created window.
     /// Modifies the window in place (tags, display_id, is_floating) and returns
-    /// (position, dimensions) as effects to be executed.
-    pub fn apply_rules_to_new_window(
-        &mut self,
-        window_id: WindowId,
-    ) -> (Option<(i32, i32)>, Option<(u32, u32)>) {
-        // Get app_name and title from the window
+    /// Vec<Effect> for position and dimensions to be executed.
+    pub fn apply_rules_to_new_window(&mut self, window_id: WindowId) -> Vec<Effect> {
+        // Get app_name, title, and pid from the window
         let (app_name, title, pid) = {
             let Some(window) = self.windows.get(&window_id) else {
-                return (None, None);
+                return vec![];
             };
             (window.app_name.clone(), window.title.clone(), window.pid)
         };
@@ -1072,30 +1070,42 @@ impl State {
             }
         }
 
-        // Log position/dimensions if they will be applied
-        if position.is_some() {
+        // Build effects for position and dimensions
+        let mut effects = Vec::new();
+
+        if let Some((x, y)) = position {
             tracing::info!(
-                "Rule requires position for window {} (pid {}): {:?}",
+                "Rule requires position for window {} (pid {}): ({}, {})",
                 window_id,
                 pid,
-                position
+                x,
+                y
             );
-        }
-        if dimensions.is_some() {
-            tracing::info!(
-                "Rule requires dimensions for window {} (pid {}): {:?}",
+            effects.push(Effect::MoveWindowToPosition {
                 window_id,
                 pid,
-                dimensions
-            );
+                x,
+                y,
+            });
         }
 
-        (position, dimensions)
-    }
+        if let Some((width, height)) = dimensions {
+            tracing::info!(
+                "Rule requires dimensions for window {} (pid {}): ({}, {})",
+                window_id,
+                pid,
+                width,
+                height
+            );
+            effects.push(Effect::SetWindowDimensions {
+                window_id,
+                pid,
+                width,
+                height,
+            });
+        }
 
-    /// Get window info for creating effects (window_id, pid)
-    pub fn get_window_info_for_effects(&self, window_id: WindowId) -> Option<(u32, i32)> {
-        self.windows.get(&window_id).map(|w| (w.id, w.pid))
+        effects
     }
 }
 
