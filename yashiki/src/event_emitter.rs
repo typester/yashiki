@@ -33,6 +33,7 @@ impl EventEmitter {
     }
 
     /// Emit a window updated event
+    #[allow(dead_code)]
     pub fn emit_window_updated(&self, window: &Window, focused: Option<u32>) {
         self.emit(StateEvent::WindowUpdated {
             window: window_to_info(window, focused),
@@ -50,6 +51,7 @@ impl EventEmitter {
     }
 
     /// Emit a display added event
+    #[allow(dead_code)]
     pub fn emit_display_added(&self, display: &Display, focused_display: u32) {
         self.emit(StateEvent::DisplayAdded {
             display: display_to_info(display, focused_display),
@@ -57,11 +59,13 @@ impl EventEmitter {
     }
 
     /// Emit a display removed event
+    #[allow(dead_code)]
     pub fn emit_display_removed(&self, display_id: u32) {
         self.emit(StateEvent::DisplayRemoved { display_id });
     }
 
     /// Emit a display updated event
+    #[allow(dead_code)]
     pub fn emit_display_updated(&self, display: &Display, focused_display: u32) {
         self.emit(StateEvent::DisplayUpdated {
             display: display_to_info(display, focused_display),
@@ -86,6 +90,7 @@ impl EventEmitter {
     }
 
     /// Create and emit a snapshot event from current state
+    #[allow(dead_code)]
     pub fn emit_snapshot(&self, state: &State) {
         self.emit(create_snapshot(state));
     }

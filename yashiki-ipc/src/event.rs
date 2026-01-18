@@ -57,7 +57,7 @@ impl EventFilter {
 }
 
 /// Request to subscribe to state events
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SubscribeRequest {
     /// Whether to send a snapshot on connection
     #[serde(default)]
@@ -65,15 +65,6 @@ pub struct SubscribeRequest {
     /// Event filter (if not set or all false, subscribes to all events)
     #[serde(default)]
     pub filter: EventFilter,
-}
-
-impl Default for SubscribeRequest {
-    fn default() -> Self {
-        Self {
-            snapshot: false,
-            filter: EventFilter::default(),
-        }
-    }
 }
 
 impl SubscribeRequest {

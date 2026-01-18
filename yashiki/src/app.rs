@@ -133,6 +133,7 @@ impl App {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_async(
         ipc_cmd_tx: std_mpsc::Sender<IpcCommandWithResponse>,
         ipc_server_tx: mpsc::Sender<IpcCommandWithResponse>,
@@ -205,6 +206,7 @@ impl App {
         tracing::info!("Tokio runtime exiting");
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_main_loop(
         self,
         ipc_cmd_rx: std_mpsc::Receiver<IpcCommandWithResponse>,
