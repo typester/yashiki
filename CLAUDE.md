@@ -84,6 +84,10 @@ Like AeroSpace, uses virtual workspaces instead of macOS native Spaces:
   - Glob pattern matching (`*Chrome*`, `Safari`, `*Dialog*`, `com.apple.*`)
   - Actions: float, no-float, tags, output, position, dimensions
   - Rules sorted by specificity (more specific rules take priority)
+- **Cursor warp** (mouse follows focus)
+  - Similar to river's `set-cursor-warp`
+  - Three modes: `disabled`, `on-output-change`, `on-focus-change`
+  - When enabled, mouse cursor moves to window center on focus change
 
 ## Layout Protocol
 
@@ -176,6 +180,10 @@ yashiki rule-add --app-id com.apple.finder float  # Match by bundle identifier
 yashiki rule-add --app-id "com.google.*" output 2 # Glob pattern for bundle ID
 yashiki rule-del --app-name Finder float          # Remove a rule
 yashiki list-rules                # List all rules
+yashiki set-cursor-warp disabled          # Disable cursor warp (default)
+yashiki set-cursor-warp on-output-change  # Warp on display switch only
+yashiki set-cursor-warp on-focus-change   # Warp on all focus changes
+yashiki get-cursor-warp           # Get current cursor warp mode
 yashiki quit                      # Quit daemon
 ```
 
@@ -187,6 +195,9 @@ yashiki quit                      # Quit daemon
 
 # Extend exec path (for layout engines and exec commands)
 yashiki add-exec-path /opt/homebrew/bin
+
+# Cursor warp (mouse follows focus)
+yashiki set-cursor-warp on-focus-change
 
 # Layout configuration (per-tag)
 yashiki layout-set-default tatami       # Default layout for all tags
@@ -463,6 +474,17 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
   - Without `--layout`: sends to current active layout and retiles
   - With `--layout <name>`: sends to specified layout (lazy spawns if needed), no retile
 
+### Cursor Warp (Mouse Follows Focus)
+- Similar to river's `set-cursor-warp`
+- Three modes controlled by `State.cursor_warp: CursorWarpMode`
+  | Mode | Behavior |
+  |------|----------|
+  | `Disabled` (default) | Cursor never moves on focus change |
+  | `OnOutputChange` | Cursor moves only when switching displays (output-focus) |
+  | `OnFocusChange` | Cursor moves on all focus changes |
+- Uses `CGWarpMouseCursorPosition` to move cursor to window center
+- `Effect::FocusWindow` includes `is_output_change: bool` to distinguish output changes
+
 ### Window Rules
 - Rules stored in `State.rules: Vec<WindowRule>`
 - Rules sorted by specificity (more specific rules first)
@@ -515,6 +537,7 @@ pub trait WindowManipulator {
     fn move_window_to_position(&self, window_id: u32, pid: i32, x: i32, y: i32);
     fn set_window_dimensions(&self, window_id: u32, pid: i32, width: u32, height: u32);
     fn exec_command(&self, command: &str, path: &str) -> Result<(), String>;
+    fn warp_cursor(&self, x: i32, y: i32);
 }
 ```
 
@@ -575,7 +598,7 @@ fn handle_ipc_command<M: WindowManipulator>(...) -> Response {
 ```rust
 pub enum Effect {
     ApplyWindowMoves(Vec<WindowMove>),
-    FocusWindow { window_id: u32, pid: i32 },
+    FocusWindow { window_id: u32, pid: i32, is_output_change: bool },
     MoveWindowToPosition { window_id: u32, pid: i32, x: i32, y: i32 },
     SetWindowDimensions { window_id: u32, pid: i32, width: u32, height: u32 },
     Retile,

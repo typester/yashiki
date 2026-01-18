@@ -21,7 +21,9 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use yashiki_ipc::{BindingInfo, Command, OutputInfo, Response, RuleInfo, StateInfo, WindowInfo};
+use yashiki_ipc::{
+    BindingInfo, Command, CursorWarpMode, OutputInfo, Response, RuleInfo, StateInfo, WindowInfo,
+};
 
 type IpcCommandWithResponse = (Command, mpsc::Sender<Response>);
 
@@ -651,7 +653,11 @@ fn process_command(
         Command::WindowFocus { direction } => {
             if let Some((window_id, pid)) = state.focus_window(*direction) {
                 tracing::info!("Focusing window {} (pid {})", window_id, pid);
-                CommandResult::ok_with_effects(vec![Effect::FocusWindow { window_id, pid }])
+                CommandResult::ok_with_effects(vec![Effect::FocusWindow {
+                    window_id,
+                    pid,
+                    is_output_change: false,
+                }])
             } else {
                 CommandResult::ok()
             }
@@ -660,7 +666,11 @@ fn process_command(
             let result = state.focus_output(*direction);
             if let Some((window_id, pid)) = result {
                 tracing::info!("Focusing output - window {} (pid {})", window_id, pid);
-                CommandResult::ok_with_effects(vec![Effect::FocusWindow { window_id, pid }])
+                CommandResult::ok_with_effects(vec![Effect::FocusWindow {
+                    window_id,
+                    pid,
+                    is_output_change: true,
+                }])
             } else {
                 CommandResult::ok()
             }
@@ -861,7 +871,11 @@ fn process_command(
                         window_id,
                         pid
                     );
-                    CommandResult::ok_with_effects(vec![Effect::FocusWindow { window_id, pid }])
+                    CommandResult::ok_with_effects(vec![Effect::FocusWindow {
+                        window_id,
+                        pid,
+                        is_output_change: false,
+                    }])
                 } else {
                     // Window is hidden, switch to its tag first
                     if let Some(tag) = window_tags.first_tag() {
@@ -876,10 +890,18 @@ fn process_command(
                         CommandResult::ok_with_effects(vec![
                             Effect::ApplyWindowMoves(moves),
                             Effect::Retile,
-                            Effect::FocusWindow { window_id, pid },
+                            Effect::FocusWindow {
+                                window_id,
+                                pid,
+                                is_output_change: false,
+                            },
                         ])
                     } else {
-                        CommandResult::ok_with_effects(vec![Effect::FocusWindow { window_id, pid }])
+                        CommandResult::ok_with_effects(vec![Effect::FocusWindow {
+                            window_id,
+                            pid,
+                            is_output_change: false,
+                        }])
                     }
                 }
             } else {
@@ -963,6 +985,16 @@ fn process_command(
             CommandResult::ok_with_effects(effects)
         }
 
+        // Cursor warp
+        Command::SetCursorWarp { mode } => {
+            tracing::info!("Set cursor warp mode: {:?}", mode);
+            state.cursor_warp = *mode;
+            CommandResult::ok()
+        }
+        Command::GetCursorWarp => CommandResult::with_response(Response::CursorWarp {
+            mode: state.cursor_warp,
+        }),
+
         // Control
         Command::Quit => {
             tracing::info!("Quit command received");
@@ -989,8 +1021,28 @@ fn execute_effects<M: WindowManipulator>(
             Effect::ApplyWindowMoves(moves) => {
                 manipulator.apply_window_moves(&moves);
             }
-            Effect::FocusWindow { window_id, pid } => {
+            Effect::FocusWindow {
+                window_id,
+                pid,
+                is_output_change,
+            } => {
                 manipulator.focus_window(window_id, pid);
+
+                // Warp cursor based on cursor_warp mode
+                let cursor_warp_mode = state.borrow().cursor_warp;
+                let should_warp = match cursor_warp_mode {
+                    CursorWarpMode::Disabled => false,
+                    CursorWarpMode::OnOutputChange => is_output_change,
+                    CursorWarpMode::OnFocusChange => true,
+                };
+
+                if should_warp {
+                    if let Some(window) = state.borrow().windows.get(&window_id) {
+                        let (cx, cy) = window.center();
+                        manipulator.warp_cursor(cx, cy);
+                    }
+                }
+
                 if notify_layout_focus(state, layout_engine_manager, window_id) {
                     do_retile(state, layout_engine_manager, manipulator);
                 }
@@ -1185,46 +1237,58 @@ fn retile_single_display<M: WindowManipulator>(
 }
 
 fn focus_visible_window_if_needed<M: WindowManipulator>(state: &RefCell<State>, manipulator: &M) {
-    let state = state.borrow();
-    let display_id = state.focused_display;
-    let Some(display) = state.displays.get(&display_id) else {
-        return;
-    };
+    let (window_to_focus, cursor_warp_mode) = {
+        let state = state.borrow();
+        let display_id = state.focused_display;
+        let Some(display) = state.displays.get(&display_id) else {
+            return;
+        };
 
-    // Get all visible windows on display (including fullscreen and floating)
-    let all_visible: Vec<_> = state
-        .windows
-        .values()
-        .filter(|w| {
-            w.display_id == display_id && w.tags.intersects(display.visible_tags) && !w.is_hidden()
-        })
-        .collect();
+        // Get all visible windows on display (including fullscreen and floating)
+        let all_visible: Vec<_> = state
+            .windows
+            .values()
+            .filter(|w| {
+                w.display_id == display_id
+                    && w.tags.intersects(display.visible_tags)
+                    && !w.is_hidden()
+            })
+            .collect();
 
-    if all_visible.is_empty() {
-        return;
-    }
+        if all_visible.is_empty() {
+            return;
+        }
 
-    // Check if current focus is on a visible window
-    let focus_is_visible = state
-        .focused
-        .map(|id| all_visible.iter().any(|w| w.id == id))
-        .unwrap_or(false);
+        // Check if current focus is on a visible window
+        let focus_is_visible = state
+            .focused
+            .map(|id| all_visible.iter().any(|w| w.id == id))
+            .unwrap_or(false);
 
-    if !focus_is_visible {
+        if focus_is_visible {
+            return;
+        }
+
         // Focus the first visible window (prefer tiled, then fullscreen, then floating)
-        let window_to_focus = all_visible
+        let window = all_visible
             .iter()
             .find(|w| w.is_tiled())
             .or_else(|| all_visible.iter().find(|w| w.is_fullscreen))
             .or_else(|| all_visible.first());
 
-        if let Some(window) = window_to_focus {
-            tracing::info!(
-                "Focusing visible window {} ({}) after tag switch",
-                window.id,
-                window.app_name
-            );
-            manipulator.focus_window(window.id, window.pid);
+        match window {
+            Some(w) => (Some((w.id, w.pid, w.center())), state.cursor_warp),
+            None => return,
+        }
+    };
+
+    if let Some((window_id, pid, (cx, cy))) = window_to_focus {
+        tracing::info!("Focusing visible window {} after tag switch", window_id);
+        manipulator.focus_window(window_id, pid);
+
+        // Warp cursor if OnFocusChange mode (not OnOutputChange since this is not an output change)
+        if cursor_warp_mode == CursorWarpMode::OnFocusChange {
+            manipulator.warp_cursor(cx, cy);
         }
     }
 }
@@ -1379,9 +1443,14 @@ mod tests {
         assert_eq!(result.effects.len(), 1);
 
         match &result.effects[0] {
-            Effect::FocusWindow { window_id, pid } => {
+            Effect::FocusWindow {
+                window_id,
+                pid,
+                is_output_change,
+            } => {
                 assert_eq!(*window_id, 101); // Next window after 100
                 assert_eq!(*pid, 1001);
+                assert!(!is_output_change);
             }
             _ => panic!("Expected FocusWindow effect"),
         }
@@ -1428,9 +1497,14 @@ mod tests {
 
         // Should focus the existing Safari window, not execute command
         match &result.effects[0] {
-            Effect::FocusWindow { window_id, pid } => {
+            Effect::FocusWindow {
+                window_id,
+                pid,
+                is_output_change,
+            } => {
                 assert_eq!(*window_id, 100); // Safari window
                 assert_eq!(*pid, 1000);
+                assert!(!is_output_change);
             }
             _ => panic!("Expected FocusWindow effect, got {:?}", result.effects[0]),
         }

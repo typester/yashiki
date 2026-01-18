@@ -5,7 +5,8 @@ use crate::macos::DisplayId;
 use crate::platform::WindowSystem;
 use std::collections::{HashMap, HashSet};
 use yashiki_ipc::{
-    Direction, OutputDirection, OutputSpecifier, RuleAction, RuleMatcher, WindowRule,
+    CursorWarpMode, Direction, OutputDirection, OutputSpecifier, RuleAction, RuleMatcher,
+    WindowRule,
 };
 
 /// Result of applying rules to a window
@@ -38,6 +39,7 @@ pub struct State {
     pub tag_layouts: HashMap<u8, String>,
     pub exec_path: String,
     pub rules: Vec<WindowRule>,
+    pub cursor_warp: CursorWarpMode,
 }
 
 impl State {
@@ -52,6 +54,7 @@ impl State {
             tag_layouts: HashMap::new(),
             exec_path: String::new(),
             rules: Vec::new(),
+            cursor_warp: CursorWarpMode::default(),
         }
     }
 

@@ -8,6 +8,7 @@ pub enum Effect {
     FocusWindow {
         window_id: u32,
         pid: i32,
+        is_output_change: bool,
     },
     MoveWindowToPosition {
         window_id: u32,
