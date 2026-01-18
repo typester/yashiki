@@ -478,19 +478,30 @@ impl App {
                     }
                     WorkspaceEvent::DisplaysChanged => {
                         tracing::info!("Display configuration changed");
-                        let (moves, displays_to_retile) = ctx
+                        let result = ctx
                             .state
                             .borrow_mut()
                             .handle_display_change(&ctx.window_system);
 
+                        // Emit display events
+                        let focused_display = ctx.state.borrow().focused_display;
+                        for display in &result.added {
+                            ctx.event_emitter
+                                .emit_display_added(display, focused_display);
+                        }
+                        for display_id in &result.removed {
+                            ctx.event_emitter.emit_display_removed(*display_id);
+                        }
+
                         // Apply window moves for orphaned windows
-                        if !moves.is_empty() {
-                            ctx.window_manipulator.apply_window_moves(&moves);
+                        if !result.window_moves.is_empty() {
+                            ctx.window_manipulator
+                                .apply_window_moves(&result.window_moves);
                         }
 
                         // Retile affected displays
-                        if !displays_to_retile.is_empty() {
-                            for display_id in displays_to_retile {
+                        if !result.displays_to_retile.is_empty() {
+                            for display_id in result.displays_to_retile {
                                 do_retile_display(
                                     &ctx.state,
                                     &ctx.layout_engine_manager,
@@ -1527,10 +1538,21 @@ fn notify_layout_focus(
     }
 }
 
+/// Window properties tracked for change detection
+#[derive(Clone, PartialEq)]
+struct WindowProperties {
+    tags: u32,
+    display_id: u32,
+    is_floating: bool,
+    is_fullscreen: bool,
+}
+
 /// State captured before command execution for event comparison
 struct PreEventState {
     /// Map of display_id to (visible_tags, current_layout)
     displays: std::collections::HashMap<u32, (u32, Option<String>)>,
+    /// Map of window_id to tracked properties
+    windows: std::collections::HashMap<u32, WindowProperties>,
     focused: Option<u32>,
     focused_display: u32,
 }
@@ -1544,8 +1566,25 @@ fn capture_event_state(state: &RefCell<State>) -> PreEventState {
         .map(|(id, d)| (*id, (d.visible_tags.mask(), d.current_layout.clone())))
         .collect();
 
+    let windows = state
+        .windows
+        .iter()
+        .map(|(id, w)| {
+            (
+                *id,
+                WindowProperties {
+                    tags: w.tags.mask(),
+                    display_id: w.display_id,
+                    is_floating: w.is_floating,
+                    is_fullscreen: w.is_fullscreen,
+                },
+            )
+        })
+        .collect();
+
     PreEventState {
         displays,
+        windows,
         focused: state.focused,
         focused_display: state.focused_display,
     }
@@ -1584,6 +1623,23 @@ fn emit_state_change_events(
                 if let Some(ref layout) = display.current_layout {
                     event_emitter.emit_layout_changed(*display_id, layout);
                 }
+            }
+        }
+    }
+
+    // Check for window property changes
+    for (window_id, window) in &state.windows {
+        if let Some(pre_props) = pre.windows.get(window_id) {
+            let current_props = WindowProperties {
+                tags: window.tags.mask(),
+                display_id: window.display_id,
+                is_floating: window.is_floating,
+                is_fullscreen: window.is_fullscreen,
+            };
+
+            // Emit window updated event if any tracked property changed
+            if current_props != *pre_props {
+                event_emitter.emit_window_updated(window, state.focused);
             }
         }
     }
