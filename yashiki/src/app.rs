@@ -690,6 +690,18 @@ fn process_command(
             }
         }
 
+        // Float toggle
+        Command::WindowToggleFloat => {
+            if let Some((display_id, _is_floating, _window_id, _pid)) = state.toggle_focused_float()
+            {
+                // Just retile - window maintains current position when floating,
+                // or gets positioned by layout when unfloating
+                CommandResult::ok_with_effects(vec![Effect::RetileDisplays(vec![display_id])])
+            } else {
+                CommandResult::ok()
+            }
+        }
+
         // Send to output - returns displays that need retiling
         Command::OutputSend { direction } => {
             let displays_to_retile = state.send_to_output(*direction);

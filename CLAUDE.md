@@ -136,6 +136,7 @@ yashiki window-focus prev         # Focus previous window
 yashiki window-focus left         # Focus window to the left
 yashiki window-swap next          # Swap with next window (not yet implemented)
 yashiki window-toggle-fullscreen  # Toggle fullscreen for focused window (AeroSpace-style)
+yashiki window-toggle-float       # Toggle floating state for focused window
 yashiki focused-window            # Get focused window ID
 yashiki output-focus next         # Focus next display
 yashiki output-focus prev         # Focus previous display
@@ -216,6 +217,7 @@ yashiki bind alt-l layout-cmd inc-main-ratio
 yashiki bind alt-o output-focus next
 yashiki bind alt-shift-o output-send next
 yashiki bind alt-f window-toggle-fullscreen
+yashiki bind alt-shift-f window-toggle-float
 
 # Gap configuration (--layout sends to specific engine, without sends to current)
 yashiki layout-cmd --layout tatami set-inner-gap 10
@@ -304,7 +306,7 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
 
 ### Not Yet Implemented
 - `WindowSwap` command - CLI parsing done, but handler not implemented
-- `WindowClose` / `WindowToggleFloat`
+- `WindowClose`
 
 ## Development Notes
 
