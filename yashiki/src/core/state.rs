@@ -435,6 +435,17 @@ impl State {
         // Add new windows
         for id in new_ids.difference(&current_ids) {
             if let Some(info) = pid_window_infos.iter().find(|w| w.window_id == *id) {
+                // Skip popup windows (Firefox dropdowns, tooltips, etc.)
+                if !ws.is_standard_window(info.window_id, info.pid) {
+                    tracing::debug!(
+                        "Skipping popup window: [{}] {} ({})",
+                        info.window_id,
+                        info.name.as_deref().unwrap_or(""),
+                        info.owner_name
+                    );
+                    continue;
+                }
+
                 let display_id = self.find_display_for_bounds(&info.bounds);
                 let window = Window::from_window_info(info, self.default_tag, display_id);
                 tracing::info!(

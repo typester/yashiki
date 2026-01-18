@@ -305,6 +305,7 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
 ### Completed
 - **macos/accessibility.rs** - AXUIElement FFI bindings
   - Permission check, window manipulation (position, size), `raise()` for focus
+  - `is_standard_window()` - popup window detection (filters Firefox dropdowns, tooltips)
 - **macos/display.rs** - CGWindowList window enumeration, display info
   - `get_on_screen_windows()` (includes bundle_id), `get_all_displays()` (uses NSScreen visibleFrame)
 - **macos/observer.rs** - AXObserver for window events
@@ -563,6 +564,20 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
 - Implementation: yashiki subtracts outer gap from dimensions before sending to layout engines, then adds offset when applying geometries
 - CSS-style syntax: `<all>` | `<v h>` | `<t r b l>`
 
+### Popup Window Filtering (Firefox, etc.)
+- Problem: Firefox creates temporary popup windows (dropdowns, tooltips) that trigger layout recalculation
+- Detection via Accessibility API attributes:
+  | Attribute | Standard Window | Popup Window |
+  |-----------|-----------------|--------------|
+  | AXSubrole | `AXStandardWindow` | `AXUnknown` |
+  | AXCloseButton | exists | null |
+  | AXFullScreenButton | exists | null |
+- A window is considered "standard" (managed) if:
+  - `AXSubrole == "AXStandardWindow"`, OR
+  - At least one window button exists (close, fullscreen, zoom, minimize)
+- `WindowSystem::is_standard_window()` checks this in `sync_pid()` before adding new windows
+- Popup windows are logged at debug level and skipped
+
 ## Testing
 
 ### Current Test Coverage
@@ -588,6 +603,7 @@ pub trait WindowSystem {
     fn get_on_screen_windows(&self) -> Vec<WindowInfo>;
     fn get_all_displays(&self) -> Vec<DisplayInfo>;
     fn get_focused_window(&self) -> Option<FocusedWindowInfo>;
+    fn is_standard_window(&self, window_id: u32, pid: i32) -> bool;
 }
 
 // For window manipulation side effects

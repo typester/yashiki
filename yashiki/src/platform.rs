@@ -13,6 +13,9 @@ pub trait WindowSystem {
     fn get_on_screen_windows(&self) -> Vec<WindowInfo>;
     fn get_all_displays(&self) -> Vec<DisplayInfo>;
     fn get_focused_window(&self) -> Option<FocusedWindowInfo>;
+    /// Check if a window is a standard window (not a popup/tooltip/dropdown).
+    /// Returns true if the window should be managed, false if it should be ignored.
+    fn is_standard_window(&self, window_id: u32, pid: i32) -> bool;
 }
 
 /// macOS implementation of WindowSystem
@@ -34,6 +37,22 @@ impl WindowSystem for MacOSWindowSystem {
                 .map(|id| FocusedWindowInfo { window_id: id }),
             Err(_) => None,
         }
+    }
+
+    fn is_standard_window(&self, window_id: u32, pid: i32) -> bool {
+        let app = AXUIElement::application(pid);
+        let ax_windows = match app.windows() {
+            Ok(w) => w,
+            Err(_) => return true, // If we can't get windows, assume it's standard
+        };
+
+        for ax_win in ax_windows {
+            if ax_win.window_id() == Some(window_id) {
+                return crate::macos::is_standard_window(&ax_win);
+            }
+        }
+
+        true // Window not found, assume it's standard
     }
 }
 
@@ -485,6 +504,11 @@ pub mod mock {
         fn get_focused_window(&self) -> Option<FocusedWindowInfo> {
             self.focused_window_id
                 .map(|id| FocusedWindowInfo { window_id: id })
+        }
+
+        fn is_standard_window(&self, _window_id: u32, _pid: i32) -> bool {
+            // In tests, all windows are standard by default
+            true
         }
     }
 
