@@ -522,6 +522,7 @@ fn process_command(
                     pid: w.pid,
                     title: w.title.clone(),
                     app_name: w.app_name.clone(),
+                    app_id: w.app_id.clone(),
                     tags: w.tags.mask(),
                     x: w.frame.x,
                     y: w.frame.y,
@@ -869,6 +870,7 @@ fn process_command(
                     };
                     RuleInfo {
                         app_name: r.matcher.app_name.as_ref().map(|p| p.pattern().to_string()),
+                        app_id: r.matcher.app_id.as_ref().map(|p| p.pattern().to_string()),
                         title: r.matcher.title.as_ref().map(|p| p.pattern().to_string()),
                         action: action_str,
                     }

@@ -1,3 +1,4 @@
+use super::get_bundle_id_for_pid;
 use core_foundation::{
     array::CFArray, base::TCFType, dictionary::CFDictionary, number::CFNumber, string::CFString,
 };
@@ -25,6 +26,7 @@ pub struct WindowInfo {
     pub window_id: u32,
     pub name: Option<String>,
     pub owner_name: String,
+    pub bundle_id: Option<String>,
     pub bounds: Bounds,
     pub layer: i32,
 }
@@ -79,12 +81,14 @@ fn parse_window_info(dict: &CFDictionary) -> Option<WindowInfo> {
     let owner_name = get_string(dict, "kCGWindowOwnerName")?;
     let name = get_string(dict, "kCGWindowName");
     let bounds = parse_bounds(dict, "kCGWindowBounds")?;
+    let bundle_id = get_bundle_id_for_pid(pid);
 
     Some(WindowInfo {
         pid,
         window_id,
         name,
         owner_name,
+        bundle_id,
         bounds,
         layer,
     })

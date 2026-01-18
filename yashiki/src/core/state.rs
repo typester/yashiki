@@ -966,10 +966,15 @@ impl State {
     }
 
     /// Get all rules that match a window
-    pub fn get_matching_rules(&self, app_name: &str, title: &str) -> Vec<&WindowRule> {
+    pub fn get_matching_rules(
+        &self,
+        app_name: &str,
+        app_id: Option<&str>,
+        title: &str,
+    ) -> Vec<&WindowRule> {
         self.rules
             .iter()
-            .filter(|rule| rule.matcher.matches(app_name, title))
+            .filter(|rule| rule.matcher.matches(app_name, app_id, title))
             .collect()
     }
 
@@ -978,6 +983,7 @@ impl State {
     pub fn apply_rules_to_window(
         &self,
         app_name: &str,
+        app_id: Option<&str>,
         title: &str,
     ) -> (
         Option<u32>,
@@ -986,7 +992,7 @@ impl State {
         Option<(u32, u32)>,
         bool,
     ) {
-        let matching_rules = self.get_matching_rules(app_name, title);
+        let matching_rules = self.get_matching_rules(app_name, app_id, title);
 
         let mut tags: Option<u32> = None;
         let mut output: Option<DisplayId> = None;
@@ -1034,17 +1040,22 @@ impl State {
     /// Modifies the window in place (tags, display_id, is_floating) and returns
     /// Vec<Effect> for position and dimensions to be executed.
     pub fn apply_rules_to_new_window(&mut self, window_id: WindowId) -> Vec<Effect> {
-        // Get app_name, title, and pid from the window
-        let (app_name, title, pid) = {
+        // Get app_name, app_id, title, and pid from the window
+        let (app_name, app_id, title, pid) = {
             let Some(window) = self.windows.get(&window_id) else {
                 return vec![];
             };
-            (window.app_name.clone(), window.title.clone(), window.pid)
+            (
+                window.app_name.clone(),
+                window.app_id.clone(),
+                window.title.clone(),
+                window.pid,
+            )
         };
 
         // Apply rules
         let (tags, output, position, dimensions, is_floating) =
-            self.apply_rules_to_window(&app_name, &title);
+            self.apply_rules_to_window(&app_name, app_id.as_deref(), &title);
 
         // Modify the window
         if let Some(window) = self.windows.get_mut(&window_id) {

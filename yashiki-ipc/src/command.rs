@@ -80,12 +80,15 @@ impl GlobPattern {
     }
 }
 
-/// Matcher for window rules - matches on app_name and/or title
+/// Matcher for window rules - matches on app_name, app_id, and/or title
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuleMatcher {
     /// Pattern to match against app name (e.g., "Safari", "*Chrome*")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_name: Option<GlobPattern>,
+    /// Pattern to match against bundle identifier (e.g., "com.apple.Safari", "com.google.*")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<GlobPattern>,
     /// Pattern to match against window title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<GlobPattern>,
@@ -93,29 +96,51 @@ pub struct RuleMatcher {
 
 impl RuleMatcher {
     pub fn new(app_name: Option<GlobPattern>, title: Option<GlobPattern>) -> Self {
-        Self { app_name, title }
+        Self {
+            app_name,
+            app_id: None,
+            title,
+        }
     }
 
-    /// Check if this matcher matches the given app_name and title
-    pub fn matches(&self, app_name: &str, title: &str) -> bool {
+    pub fn with_app_id(
+        app_name: Option<GlobPattern>,
+        app_id: Option<GlobPattern>,
+        title: Option<GlobPattern>,
+    ) -> Self {
+        Self {
+            app_name,
+            app_id,
+            title,
+        }
+    }
+
+    /// Check if this matcher matches the given app_name, app_id, and title
+    pub fn matches(&self, app_name: &str, app_id: Option<&str>, title: &str) -> bool {
         let app_matches = self
             .app_name
             .as_ref()
             .map(|p| p.matches(app_name))
+            .unwrap_or(true);
+        let app_id_matches = self
+            .app_id
+            .as_ref()
+            .map(|p| app_id.map(|id| p.matches(id)).unwrap_or(false))
             .unwrap_or(true);
         let title_matches = self
             .title
             .as_ref()
             .map(|p| p.matches(title))
             .unwrap_or(true);
-        app_matches && title_matches
+        app_matches && app_id_matches && title_matches
     }
 
     /// Get the combined specificity of this matcher
     pub fn specificity(&self) -> u32 {
         let app_spec = self.app_name.as_ref().map(|p| p.specificity()).unwrap_or(0);
+        let app_id_spec = self.app_id.as_ref().map(|p| p.specificity()).unwrap_or(0);
         let title_spec = self.title.as_ref().map(|p| p.specificity()).unwrap_or(0);
-        app_spec + title_spec
+        app_spec + app_id_spec + title_spec
     }
 }
 
@@ -160,6 +185,8 @@ pub struct RuleInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub action: String,
 }
@@ -176,6 +203,7 @@ pub enum Command {
     },
     WindowClose,
     WindowToggleFloat,
+    WindowToggleFullscreen,
     WindowMoveToTag {
         tags: u32,
     },
@@ -338,6 +366,8 @@ pub struct WindowInfo {
     pub pid: i32,
     pub title: String,
     pub app_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
     pub tags: u32,
     pub x: i32,
     pub y: i32,
@@ -511,6 +541,7 @@ mod tests {
                 pid: 456,
                 title: "Test Window".to_string(),
                 app_name: "TestApp".to_string(),
+                app_id: None,
                 tags: 0b0001,
                 x: 100,
                 y: 200,
@@ -827,17 +858,17 @@ mod tests {
     #[test]
     fn test_rule_matcher_app_name_only() {
         let matcher = RuleMatcher::new(Some(GlobPattern::new("Safari")), None);
-        assert!(matcher.matches("Safari", "Any Title"));
-        assert!(matcher.matches("Safari", ""));
-        assert!(!matcher.matches("Chrome", "Any Title"));
+        assert!(matcher.matches("Safari", None, "Any Title"));
+        assert!(matcher.matches("Safari", None, ""));
+        assert!(!matcher.matches("Chrome", None, "Any Title"));
     }
 
     #[test]
     fn test_rule_matcher_title_only() {
         let matcher = RuleMatcher::new(None, Some(GlobPattern::new("*Preferences*")));
-        assert!(matcher.matches("Any App", "Preferences"));
-        assert!(matcher.matches("Safari", "Safari Preferences"));
-        assert!(!matcher.matches("Safari", "Settings"));
+        assert!(matcher.matches("Any App", None, "Preferences"));
+        assert!(matcher.matches("Safari", None, "Safari Preferences"));
+        assert!(!matcher.matches("Safari", None, "Settings"));
     }
 
     #[test]
@@ -846,10 +877,58 @@ mod tests {
             Some(GlobPattern::new("Safari")),
             Some(GlobPattern::new("*Preferences*")),
         );
-        assert!(matcher.matches("Safari", "Preferences"));
-        assert!(matcher.matches("Safari", "Safari Preferences"));
-        assert!(!matcher.matches("Safari", "Main Window"));
-        assert!(!matcher.matches("Chrome", "Preferences"));
+        assert!(matcher.matches("Safari", None, "Preferences"));
+        assert!(matcher.matches("Safari", None, "Safari Preferences"));
+        assert!(!matcher.matches("Safari", None, "Main Window"));
+        assert!(!matcher.matches("Chrome", None, "Preferences"));
+    }
+
+    #[test]
+    fn test_rule_matcher_app_id_only() {
+        let matcher =
+            RuleMatcher::with_app_id(None, Some(GlobPattern::new("com.apple.Safari")), None);
+        assert!(matcher.matches("Safari", Some("com.apple.Safari"), "Any Title"));
+        assert!(matcher.matches("Any App", Some("com.apple.Safari"), ""));
+        assert!(!matcher.matches("Safari", Some("com.google.Chrome"), "Any Title"));
+        // app_id pattern requires app_id to be present
+        assert!(!matcher.matches("Safari", None, "Any Title"));
+    }
+
+    #[test]
+    fn test_rule_matcher_app_id_with_wildcard() {
+        let matcher = RuleMatcher::with_app_id(None, Some(GlobPattern::new("com.google.*")), None);
+        assert!(matcher.matches("Chrome", Some("com.google.Chrome"), "Any Title"));
+        assert!(matcher.matches("Meet", Some("com.google.meet"), "Any Title"));
+        assert!(!matcher.matches("Safari", Some("com.apple.Safari"), "Any Title"));
+    }
+
+    #[test]
+    fn test_rule_matcher_app_name_and_app_id() {
+        let matcher = RuleMatcher::with_app_id(
+            Some(GlobPattern::new("Safari")),
+            Some(GlobPattern::new("com.apple.Safari")),
+            None,
+        );
+        assert!(matcher.matches("Safari", Some("com.apple.Safari"), "Any Title"));
+        // Both must match
+        assert!(!matcher.matches("Safari", Some("com.other.Safari"), "Any Title"));
+        assert!(!matcher.matches("Chrome", Some("com.apple.Safari"), "Any Title"));
+    }
+
+    #[test]
+    fn test_rule_matcher_app_id_specificity() {
+        let app_name_only = RuleMatcher::new(Some(GlobPattern::new("Safari")), None);
+        let app_id_only =
+            RuleMatcher::with_app_id(None, Some(GlobPattern::new("com.apple.Safari")), None);
+        let both = RuleMatcher::with_app_id(
+            Some(GlobPattern::new("Safari")),
+            Some(GlobPattern::new("com.apple.Safari")),
+            None,
+        );
+
+        // Both app_name and app_id should be more specific than either alone
+        assert!(both.specificity() > app_name_only.specificity());
+        assert!(both.specificity() > app_id_only.specificity());
     }
 
     #[test]
@@ -961,6 +1040,7 @@ mod tests {
         let resp = Response::Rules {
             rules: vec![RuleInfo {
                 app_name: Some("Safari".to_string()),
+                app_id: None,
                 title: None,
                 action: "float".to_string(),
             }],
@@ -973,6 +1053,60 @@ mod tests {
             Response::Rules { rules } => {
                 assert_eq!(rules.len(), 1);
                 assert_eq!(rules[0].app_name, Some("Safari".to_string()));
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_response_rules_with_app_id_serialization() {
+        let resp = Response::Rules {
+            rules: vec![RuleInfo {
+                app_name: None,
+                app_id: Some("com.apple.Safari".to_string()),
+                title: None,
+                action: "float".to_string(),
+            }],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"app_id\":\"com.apple.Safari\""));
+
+        let deserialized: Response = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Response::Rules { rules } => {
+                assert_eq!(rules.len(), 1);
+                assert_eq!(rules[0].app_id, Some("com.apple.Safari".to_string()));
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_response_windows_with_app_id() {
+        let resp = Response::Windows {
+            windows: vec![WindowInfo {
+                id: 123,
+                pid: 456,
+                title: "Test Window".to_string(),
+                app_name: "Safari".to_string(),
+                app_id: Some("com.apple.Safari".to_string()),
+                tags: 0b0001,
+                x: 100,
+                y: 200,
+                width: 800,
+                height: 600,
+                is_focused: true,
+                is_floating: false,
+            }],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"app_id\":\"com.apple.Safari\""));
+
+        let deserialized: Response = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Response::Windows { windows } => {
+                assert_eq!(windows.len(), 1);
+                assert_eq!(windows[0].app_id, Some("com.apple.Safari".to_string()));
             }
             _ => panic!("Wrong variant"),
         }

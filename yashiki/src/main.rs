@@ -41,6 +41,7 @@ enum SubCommand {
     WindowToggleTag(WindowToggleTagCmd),
     WindowFocus(WindowFocusCmd),
     WindowSwap(WindowSwapCmd),
+    WindowToggleFullscreen(WindowToggleFullscreenCmd),
     OutputFocus(OutputFocusCmd),
     OutputSend(OutputSendCmd),
     Retile(RetileCmd),
@@ -163,6 +164,11 @@ struct WindowSwapCmd {
     #[argh(positional)]
     direction: String,
 }
+
+/// Toggle fullscreen for focused window (AeroSpace-style, not macOS native)
+#[derive(FromArgs)]
+#[argh(subcommand, name = "window-toggle-fullscreen")]
+struct WindowToggleFullscreenCmd {}
 
 /// Focus the next or previous display
 #[derive(FromArgs)]
@@ -316,6 +322,9 @@ struct RuleAddCmd {
     /// application name pattern (glob, e.g., "Safari", "*Chrome*")
     #[argh(option)]
     app_name: Option<String>,
+    /// bundle identifier pattern (glob, e.g., "com.apple.Safari", "com.google.*")
+    #[argh(option)]
+    app_id: Option<String>,
     /// window title pattern (glob)
     #[argh(option)]
     title: Option<String>,
@@ -331,6 +340,9 @@ struct RuleDelCmd {
     /// application name pattern (glob)
     #[argh(option)]
     app_name: Option<String>,
+    /// bundle identifier pattern (glob)
+    #[argh(option)]
+    app_id: Option<String>,
     /// window title pattern (glob)
     #[argh(option)]
     title: Option<String>,
@@ -395,9 +407,10 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
         Response::Windows { windows } => {
             for w in windows {
                 println!(
-                    "{}: {} - {} [tags={}, {}x{} @ ({},{})]{}",
+                    "{}: {} ({}) - {} [tags={}, {}x{} @ ({},{})]{}",
                     w.id,
                     w.app_name,
+                    w.app_id.as_deref().unwrap_or("-"),
                     w.title,
                     w.tags,
                     w.width,
@@ -451,9 +464,20 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
         }
         Response::Rules { rules } => {
             for r in rules {
-                let app = r.app_name.as_deref().unwrap_or("*");
-                let title = r.title.as_deref().unwrap_or("*");
-                println!("--app-name {} --title {} -> {}", app, title, r.action);
+                let mut matchers = Vec::new();
+                if let Some(app) = &r.app_name {
+                    matchers.push(format!("--app-name {}", app));
+                }
+                if let Some(app_id) = &r.app_id {
+                    matchers.push(format!("--app-id {}", app_id));
+                }
+                if let Some(title) = &r.title {
+                    matchers.push(format!("--title {}", title));
+                }
+                if matchers.is_empty() {
+                    matchers.push("*".to_string());
+                }
+                println!("{} -> {}", matchers.join(" "), r.action);
             }
         }
     }
@@ -495,6 +519,7 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
         SubCommand::WindowSwap(cmd) => Ok(Command::WindowSwap {
             direction: parse_direction(&cmd.direction)?,
         }),
+        SubCommand::WindowToggleFullscreen(_) => Ok(Command::WindowToggleFullscreen),
         SubCommand::OutputFocus(cmd) => Ok(Command::OutputFocus {
             direction: parse_output_direction(&cmd.direction)?,
         }),
@@ -537,14 +562,15 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             append: cmd.append,
         }),
         SubCommand::RuleAdd(cmd) => {
-            if cmd.app_name.is_none() && cmd.title.is_none() {
-                bail!("rule-add requires --app-name or --title");
+            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
+                bail!("rule-add requires --app-name, --app-id, or --title");
             }
             if cmd.action.is_empty() {
                 bail!("rule-add requires an action");
             }
-            let matcher = RuleMatcher::new(
+            let matcher = RuleMatcher::with_app_id(
                 cmd.app_name.map(GlobPattern::new),
+                cmd.app_id.map(GlobPattern::new),
                 cmd.title.map(GlobPattern::new),
             );
             let action = parse_rule_action(&cmd.action)?;
@@ -553,14 +579,15 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             })
         }
         SubCommand::RuleDel(cmd) => {
-            if cmd.app_name.is_none() && cmd.title.is_none() {
-                bail!("rule-del requires --app-name or --title");
+            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
+                bail!("rule-del requires --app-name, --app-id, or --title");
             }
             if cmd.action.is_empty() {
                 bail!("rule-del requires an action");
             }
-            let matcher = RuleMatcher::new(
+            let matcher = RuleMatcher::with_app_id(
                 cmd.app_name.map(GlobPattern::new),
+                cmd.app_id.map(GlobPattern::new),
                 cmd.title.map(GlobPattern::new),
             );
             let action = parse_rule_action(&cmd.action)?;
@@ -635,6 +662,7 @@ fn parse_command(args: &[String]) -> Result<Command> {
                 direction: parse_direction(&cmd.direction)?,
             })
         }
+        "window-toggle-fullscreen" => Ok(Command::WindowToggleFullscreen),
         "output-focus" => {
             let cmd: OutputFocusCmd = from_argh(cmd_name, &cmd_args)?;
             Ok(Command::OutputFocus {
@@ -711,14 +739,15 @@ fn parse_command(args: &[String]) -> Result<Command> {
         }
         "rule-add" => {
             let cmd: RuleAddCmd = from_argh(cmd_name, &cmd_args)?;
-            if cmd.app_name.is_none() && cmd.title.is_none() {
-                bail!("rule-add requires --app-name or --title");
+            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
+                bail!("rule-add requires --app-name, --app-id, or --title");
             }
             if cmd.action.is_empty() {
                 bail!("rule-add requires an action");
             }
-            let matcher = RuleMatcher::new(
+            let matcher = RuleMatcher::with_app_id(
                 cmd.app_name.map(GlobPattern::new),
+                cmd.app_id.map(GlobPattern::new),
                 cmd.title.map(GlobPattern::new),
             );
             let action = parse_rule_action(&cmd.action)?;
@@ -728,14 +757,15 @@ fn parse_command(args: &[String]) -> Result<Command> {
         }
         "rule-del" => {
             let cmd: RuleDelCmd = from_argh(cmd_name, &cmd_args)?;
-            if cmd.app_name.is_none() && cmd.title.is_none() {
-                bail!("rule-del requires --app-name or --title");
+            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
+                bail!("rule-del requires --app-name, --app-id, or --title");
             }
             if cmd.action.is_empty() {
                 bail!("rule-del requires an action");
             }
-            let matcher = RuleMatcher::new(
+            let matcher = RuleMatcher::with_app_id(
                 cmd.app_name.map(GlobPattern::new),
+                cmd.app_id.map(GlobPattern::new),
                 cmd.title.map(GlobPattern::new),
             );
             let action = parse_rule_action(&cmd.action)?;

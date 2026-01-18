@@ -13,6 +13,18 @@ pub fn get_frontmost_app_pid() -> Option<i32> {
         .map(|app| app.processIdentifier())
 }
 
+/// Get the bundle identifier for an application with the given PID.
+pub fn get_bundle_id_for_pid(pid: i32) -> Option<String> {
+    let workspace = NSWorkspace::sharedWorkspace();
+    let apps = workspace.runningApplications();
+    for app in apps {
+        if app.processIdentifier() == pid {
+            return app.bundleIdentifier().map(|s| s.to_string());
+        }
+    }
+    None
+}
+
 #[allow(deprecated)]
 pub fn activate_application(pid: i32) -> bool {
     let workspace = NSWorkspace::sharedWorkspace();
