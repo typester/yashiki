@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/typester/yashiki/compare/yashiki-v0.1.0...yashiki-v0.1.1) - 2026-01-18
+
+### Fixed
+
+- ensure yashiki command is available in init script ([#12](https://github.com/typester/yashiki/pull/12))
+
 ## [0.1.0](https://github.com/typester/yashiki/releases/tag/v0.1.0) - 2026-01-18
 
 ### Fixed
