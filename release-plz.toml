@@ -1,6 +1,6 @@
 [workspace]
 changelog_update = true
-publish = false
+git_only = true
 git_release_enable = true
 git_release_draft = false
 
