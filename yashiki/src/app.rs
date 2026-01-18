@@ -31,6 +31,42 @@ type IpcCommandWithResponse = (Command, mpsc::Sender<Response>);
 
 type SnapshotRequest = tokio::sync::oneshot::Sender<StateEvent>;
 
+struct IpcRelay {
+    cmd_tx: std_mpsc::Sender<IpcCommandWithResponse>,
+    server_tx: mpsc::Sender<IpcCommandWithResponse>,
+    server_rx: mpsc::Receiver<IpcCommandWithResponse>,
+    runloop_source: Arc<AtomicPtr<std::ffi::c_void>>,
+}
+
+struct EventStreaming {
+    broadcaster: EventBroadcaster,
+    event_server_rx: tokio::sync::broadcast::Receiver<StateEvent>,
+    state_event_rx: std_mpsc::Receiver<StateEvent>,
+}
+
+struct SnapshotRelay {
+    request_tx: mpsc::Sender<SnapshotRequest>,
+    request_rx: mpsc::Receiver<SnapshotRequest>,
+    main_tx: std_mpsc::Sender<SnapshotRequest>,
+}
+
+struct TokioChannels {
+    ipc: IpcRelay,
+    events: EventStreaming,
+    snapshots: SnapshotRelay,
+    event_rx: mpsc::Receiver<Event>,
+}
+
+struct MainChannels {
+    ipc_cmd_rx: std_mpsc::Receiver<IpcCommandWithResponse>,
+    observer_event_tx: std_mpsc::Sender<Event>,
+    observer_event_rx: std_mpsc::Receiver<Event>,
+    event_tx: mpsc::Sender<Event>,
+    state_event_tx: std_mpsc::Sender<StateEvent>,
+    snapshot_request_rx: std_mpsc::Receiver<SnapshotRequest>,
+    ipc_source: Arc<AtomicPtr<std::ffi::c_void>>,
+}
+
 struct RunLoopContext {
     ipc_cmd_rx: std_mpsc::Receiver<IpcCommandWithResponse>,
     hotkey_cmd_rx: std_mpsc::Receiver<Command>,
@@ -68,6 +104,25 @@ impl App {
             anyhow::bail!("Please grant Accessibility permission and restart");
         }
 
+        let (tokio_channels, main_channels) = Self::create_channels();
+
+        // Spawn tokio runtime in separate thread
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async move {
+                Self::run_async(tokio_channels).await;
+            });
+        });
+
+        let app = App {};
+        app.run_main_loop(main_channels);
+
+        // Clean up PID file on exit
+        pid::remove_pid();
+        Ok(())
+    }
+
+    fn create_channels() -> (TokioChannels, MainChannels) {
         // Channel: IPC commands (tokio -> main thread)
         let (ipc_cmd_tx, ipc_cmd_rx) = std_mpsc::channel::<IpcCommandWithResponse>();
 
@@ -78,7 +133,7 @@ impl App {
         let (event_tx, event_rx) = mpsc::channel::<Event>(256);
 
         // Channel for IPC server (tokio internal)
-        let (ipc_tx, ipc_rx) = mpsc::channel::<IpcCommandWithResponse>(256);
+        let (ipc_server_tx, ipc_server_rx) = mpsc::channel::<IpcCommandWithResponse>(256);
 
         // Event broadcasting for state streaming
         let event_broadcaster = EventBroadcaster::new(256);
@@ -96,57 +151,64 @@ impl App {
         let ipc_source = Arc::new(AtomicPtr::new(ptr::null_mut()));
         let ipc_source_clone = Arc::clone(&ipc_source);
 
-        // Spawn tokio runtime in separate thread
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async move {
-                Self::run_async(
-                    ipc_cmd_tx,
-                    ipc_tx,
-                    ipc_rx,
-                    event_rx,
-                    ipc_source_clone,
-                    event_broadcaster,
-                    event_server_rx,
-                    state_event_rx,
-                    snapshot_request_tx,
-                    snapshot_request_rx,
-                    snapshot_request_main_tx,
-                )
-                .await;
-            });
-        });
+        let tokio_channels = TokioChannels {
+            ipc: IpcRelay {
+                cmd_tx: ipc_cmd_tx,
+                server_tx: ipc_server_tx,
+                server_rx: ipc_server_rx,
+                runloop_source: ipc_source_clone,
+            },
+            events: EventStreaming {
+                broadcaster: event_broadcaster,
+                event_server_rx,
+                state_event_rx,
+            },
+            snapshots: SnapshotRelay {
+                request_tx: snapshot_request_tx,
+                request_rx: snapshot_request_rx,
+                main_tx: snapshot_request_main_tx,
+            },
+            event_rx,
+        };
 
-        let app = App {};
-        app.run_main_loop(
+        let main_channels = MainChannels {
             ipc_cmd_rx,
             observer_event_tx,
             observer_event_rx,
             event_tx,
             state_event_tx,
-            snapshot_request_main_rx,
+            snapshot_request_rx: snapshot_request_main_rx,
             ipc_source,
-        );
+        };
 
-        // Clean up PID file on exit
-        pid::remove_pid();
-        Ok(())
+        (tokio_channels, main_channels)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    async fn run_async(
-        ipc_cmd_tx: std_mpsc::Sender<IpcCommandWithResponse>,
-        ipc_server_tx: mpsc::Sender<IpcCommandWithResponse>,
-        mut ipc_rx: mpsc::Receiver<IpcCommandWithResponse>,
-        mut event_rx: mpsc::Receiver<Event>,
-        ipc_source: Arc<AtomicPtr<std::ffi::c_void>>,
-        event_broadcaster: EventBroadcaster,
-        event_server_rx: tokio::sync::broadcast::Receiver<StateEvent>,
-        state_event_rx: std_mpsc::Receiver<StateEvent>,
-        snapshot_request_tx: mpsc::Sender<SnapshotRequest>,
-        mut snapshot_request_rx: mpsc::Receiver<SnapshotRequest>,
-        snapshot_request_main_tx: std_mpsc::Sender<SnapshotRequest>,
-    ) {
+    async fn run_async(channels: TokioChannels) {
+        // Destructure for partial moves
+        let TokioChannels {
+            ipc,
+            events,
+            snapshots,
+            mut event_rx,
+        } = channels;
+        let IpcRelay {
+            cmd_tx: ipc_cmd_tx,
+            server_tx: ipc_server_tx,
+            server_rx: mut ipc_rx,
+            runloop_source: ipc_source,
+        } = ipc;
+        let EventStreaming {
+            broadcaster: event_broadcaster,
+            event_server_rx,
+            state_event_rx,
+        } = events;
+        let SnapshotRelay {
+            request_tx: snapshot_request_tx,
+            request_rx: mut snapshot_request_rx,
+            main_tx: snapshot_request_main_tx,
+        } = snapshots;
+
         tracing::info!("Tokio runtime started");
 
         // Start IPC server
@@ -206,17 +268,18 @@ impl App {
         tracing::info!("Tokio runtime exiting");
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn run_main_loop(
-        self,
-        ipc_cmd_rx: std_mpsc::Receiver<IpcCommandWithResponse>,
-        observer_event_tx: std_mpsc::Sender<Event>,
-        observer_event_rx: std_mpsc::Receiver<Event>,
-        event_tx: mpsc::Sender<Event>,
-        state_event_tx: std_mpsc::Sender<StateEvent>,
-        snapshot_request_rx: std_mpsc::Receiver<SnapshotRequest>,
-        ipc_source_ptr: Arc<AtomicPtr<std::ffi::c_void>>,
-    ) {
+    fn run_main_loop(self, channels: MainChannels) {
+        // Destructure channels
+        let MainChannels {
+            ipc_cmd_rx,
+            observer_event_tx,
+            observer_event_rx,
+            event_tx,
+            state_event_tx,
+            snapshot_request_rx,
+            ipc_source: ipc_source_ptr,
+        } = channels;
+
         tracing::info!("Starting main loop");
 
         // Get MainThreadMarker - we're on the main thread
