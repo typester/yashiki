@@ -132,9 +132,10 @@ chmod +x "${APP_DIR}/Contents/MacOS/yashiki-launcher"
 # Generate Info.plist
 sed "s/VERSION_PLACEHOLDER/${VERSION}/g" "${PROJECT_ROOT}/Info.plist.template" > "${APP_DIR}/Contents/Info.plist"
 
-# Ad-hoc code signing
-echo "Signing ${APP_NAME}..."
-codesign --force --deep -s - "${APP_DIR}"
+# Code signing (use CODESIGN_IDENTITY if set, otherwise ad-hoc signing)
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
+echo "Signing ${APP_NAME} with identity: ${CODESIGN_IDENTITY}"
+codesign --force --deep -s "$CODESIGN_IDENTITY" "${APP_DIR}"
 
 echo "Created: ${APP_DIR}"
 
