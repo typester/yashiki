@@ -540,14 +540,7 @@ impl App {
 
                 // Apply rules to newly created windows and emit events
                 for window_id in new_window_ids {
-                    // Emit window created event
-                    {
-                        let state = ctx.state.borrow();
-                        if let Some(window) = state.windows.get(&window_id) {
-                            ctx.event_emitter.emit_window_created(window, state.focused);
-                        }
-                    }
-
+                    // Apply rules first (may change tags, display_id, is_floating)
                     let effects = ctx.state.borrow_mut().apply_rules_to_new_window(window_id);
                     if !effects.is_empty() {
                         let _ = execute_effects(
@@ -556,6 +549,14 @@ impl App {
                             &ctx.layout_engine_manager,
                             &ctx.window_manipulator,
                         );
+                    }
+
+                    // Emit window created event after rules are applied
+                    {
+                        let state = ctx.state.borrow();
+                        if let Some(window) = state.windows.get(&window_id) {
+                            ctx.event_emitter.emit_window_created(window, state.focused);
+                        }
                     }
                 }
 
