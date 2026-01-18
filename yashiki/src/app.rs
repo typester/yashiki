@@ -702,6 +702,22 @@ fn process_command(
             }
         }
 
+        // Window close
+        Command::WindowClose => {
+            if let Some(focused_id) = state.focused {
+                if let Some(window) = state.windows.get(&focused_id) {
+                    CommandResult::ok_with_effects(vec![Effect::CloseWindow {
+                        window_id: focused_id,
+                        pid: window.pid,
+                    }])
+                } else {
+                    CommandResult::error("Focused window not found")
+                }
+            } else {
+                CommandResult::error("No focused window")
+            }
+        }
+
         // Send to output - returns displays that need retiling
         Command::OutputSend { direction } => {
             let displays_to_retile = state.send_to_output(*direction);
@@ -994,6 +1010,9 @@ fn execute_effects<M: WindowManipulator>(
                 height,
             } => {
                 manipulator.set_window_dimensions(window_id, pid, width, height);
+            }
+            Effect::CloseWindow { window_id, pid } => {
+                manipulator.close_window(window_id, pid);
             }
             Effect::ApplyFullscreen {
                 window_id,

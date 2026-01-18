@@ -157,7 +157,7 @@ yashiki window-move-to-tag 1     # Move focused window to tag 1
 yashiki window-toggle-tag 2      # Toggle tag 2 on focused window
 ```
 
-### Window Focus
+### Window Operations
 
 ```sh
 yashiki window-focus next        # Focus next window
@@ -166,6 +166,9 @@ yashiki window-focus left        # Focus window to the left
 yashiki window-focus right       # Focus window to the right
 yashiki window-focus up          # Focus window above
 yashiki window-focus down        # Focus window below
+yashiki window-toggle-fullscreen # Toggle fullscreen (AeroSpace-style)
+yashiki window-toggle-float      # Toggle floating state
+yashiki window-close             # Close focused window
 ```
 
 ### Multi-Monitor

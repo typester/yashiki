@@ -52,6 +52,7 @@ pub trait WindowManipulator {
     fn move_window_to_position(&self, window_id: u32, pid: i32, x: i32, y: i32);
     fn set_window_dimensions(&self, window_id: u32, pid: i32, width: u32, height: u32);
     fn set_window_frame(&self, window_id: u32, pid: i32, x: i32, y: i32, width: u32, height: u32);
+    fn close_window(&self, window_id: u32, pid: i32);
     fn exec_command(&self, command: &str, path: &str) -> Result<(), String>;
 }
 
@@ -350,6 +351,51 @@ impl WindowManipulator for MacOSWindowManipulator {
                         width,
                         height
                     );
+                    return;
+                }
+            }
+        }
+
+        tracing::warn!(
+            "Could not find AX window for id {} (pid {})",
+            window_id,
+            pid
+        );
+    }
+
+    fn close_window(&self, window_id: u32, pid: i32) {
+        let app = AXUIElement::application(pid);
+        let ax_windows = match app.windows() {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!("Failed to get windows for pid {}: {}", pid, e);
+                return;
+            }
+        };
+
+        for ax_win in &ax_windows {
+            if let Some(wid) = ax_win.window_id() {
+                if wid == window_id {
+                    match ax_win.close_button() {
+                        Ok(close_btn) => {
+                            if let Err(e) = close_btn.press() {
+                                tracing::warn!(
+                                    "Failed to press close button for window {}: {}",
+                                    window_id,
+                                    e
+                                );
+                            } else {
+                                tracing::info!("Closed window {} (pid {})", window_id, pid);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to get close button for window {}: {}",
+                                window_id,
+                                e
+                            );
+                        }
+                    }
                     return;
                 }
             }

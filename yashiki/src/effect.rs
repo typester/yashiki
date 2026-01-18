@@ -21,6 +21,10 @@ pub enum Effect {
         width: u32,
         height: u32,
     },
+    CloseWindow {
+        window_id: u32,
+        pid: i32,
+    },
     ApplyFullscreen {
         window_id: u32,
         pid: i32,

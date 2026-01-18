@@ -85,6 +85,7 @@ const AX_VALUE_TYPE_CGSIZE: u32 = 2;
 
 mod action {
     pub const RAISE: &str = "AXRaise";
+    pub const PRESS: &str = "AXPress";
 }
 
 mod attr {
@@ -95,6 +96,7 @@ mod attr {
     pub const POSITION: &str = "AXPosition";
     pub const SIZE: &str = "AXSize";
     pub const MINIMIZED: &str = "AXMinimized";
+    pub const CLOSE_BUTTON: &str = "AXCloseButton";
 }
 
 pub mod notification {
@@ -307,6 +309,23 @@ impl AXUIElement {
         } else {
             Err(err)
         }
+    }
+
+    pub fn press(&self) -> Result<(), AXError> {
+        let action = CFString::new(action::PRESS);
+        let err = unsafe {
+            AXUIElementPerformAction(self.as_concrete_TypeRef(), action.as_concrete_TypeRef())
+        };
+        if err == AX_ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(err)
+        }
+    }
+
+    pub fn close_button(&self) -> Result<AXUIElement, AXError> {
+        let value = self.get_attribute(attr::CLOSE_BUTTON)?;
+        Ok(unsafe { AXUIElement::wrap_under_create_rule(value as AXUIElementRef) })
     }
 }
 
