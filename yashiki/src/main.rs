@@ -2,6 +2,7 @@ mod app;
 mod core;
 mod effect;
 mod event;
+mod event_emitter;
 mod ipc;
 mod layout;
 mod macos;
@@ -13,8 +14,8 @@ use argh::FromArgs;
 use ipc::IpcClient;
 use tracing_subscriber::EnvFilter;
 use yashiki_ipc::{
-    Command, CursorWarpMode, Direction, GlobPattern, OutputDirection, OutputSpecifier, Response,
-    RuleAction, RuleMatcher, WindowRule,
+    Command, CursorWarpMode, Direction, EventFilter, GlobPattern, OutputDirection, OutputSpecifier,
+    Response, RuleAction, RuleMatcher, WindowRule,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -65,6 +66,7 @@ enum SubCommand {
     ListRules(ListRulesCmd),
     SetCursorWarp(SetCursorWarpCmd),
     GetCursorWarp(GetCursorWarpCmd),
+    Subscribe(SubscribeCmd),
     Quit(QuitCmd),
 }
 
@@ -384,6 +386,18 @@ struct SetCursorWarpCmd {
 #[argh(subcommand, name = "get-cursor-warp")]
 struct GetCursorWarpCmd {}
 
+/// Subscribe to state change events
+#[derive(FromArgs)]
+#[argh(subcommand, name = "subscribe")]
+struct SubscribeCmd {
+    /// request a snapshot on connection
+    #[argh(switch)]
+    snapshot: bool,
+    /// filter events (comma-separated: window,focus,display,tags,layout)
+    #[argh(option)]
+    filter: Option<String>,
+}
+
 /// Quit the yashiki daemon
 #[derive(FromArgs)]
 #[argh(subcommand, name = "quit")]
@@ -416,6 +430,11 @@ fn main() -> Result<()> {
         Some(SubCommand::Version(_)) => {
             println!("yashiki {}", VERSION);
             Ok(())
+        }
+        Some(SubCommand::Subscribe(cmd)) => {
+            // Subscribe to events (separate from normal IPC)
+            let filter = cmd.filter.map(|f| parse_event_filter(&f));
+            ipc::subscribe_and_print(cmd.snapshot, filter)
         }
         Some(subcmd) => run_cli(subcmd),
     }
@@ -538,7 +557,7 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
 
 fn to_command(subcmd: SubCommand) -> Result<Command> {
     match subcmd {
-        SubCommand::Start(_) | SubCommand::Version(_) => {
+        SubCommand::Start(_) | SubCommand::Version(_) | SubCommand::Subscribe(_) => {
             unreachable!("handled in main")
         }
         SubCommand::Bind(cmd) => {
@@ -948,4 +967,19 @@ fn parse_rule_action(args: &[String]) -> Result<RuleAction> {
             action_name
         ),
     }
+}
+
+fn parse_event_filter(s: &str) -> EventFilter {
+    let mut filter = EventFilter::default();
+    for part in s.split(',') {
+        match part.trim().to_lowercase().as_str() {
+            "window" => filter.window = true,
+            "focus" => filter.focus = true,
+            "display" => filter.display = true,
+            "tags" => filter.tags = true,
+            "layout" => filter.layout = true,
+            _ => {}
+        }
+    }
+    filter
 }

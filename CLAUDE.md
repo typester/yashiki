@@ -88,6 +88,11 @@ Like AeroSpace, uses virtual workspaces instead of macOS native Spaces:
   - Similar to river's `set-cursor-warp`
   - Three modes: `disabled`, `on-output-change`, `on-focus-change`
   - When enabled, mouse cursor moves to window center on focus change
+- **State streaming** (for status bars like engawa)
+  - Real-time state change events via Unix socket (`/tmp/yashiki-events.sock`)
+  - Event types: window (created/destroyed/updated), focus, display, tags, layout
+  - Optional snapshot on connection
+  - Filtering by event type
 
 ## Layout Protocol
 
@@ -115,6 +120,43 @@ This allows layout engines to track the focused window without explicit user com
 Layout engines can return `NeedsRetile` to request a retile after focus changes:
 - **tatami**: Returns `Ok` (no retile needed - focus doesn't affect layout)
 - **byobu**: Returns `NeedsRetile` (focused window moves to front)
+
+## State Streaming Protocol
+
+State events are streamed via Unix socket `/tmp/yashiki-events.sock`.
+
+```rust
+// yashiki-ipc/src/event.rs
+
+// Client sends on connection
+struct SubscribeRequest {
+    snapshot: bool,           // Request initial snapshot
+    filter: EventFilter,      // Filter events (empty = all)
+}
+
+struct EventFilter {
+    window: bool,   // WindowCreated, WindowDestroyed, WindowUpdated
+    focus: bool,    // WindowFocused, DisplayFocused
+    display: bool,  // DisplayAdded, DisplayRemoved, DisplayUpdated
+    tags: bool,     // TagsChanged
+    layout: bool,   // LayoutChanged
+}
+
+// Server streams events (JSON lines)
+enum StateEvent {
+    WindowCreated { window: WindowInfo },
+    WindowDestroyed { window_id: u32 },
+    WindowUpdated { window: WindowInfo },
+    WindowFocused { window_id: Option<u32> },
+    DisplayFocused { display_id: u32 },
+    DisplayAdded { display: OutputInfo },
+    DisplayRemoved { display_id: u32 },
+    DisplayUpdated { display: OutputInfo },
+    TagsChanged { display_id: u32, visible_tags: u32, previous_tags: u32 },
+    LayoutChanged { display_id: u32, layout: String },
+    Snapshot { windows, displays, focused_window_id, focused_display_id, default_layout },
+}
+```
 
 ## CLI Usage
 
@@ -184,6 +226,9 @@ yashiki set-cursor-warp disabled          # Disable cursor warp (default)
 yashiki set-cursor-warp on-output-change  # Warp on display switch only
 yashiki set-cursor-warp on-focus-change   # Warp on all focus changes
 yashiki get-cursor-warp           # Get current cursor warp mode
+yashiki subscribe                 # Subscribe to all state events
+yashiki subscribe --snapshot      # Subscribe with initial snapshot
+yashiki subscribe --filter focus,tags  # Subscribe to specific events
 yashiki quit                      # Quit daemon
 ```
 
@@ -275,7 +320,11 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
 - **core/window.rs** - Window struct with tags, display_id, app_id, saved_frame, is_floating, is_fullscreen
 - **core/tag.rs** - Tag bitmask
 - **ipc/server.rs** - IPC server on `/tmp/yashiki.sock`
-- **ipc/client.rs** - IPC client for CLI
+- **ipc/client.rs** - IPC client for CLI and event subscription
+- **ipc/event_server.rs** - Event streaming server on `/tmp/yashiki-events.sock`
+  - Broadcast channel for multiple subscribers
+  - Event filtering per connection
+- **event_emitter.rs** - Main thread to tokio event forwarding
 - **layout.rs** - `LayoutEngine` and `LayoutEngineManager`
   - `LayoutEngine` spawns and communicates with a single layout engine process
   - `LayoutEngineManager` manages multiple engines with lazy spawning
@@ -292,7 +341,7 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
   - `MacOSWindowSystem` / `MacOSWindowManipulator` - Production implementations
   - `MockWindowSystem` / `MockWindowManipulator` - Test implementations
 - **main.rs** - Daemon + CLI mode
-- **yashiki-ipc/** - Command/Response/LayoutMessage enums, OutputSpecifier, OutputInfo, GlobPattern, RuleMatcher, RuleAction, WindowRule
+- **yashiki-ipc/** - Command/Response/LayoutMessage enums, OutputSpecifier, OutputInfo, GlobPattern, RuleMatcher, RuleAction, WindowRule, StateEvent, SubscribeRequest, EventFilter
 
 ### yashiki-layout-tatami (layout engine)
 - Master-stack layout
@@ -505,16 +554,17 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
 
 ## Testing
 
-### Current Test Coverage (100 tests)
+### Current Test Coverage (122 tests)
 
 Run tests: `cargo test --all`
 
 **Tested modules:**
 - `core/tag.rs` - Tag bitmask operations (7 tests)
 - `macos/hotkey.rs` - `parse_hotkey()`, `format_hotkey()` (15 tests)
-- `yashiki-ipc` - Command/Response/LayoutMessage/WindowRule serialization (46 tests)
+- `yashiki-ipc` - Command/Response/LayoutMessage/WindowRule/StateEvent serialization (55 tests)
 - `core/state.rs` - State management with MockWindowSystem (13 tests)
-- `app.rs` - `process_command()` effect generation (9 tests)
+- `app.rs` - `process_command()` effect generation, `emit_state_change_events()` event detection (13 tests)
+- `event_emitter.rs` - `create_snapshot()`, `window_to_info()`, `display_to_info()` (3 tests)
 - `yashiki-layout-byobu` - Accordion layout and commands (9 tests)
 
 ### Platform Abstraction Layer

@@ -19,6 +19,15 @@ pub struct RuleApplicationResult {
     pub is_floating: bool,
 }
 
+/// Result of handling display configuration changes
+#[derive(Debug, Default)]
+pub struct DisplayChangeResult {
+    pub window_moves: Vec<WindowMove>,
+    pub displays_to_retile: Vec<DisplayId>,
+    pub added: Vec<Display>,
+    pub removed: Vec<DisplayId>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowMove {
     pub window_id: WindowId,
@@ -172,23 +181,33 @@ impl State {
         }
     }
 
-    pub fn handle_display_change<W: WindowSystem>(
-        &mut self,
-        ws: &W,
-    ) -> (Vec<WindowMove>, Vec<DisplayId>) {
+    pub fn handle_display_change<W: WindowSystem>(&mut self, ws: &W) -> DisplayChangeResult {
         let display_infos = ws.get_all_displays();
         let current_ids: HashSet<_> = display_infos.iter().map(|d| d.id).collect();
-        let removed_ids: Vec<_> = self
-            .displays
-            .keys()
-            .filter(|id| !current_ids.contains(id))
-            .copied()
-            .collect();
+        let previous_ids: HashSet<_> = self.displays.keys().copied().collect();
 
+        let removed_ids: Vec<_> = previous_ids.difference(&current_ids).copied().collect();
+        let added_ids: HashSet<_> = current_ids.difference(&previous_ids).copied().collect();
+
+        // Handle case where no displays were removed (just updates or additions)
         if removed_ids.is_empty() {
-            // No displays were removed, just update frames and add new displays
+            // Sync all to add new displays and update existing ones
             self.sync_all(ws);
-            return (vec![], vec![]);
+
+            // Collect newly added displays
+            let added: Vec<_> = self
+                .displays
+                .values()
+                .filter(|d| added_ids.contains(&d.id))
+                .cloned()
+                .collect();
+
+            return DisplayChangeResult {
+                window_moves: vec![],
+                displays_to_retile: vec![],
+                added,
+                removed: vec![],
+            };
         }
 
         tracing::info!("Displays disconnected: {:?}", removed_ids);
@@ -202,7 +221,12 @@ impl State {
 
         let Some(fallback_id) = fallback_display else {
             tracing::warn!("No fallback display available");
-            return (vec![], vec![]);
+            return DisplayChangeResult {
+                window_moves: vec![],
+                displays_to_retile: vec![],
+                added: vec![],
+                removed: removed_ids,
+            };
         };
 
         // Find orphaned windows and move them to the fallback display
@@ -241,6 +265,14 @@ impl State {
         // Sync remaining displays (update frames, add new displays)
         self.sync_all(ws);
 
+        // Collect newly added displays
+        let added: Vec<_> = self
+            .displays
+            .values()
+            .filter(|d| added_ids.contains(&d.id))
+            .cloned()
+            .collect();
+
         // Compute window moves for hiding/showing based on new tag visibility
         for display_id in &affected_displays {
             let moves = self.compute_layout_changes_for_display(*display_id);
@@ -248,7 +280,13 @@ impl State {
         }
 
         let displays_to_retile: Vec<_> = affected_displays.into_iter().collect();
-        (window_moves, displays_to_retile)
+
+        DisplayChangeResult {
+            window_moves,
+            displays_to_retile,
+            added,
+            removed: removed_ids,
+        }
     }
 
     pub fn sync_all<W: WindowSystem>(&mut self, ws: &W) {
@@ -1575,5 +1613,111 @@ mod tests {
 
         let visible = state.visible_windows_on_display(1);
         assert_eq!(visible.len(), 2);
+    }
+
+    #[test]
+    fn test_handle_display_change_display_added() {
+        // Start with 1 display
+        let ws1 = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws1);
+        assert_eq!(state.displays.len(), 1);
+
+        // Simulate display added: create new MockWindowSystem with 2 displays
+        let ws2 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let result = state.handle_display_change(&ws2);
+
+        // Check that display 2 was added
+        assert_eq!(result.added.len(), 1);
+        assert_eq!(result.added[0].id, 2);
+        assert!(result.removed.is_empty());
+        assert_eq!(state.displays.len(), 2);
+    }
+
+    #[test]
+    fn test_handle_display_change_display_removed() {
+        // Start with 2 displays
+        let ws1 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws1);
+        assert_eq!(state.displays.len(), 2);
+
+        // Simulate display 2 disconnected
+        let ws2 = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let result = state.handle_display_change(&ws2);
+
+        // Check that display 2 was removed
+        assert!(result.added.is_empty());
+        assert_eq!(result.removed.len(), 1);
+        assert_eq!(result.removed[0], 2);
+        assert_eq!(state.displays.len(), 1);
+    }
+
+    #[test]
+    fn test_handle_display_change_orphaned_windows() {
+        // Start with 2 displays, window on display 2
+        let ws1 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws1);
+
+        // Verify window 101 is on display 2
+        assert_eq!(state.windows.get(&101).unwrap().display_id, 2);
+
+        // Simulate display 2 disconnected
+        let ws2 = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let result = state.handle_display_change(&ws2);
+
+        // Check that window 101 was moved to fallback display (display 1)
+        assert_eq!(state.windows.get(&101).unwrap().display_id, 1);
+
+        // Check displays_to_retile includes the fallback display
+        assert!(result.displays_to_retile.contains(&1));
     }
 }

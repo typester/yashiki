@@ -40,8 +40,8 @@ fn find_layout_engine(name: &str) -> Option<PathBuf> {
 }
 
 pub struct LayoutEngine {
-    #[allow(dead_code)]
-    child: Child,
+    // Keep process alive until this struct is dropped
+    _child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
 }
@@ -75,7 +75,7 @@ impl LayoutEngine {
         tracing::info!("Layout engine '{}' spawned", command_name);
 
         Ok(Self {
-            child,
+            _child: child,
             stdin,
             stdout: BufReader::new(stdout),
         })
