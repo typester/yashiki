@@ -435,22 +435,46 @@ impl State {
         // Add new windows
         for id in new_ids.difference(&current_ids) {
             if let Some(info) = pid_window_infos.iter().find(|w| w.window_id == *id) {
-                // Skip popup windows (Firefox dropdowns, tooltips, etc.)
-                if !ws.is_standard_window(info.window_id, info.pid) {
-                    tracing::debug!(
-                        "Skipping popup window: [{}] {} ({})",
+                let title = info.name.clone().unwrap_or_default();
+                let app_name = &info.owner_name;
+                let app_id = info.bundle_id.as_deref();
+
+                // Fetch AX attributes early for rule matching and debug logging
+                let (ax_id, subrole) = ws.get_ax_attributes(info.window_id, info.pid);
+
+                // Log discovered window at debug level
+                tracing::debug!(
+                    "Discovered window: [{}] pid={} app='{}' app_id={:?} title='{}' ax_id={:?} subrole={:?}",
+                    info.window_id,
+                    info.pid,
+                    app_name,
+                    app_id,
+                    title,
+                    ax_id,
+                    subrole
+                );
+
+                // Check ignore rules before creating window
+                if self.should_ignore_window(
+                    app_name,
+                    app_id,
+                    &title,
+                    ax_id.as_deref(),
+                    subrole.as_deref(),
+                ) {
+                    tracing::info!(
+                        "Window ignored by rule: [{}] {} ({}) [ax_id={:?}, subrole={:?}]",
                         info.window_id,
-                        info.name.as_deref().unwrap_or(""),
-                        info.owner_name
+                        title,
+                        app_name,
+                        ax_id,
+                        subrole
                     );
                     continue;
                 }
 
                 let display_id = self.find_display_for_bounds(&info.bounds);
                 let mut window = Window::from_window_info(info, self.default_tag, display_id);
-
-                // Fetch AX attributes (ax_id, subrole) for rule matching
-                let (ax_id, subrole) = ws.get_ax_attributes(info.window_id, info.pid);
                 window.ax_id = ax_id;
                 window.subrole = subrole;
 
@@ -1074,6 +1098,24 @@ impl State {
         removed
     }
 
+    /// Check if a window should be ignored based on ignore rules.
+    /// Returns true if any RuleAction::Ignore rule matches.
+    pub fn should_ignore_window(
+        &self,
+        app_name: &str,
+        app_id: Option<&str>,
+        title: &str,
+        ax_id: Option<&str>,
+        subrole: Option<&str>,
+    ) -> bool {
+        self.rules.iter().any(|rule| {
+            matches!(rule.action, RuleAction::Ignore)
+                && rule
+                    .matcher
+                    .matches(app_name, app_id, title, ax_id, subrole)
+        })
+    }
+
     /// Get all rules that match a window
     pub fn get_matching_rules(
         &self,
@@ -1107,6 +1149,9 @@ impl State {
         // Apply rules in order (most specific first due to sorting)
         for rule in matching_rules {
             match &rule.action {
+                RuleAction::Ignore => {
+                    // Ignore rules are handled separately in should_ignore_window()
+                }
                 RuleAction::Float => {
                     result.is_floating = true;
                 }
@@ -1763,5 +1808,94 @@ mod tests {
 
         // Check displays_to_retile includes the fallback display
         assert!(result.displays_to_retile.contains(&1));
+    }
+
+    #[test]
+    fn test_should_ignore_window_with_ignore_rule() {
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        let mut state = State::new();
+
+        // Add an ignore rule for AXUnknown subrole
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: None,
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: Some(GlobPattern::new("AXUnknown")),
+            },
+            action: RuleAction::Ignore,
+        });
+
+        // Window with AXUnknown subrole should be ignored
+        assert!(state.should_ignore_window("Firefox", None, "Menu", None, Some("AXUnknown")));
+
+        // Window with AXStandardWindow subrole should NOT be ignored
+        assert!(!state.should_ignore_window(
+            "Firefox",
+            None,
+            "Window",
+            None,
+            Some("AXStandardWindow")
+        ));
+
+        // Window with no subrole should NOT be ignored
+        assert!(!state.should_ignore_window("Firefox", None, "Window", None, None));
+    }
+
+    #[test]
+    fn test_should_ignore_window_with_app_specific_rule() {
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        let mut state = State::new();
+
+        // Add an ignore rule for Firefox + AXUnknown only
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: None,
+                app_id: Some(GlobPattern::new("org.mozilla.firefox")),
+                title: None,
+                ax_id: None,
+                subrole: Some(GlobPattern::new("AXUnknown")),
+            },
+            action: RuleAction::Ignore,
+        });
+
+        // Firefox window with AXUnknown should be ignored
+        assert!(state.should_ignore_window(
+            "Firefox",
+            Some("org.mozilla.firefox"),
+            "Menu",
+            None,
+            Some("AXUnknown")
+        ));
+
+        // Safari window with AXUnknown should NOT be ignored (different app_id)
+        assert!(!state.should_ignore_window(
+            "Safari",
+            Some("com.apple.Safari"),
+            "Menu",
+            None,
+            Some("AXUnknown")
+        ));
+
+        // Firefox window with AXStandardWindow should NOT be ignored
+        assert!(!state.should_ignore_window(
+            "Firefox",
+            Some("org.mozilla.firefox"),
+            "Window",
+            None,
+            Some("AXStandardWindow")
+        ));
+    }
+
+    #[test]
+    fn test_should_ignore_window_no_rules() {
+        let state = State::new();
+
+        // Without any rules, no windows should be ignored
+        assert!(!state.should_ignore_window("Firefox", None, "Window", None, Some("AXUnknown")));
+        assert!(!state.should_ignore_window("Safari", None, "Window", None, None));
     }
 }

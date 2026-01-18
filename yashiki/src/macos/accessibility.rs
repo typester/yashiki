@@ -482,27 +482,3 @@ pub fn get_focused_window() -> Result<AXUIElement, AXError> {
         }
     }
 }
-
-/// Checks if an AXUIElement window is a standard window (not a popup/tooltip/dropdown).
-///
-/// A window is considered standard if:
-/// - It has AXSubrole == "AXStandardWindow", OR
-/// - It has at least one window button (close, fullscreen, zoom, or minimize)
-///
-/// This is used to filter out Firefox popup windows (dropdowns, tooltips) which have:
-/// - AXSubrole == "AXUnknown"
-/// - No window buttons
-pub fn is_standard_window(ax_window: &AXUIElement) -> bool {
-    // Check if subrole is AXStandardWindow
-    if let Ok(subrole) = ax_window.subrole() {
-        if subrole == "AXStandardWindow" {
-            return true;
-        }
-    }
-
-    // Check if any window button exists
-    ax_window.has_close_button()
-        || ax_window.has_fullscreen_button()
-        || ax_window.has_zoom_button()
-        || ax_window.has_minimize_button()
-}

@@ -1122,6 +1122,7 @@ fn process_command(
                 .iter()
                 .map(|r| {
                     let action_str = match &r.action {
+                        yashiki_ipc::RuleAction::Ignore => "ignore".to_string(),
                         yashiki_ipc::RuleAction::Float => "float".to_string(),
                         yashiki_ipc::RuleAction::NoFloat => "no-float".to_string(),
                         yashiki_ipc::RuleAction::Tags { tags } => format!("tags {}", tags),

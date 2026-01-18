@@ -281,6 +281,10 @@ yashiki rule-add --ax-id "com.mitchellh.ghostty.quickTerminal" float
 yashiki rule-add --subrole Dialog float
 yashiki rule-add --subrole FloatingWindow float
 
+# Ignore windows completely (never manage - useful for popups/dropdowns)
+yashiki rule-add --subrole AXUnknown ignore  # Ignore all popup windows
+yashiki rule-add --app-id org.mozilla.firefox --subrole AXUnknown ignore  # Firefox popups only
+
 # Combined matching (more specific)
 yashiki rule-add --app-name Safari --title "*Preferences*" float
 yashiki rule-add --app-id com.mitchellh.ghostty --subrole FloatingWindow float
@@ -299,6 +303,7 @@ yashiki list-rules
 **Available actions:**
 | Action | Example | Description |
 |--------|---------|-------------|
+| `ignore` | `ignore` | Never manage (skip completely) |
 | `float` | `float` | Window floats (excluded from tiling) |
 | `no-float` | `no-float` | Override float rule |
 | `tags` | `tags 2` | Set window tags |

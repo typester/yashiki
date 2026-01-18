@@ -1008,6 +1008,7 @@ fn parse_rule_action(args: &[String]) -> Result<RuleAction> {
     let action_args = &args[1..];
 
     match action_name.as_str() {
+        "ignore" => Ok(RuleAction::Ignore),
         "float" => Ok(RuleAction::Float),
         "no-float" => Ok(RuleAction::NoFloat),
         "tags" => {
@@ -1055,7 +1056,7 @@ fn parse_rule_action(args: &[String]) -> Result<RuleAction> {
             Ok(RuleAction::Dimensions { width, height })
         }
         _ => bail!(
-            "Unknown rule action: {} (use float, no-float, tags, output, position, dimensions)",
+            "Unknown rule action: {} (use ignore, float, no-float, tags, output, position, dimensions)",
             action_name
         ),
     }

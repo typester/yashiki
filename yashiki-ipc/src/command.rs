@@ -226,6 +226,8 @@ impl RuleMatcher {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum RuleAction {
+    /// Completely ignore window (never manage)
+    Ignore,
     /// Exclude from tiling (floating)
     Float,
     /// Include in tiling (default behavior)
@@ -1112,6 +1114,7 @@ mod tests {
     #[test]
     fn test_rule_action_serialization() {
         let cases: Vec<(RuleAction, &str)> = vec![
+            (RuleAction::Ignore, "\"action\":\"ignore\""),
             (RuleAction::Float, "\"action\":\"float\""),
             (RuleAction::NoFloat, "\"action\":\"no_float\""),
             (RuleAction::Tags { tags: 2 }, "\"action\":\"tags\""),
