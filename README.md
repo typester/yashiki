@@ -260,7 +260,7 @@ Default exec path: `<yashiki_executable_dir>:<system_PATH>`
 
 ### Window Rules
 
-Automatically configure window properties based on app name, bundle identifier, or title.
+Automatically configure window properties based on app name, bundle identifier, title, AXIdentifier, or AXSubrole.
 
 ```sh
 # Match by app name
@@ -274,8 +274,16 @@ yashiki rule-add --app-id "com.google.*" output 2    # Glob pattern
 # Match by window title
 yashiki rule-add --title "*Preferences*" float
 
+# Match by AXIdentifier (useful for special windows like Ghostty Quick Terminal)
+yashiki rule-add --ax-id "com.mitchellh.ghostty.quickTerminal" float
+
+# Match by AXSubrole (AX prefix optional: "Dialog" matches "AXDialog")
+yashiki rule-add --subrole Dialog float
+yashiki rule-add --subrole FloatingWindow float
+
 # Combined matching (more specific)
 yashiki rule-add --app-name Safari --title "*Preferences*" float
+yashiki rule-add --app-id com.mitchellh.ghostty --subrole FloatingWindow float
 
 # Other actions
 yashiki rule-add --app-name Preview dimensions 800 600
@@ -299,6 +307,8 @@ yashiki list-rules
 | `dimensions` | `dimensions 800 600` | Set size |
 
 Rules are sorted by specificity - more specific rules take priority.
+
+For detailed window rules configuration including how to find AX attributes (`--ax-id`, `--subrole`), see [docs/window-rules.md](docs/window-rules.md).
 
 ## Built-in Layout Engines
 

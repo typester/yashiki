@@ -447,13 +447,21 @@ impl State {
                 }
 
                 let display_id = self.find_display_for_bounds(&info.bounds);
-                let window = Window::from_window_info(info, self.default_tag, display_id);
+                let mut window = Window::from_window_info(info, self.default_tag, display_id);
+
+                // Fetch AX attributes (ax_id, subrole) for rule matching
+                let (ax_id, subrole) = ws.get_ax_attributes(info.window_id, info.pid);
+                window.ax_id = ax_id;
+                window.subrole = subrole;
+
                 tracing::info!(
-                    "Window added: [{}] {} ({}) on display {}",
+                    "Window added: [{}] {} ({}) on display {} [ax_id={:?}, subrole={:?}]",
                     window.id,
                     window.title,
                     window.app_name,
-                    display_id
+                    display_id,
+                    window.ax_id,
+                    window.subrole
                 );
                 self.windows.insert(window.id, window);
                 added_window_ids.push(*id);
@@ -1072,10 +1080,15 @@ impl State {
         app_name: &str,
         app_id: Option<&str>,
         title: &str,
+        ax_id: Option<&str>,
+        subrole: Option<&str>,
     ) -> Vec<&WindowRule> {
         self.rules
             .iter()
-            .filter(|rule| rule.matcher.matches(app_name, app_id, title))
+            .filter(|rule| {
+                rule.matcher
+                    .matches(app_name, app_id, title, ax_id, subrole)
+            })
             .collect()
     }
 
@@ -1085,8 +1098,10 @@ impl State {
         app_name: &str,
         app_id: Option<&str>,
         title: &str,
+        ax_id: Option<&str>,
+        subrole: Option<&str>,
     ) -> RuleApplicationResult {
-        let matching_rules = self.get_matching_rules(app_name, app_id, title);
+        let matching_rules = self.get_matching_rules(app_name, app_id, title, ax_id, subrole);
         let mut result = RuleApplicationResult::default();
 
         // Apply rules in order (most specific first due to sorting)
@@ -1129,8 +1144,8 @@ impl State {
     /// Modifies the window in place (tags, display_id, is_floating) and returns
     /// Vec<Effect> for position, dimensions, and window hiding to be executed.
     pub fn apply_rules_to_new_window(&mut self, window_id: WindowId) -> Vec<Effect> {
-        // Get app_name, app_id, title, and pid from the window
-        let (app_name, app_id, title, pid) = {
+        // Get app_name, app_id, title, ax_id, subrole, and pid from the window
+        let (app_name, app_id, title, ax_id, subrole, pid) = {
             let Some(window) = self.windows.get(&window_id) else {
                 return vec![];
             };
@@ -1138,12 +1153,20 @@ impl State {
                 window.app_name.clone(),
                 window.app_id.clone(),
                 window.title.clone(),
+                window.ax_id.clone(),
+                window.subrole.clone(),
                 window.pid,
             )
         };
 
         // Apply rules
-        let rule_result = self.apply_rules_to_window(&app_name, app_id.as_deref(), &title);
+        let rule_result = self.apply_rules_to_window(
+            &app_name,
+            app_id.as_deref(),
+            &title,
+            ax_id.as_deref(),
+            subrole.as_deref(),
+        );
 
         // Modify the window
         if let Some(window) = self.windows.get_mut(&window_id) {
@@ -1289,7 +1312,7 @@ impl State {
 
         for window_id in window_ids {
             // Get window info for rule matching
-            let (app_name, app_id, title, pid, original_tags, original_display_id) = {
+            let (app_name, app_id, title, ax_id, subrole, pid, original_tags, original_display_id) = {
                 let Some(window) = self.windows.get(&window_id) else {
                     continue;
                 };
@@ -1297,6 +1320,8 @@ impl State {
                     window.app_name.clone(),
                     window.app_id.clone(),
                     window.title.clone(),
+                    window.ax_id.clone(),
+                    window.subrole.clone(),
                     window.pid,
                     window.tags,
                     window.display_id,
@@ -1304,7 +1329,13 @@ impl State {
             };
 
             // Apply rules
-            let rule_result = self.apply_rules_to_window(&app_name, app_id.as_deref(), &title);
+            let rule_result = self.apply_rules_to_window(
+                &app_name,
+                app_id.as_deref(),
+                &title,
+                ax_id.as_deref(),
+                subrole.as_deref(),
+            );
 
             // Check if any rules matched that would change tags or display_id
             let new_tags = rule_result.tags.map(Tag::from_mask);

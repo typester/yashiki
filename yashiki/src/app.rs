@@ -1142,6 +1142,8 @@ fn process_command(
                         app_name: r.matcher.app_name.as_ref().map(|p| p.pattern().to_string()),
                         app_id: r.matcher.app_id.as_ref().map(|p| p.pattern().to_string()),
                         title: r.matcher.title.as_ref().map(|p| p.pattern().to_string()),
+                        ax_id: r.matcher.ax_id.as_ref().map(|p| p.pattern().to_string()),
+                        subrole: r.matcher.subrole.as_ref().map(|p| p.pattern().to_string()),
                         action: action_str,
                     }
                 })

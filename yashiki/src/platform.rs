@@ -16,6 +16,9 @@ pub trait WindowSystem {
     /// Check if a window is a standard window (not a popup/tooltip/dropdown).
     /// Returns true if the window should be managed, false if it should be ignored.
     fn is_standard_window(&self, window_id: u32, pid: i32) -> bool;
+    /// Get AXIdentifier and AXSubrole attributes for a window.
+    /// Returns (ax_id, subrole) if successful.
+    fn get_ax_attributes(&self, window_id: u32, pid: i32) -> (Option<String>, Option<String>);
 }
 
 /// macOS implementation of WindowSystem
@@ -53,6 +56,24 @@ impl WindowSystem for MacOSWindowSystem {
         }
 
         true // Window not found, assume it's standard
+    }
+
+    fn get_ax_attributes(&self, window_id: u32, pid: i32) -> (Option<String>, Option<String>) {
+        let app = AXUIElement::application(pid);
+        let ax_windows = match app.windows() {
+            Ok(w) => w,
+            Err(_) => return (None, None),
+        };
+
+        for ax_win in ax_windows {
+            if ax_win.window_id() == Some(window_id) {
+                let ax_id = ax_win.identifier().ok();
+                let subrole = ax_win.subrole().ok();
+                return (ax_id, subrole);
+            }
+        }
+
+        (None, None)
     }
 }
 
@@ -509,6 +530,15 @@ pub mod mock {
         fn is_standard_window(&self, _window_id: u32, _pid: i32) -> bool {
             // In tests, all windows are standard by default
             true
+        }
+
+        fn get_ax_attributes(
+            &self,
+            _window_id: u32,
+            _pid: i32,
+        ) -> (Option<String>, Option<String>) {
+            // In tests, return None for AX attributes by default
+            (None, None)
         }
     }
 

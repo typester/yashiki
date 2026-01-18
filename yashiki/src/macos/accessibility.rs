@@ -98,6 +98,7 @@ mod attr {
     pub const MINIMIZED: &str = "AXMinimized";
     pub const CLOSE_BUTTON: &str = "AXCloseButton";
     pub const SUBROLE: &str = "AXSubrole";
+    pub const IDENTIFIER: &str = "AXIdentifier";
     pub const FULLSCREEN_BUTTON: &str = "AXFullScreenButton";
     pub const MINIMIZE_BUTTON: &str = "AXMinimizeButton";
     pub const ZOOM_BUTTON: &str = "AXZoomButton";
@@ -334,6 +335,12 @@ impl AXUIElement {
 
     pub fn subrole(&self) -> Result<String, AXError> {
         let value = self.get_attribute(attr::SUBROLE)?;
+        let cf = unsafe { CFString::wrap_under_create_rule(value as *const _) };
+        Ok(cf.to_string())
+    }
+
+    pub fn identifier(&self) -> Result<String, AXError> {
+        let value = self.get_attribute(attr::IDENTIFIER)?;
         let cf = unsafe { CFString::wrap_under_create_rule(value as *const _) };
         Ok(cf.to_string())
     }

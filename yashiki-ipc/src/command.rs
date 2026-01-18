@@ -91,7 +91,7 @@ impl GlobPattern {
     }
 }
 
-/// Matcher for window rules - matches on app_name, app_id, and/or title
+/// Matcher for window rules - matches on app_name, app_id, title, ax_id, and/or subrole
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuleMatcher {
     /// Pattern to match against app name (e.g., "Safari", "*Chrome*")
@@ -103,6 +103,12 @@ pub struct RuleMatcher {
     /// Pattern to match against window title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<GlobPattern>,
+    /// Pattern to match against AXIdentifier attribute
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ax_id: Option<GlobPattern>,
+    /// Pattern to match against AXSubrole attribute (AX prefix optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subrole: Option<GlobPattern>,
 }
 
 impl RuleMatcher {
@@ -111,6 +117,8 @@ impl RuleMatcher {
             app_name,
             app_id: None,
             title,
+            ax_id: None,
+            subrole: None,
         }
     }
 
@@ -123,11 +131,37 @@ impl RuleMatcher {
             app_name,
             app_id,
             title,
+            ax_id: None,
+            subrole: None,
         }
     }
 
-    /// Check if this matcher matches the given app_name, app_id, and title
-    pub fn matches(&self, app_name: &str, app_id: Option<&str>, title: &str) -> bool {
+    pub fn with_all(
+        app_name: Option<GlobPattern>,
+        app_id: Option<GlobPattern>,
+        title: Option<GlobPattern>,
+        ax_id: Option<GlobPattern>,
+        subrole: Option<GlobPattern>,
+    ) -> Self {
+        Self {
+            app_name,
+            app_id,
+            title,
+            ax_id,
+            subrole,
+        }
+    }
+
+    /// Check if this matcher matches the given window attributes.
+    /// For subrole matching, the "AX" prefix is optional in both pattern and value.
+    pub fn matches(
+        &self,
+        app_name: &str,
+        app_id: Option<&str>,
+        title: &str,
+        ax_id: Option<&str>,
+        subrole: Option<&str>,
+    ) -> bool {
         let app_matches = self
             .app_name
             .as_ref()
@@ -143,7 +177,38 @@ impl RuleMatcher {
             .as_ref()
             .map(|p| p.matches(title))
             .unwrap_or(true);
-        app_matches && app_id_matches && title_matches
+        let ax_id_matches = self
+            .ax_id
+            .as_ref()
+            .map(|p| ax_id.map(|id| p.matches(id)).unwrap_or(false))
+            .unwrap_or(true);
+        let subrole_matches = self
+            .subrole
+            .as_ref()
+            .map(|p| {
+                subrole
+                    .map(|sr| Self::subrole_matches(p, sr))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(true);
+        app_matches && app_id_matches && title_matches && ax_id_matches && subrole_matches
+    }
+
+    /// Match subrole with "AX" prefix normalization.
+    /// Both pattern and value have their "AX" prefix stripped before comparison.
+    fn subrole_matches(pattern: &GlobPattern, value: &str) -> bool {
+        let normalized_pattern = Self::strip_ax_prefix(pattern.pattern());
+        let normalized_value = Self::strip_ax_prefix(value);
+        GlobPattern::new(normalized_pattern).matches(&normalized_value)
+    }
+
+    /// Strip "AX" prefix if present (case-insensitive)
+    fn strip_ax_prefix(s: &str) -> String {
+        if s.len() >= 2 && s[..2].eq_ignore_ascii_case("ax") {
+            s[2..].to_string()
+        } else {
+            s.to_string()
+        }
     }
 
     /// Get the combined specificity of this matcher
@@ -151,7 +216,9 @@ impl RuleMatcher {
         let app_spec = self.app_name.as_ref().map(|p| p.specificity()).unwrap_or(0);
         let app_id_spec = self.app_id.as_ref().map(|p| p.specificity()).unwrap_or(0);
         let title_spec = self.title.as_ref().map(|p| p.specificity()).unwrap_or(0);
-        app_spec + app_id_spec + title_spec
+        let ax_id_spec = self.ax_id.as_ref().map(|p| p.specificity()).unwrap_or(0);
+        let subrole_spec = self.subrole.as_ref().map(|p| p.specificity()).unwrap_or(0);
+        app_spec + app_id_spec + title_spec + ax_id_spec + subrole_spec
     }
 }
 
@@ -199,6 +266,10 @@ pub struct RuleInfo {
     pub app_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ax_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subrole: Option<String>,
     pub action: String,
 }
 
@@ -887,17 +958,17 @@ mod tests {
     #[test]
     fn test_rule_matcher_app_name_only() {
         let matcher = RuleMatcher::new(Some(GlobPattern::new("Safari")), None);
-        assert!(matcher.matches("Safari", None, "Any Title"));
-        assert!(matcher.matches("Safari", None, ""));
-        assert!(!matcher.matches("Chrome", None, "Any Title"));
+        assert!(matcher.matches("Safari", None, "Any Title", None, None));
+        assert!(matcher.matches("Safari", None, "", None, None));
+        assert!(!matcher.matches("Chrome", None, "Any Title", None, None));
     }
 
     #[test]
     fn test_rule_matcher_title_only() {
         let matcher = RuleMatcher::new(None, Some(GlobPattern::new("*Preferences*")));
-        assert!(matcher.matches("Any App", None, "Preferences"));
-        assert!(matcher.matches("Safari", None, "Safari Preferences"));
-        assert!(!matcher.matches("Safari", None, "Settings"));
+        assert!(matcher.matches("Any App", None, "Preferences", None, None));
+        assert!(matcher.matches("Safari", None, "Safari Preferences", None, None));
+        assert!(!matcher.matches("Safari", None, "Settings", None, None));
     }
 
     #[test]
@@ -906,29 +977,29 @@ mod tests {
             Some(GlobPattern::new("Safari")),
             Some(GlobPattern::new("*Preferences*")),
         );
-        assert!(matcher.matches("Safari", None, "Preferences"));
-        assert!(matcher.matches("Safari", None, "Safari Preferences"));
-        assert!(!matcher.matches("Safari", None, "Main Window"));
-        assert!(!matcher.matches("Chrome", None, "Preferences"));
+        assert!(matcher.matches("Safari", None, "Preferences", None, None));
+        assert!(matcher.matches("Safari", None, "Safari Preferences", None, None));
+        assert!(!matcher.matches("Safari", None, "Main Window", None, None));
+        assert!(!matcher.matches("Chrome", None, "Preferences", None, None));
     }
 
     #[test]
     fn test_rule_matcher_app_id_only() {
         let matcher =
             RuleMatcher::with_app_id(None, Some(GlobPattern::new("com.apple.Safari")), None);
-        assert!(matcher.matches("Safari", Some("com.apple.Safari"), "Any Title"));
-        assert!(matcher.matches("Any App", Some("com.apple.Safari"), ""));
-        assert!(!matcher.matches("Safari", Some("com.google.Chrome"), "Any Title"));
+        assert!(matcher.matches("Safari", Some("com.apple.Safari"), "Any Title", None, None));
+        assert!(matcher.matches("Any App", Some("com.apple.Safari"), "", None, None));
+        assert!(!matcher.matches("Safari", Some("com.google.Chrome"), "Any Title", None, None));
         // app_id pattern requires app_id to be present
-        assert!(!matcher.matches("Safari", None, "Any Title"));
+        assert!(!matcher.matches("Safari", None, "Any Title", None, None));
     }
 
     #[test]
     fn test_rule_matcher_app_id_with_wildcard() {
         let matcher = RuleMatcher::with_app_id(None, Some(GlobPattern::new("com.google.*")), None);
-        assert!(matcher.matches("Chrome", Some("com.google.Chrome"), "Any Title"));
-        assert!(matcher.matches("Meet", Some("com.google.meet"), "Any Title"));
-        assert!(!matcher.matches("Safari", Some("com.apple.Safari"), "Any Title"));
+        assert!(matcher.matches("Chrome", Some("com.google.Chrome"), "Any Title", None, None));
+        assert!(matcher.matches("Meet", Some("com.google.meet"), "Any Title", None, None));
+        assert!(!matcher.matches("Safari", Some("com.apple.Safari"), "Any Title", None, None));
     }
 
     #[test]
@@ -938,10 +1009,88 @@ mod tests {
             Some(GlobPattern::new("com.apple.Safari")),
             None,
         );
-        assert!(matcher.matches("Safari", Some("com.apple.Safari"), "Any Title"));
+        assert!(matcher.matches("Safari", Some("com.apple.Safari"), "Any Title", None, None));
         // Both must match
-        assert!(!matcher.matches("Safari", Some("com.other.Safari"), "Any Title"));
-        assert!(!matcher.matches("Chrome", Some("com.apple.Safari"), "Any Title"));
+        assert!(!matcher.matches("Safari", Some("com.other.Safari"), "Any Title", None, None));
+        assert!(!matcher.matches("Chrome", Some("com.apple.Safari"), "Any Title", None, None));
+    }
+
+    #[test]
+    fn test_rule_matcher_ax_id() {
+        let matcher = RuleMatcher::with_all(
+            None,
+            None,
+            None,
+            Some(GlobPattern::new("com.mitchellh.ghostty.quickTerminal")),
+            None,
+        );
+        assert!(matcher.matches(
+            "Ghostty",
+            None,
+            "",
+            Some("com.mitchellh.ghostty.quickTerminal"),
+            None
+        ));
+        assert!(!matcher.matches("Ghostty", None, "", Some("other-identifier"), None));
+        // ax_id pattern requires ax_id to be present
+        assert!(!matcher.matches("Ghostty", None, "", None, None));
+    }
+
+    #[test]
+    fn test_rule_matcher_subrole() {
+        let matcher =
+            RuleMatcher::with_all(None, None, None, None, Some(GlobPattern::new("Dialog")));
+        // Matches AXDialog (AX prefix stripped from value)
+        assert!(matcher.matches("Safari", None, "", None, Some("AXDialog")));
+        // Matches Dialog directly
+        assert!(matcher.matches("Safari", None, "", None, Some("Dialog")));
+        // Does not match different subrole
+        assert!(!matcher.matches("Safari", None, "", None, Some("AXStandardWindow")));
+        // subrole pattern requires subrole to be present
+        assert!(!matcher.matches("Safari", None, "", None, None));
+    }
+
+    #[test]
+    fn test_rule_matcher_subrole_with_ax_prefix() {
+        // Pattern with AX prefix should also work
+        let matcher =
+            RuleMatcher::with_all(None, None, None, None, Some(GlobPattern::new("AXDialog")));
+        assert!(matcher.matches("Safari", None, "", None, Some("AXDialog")));
+        assert!(matcher.matches("Safari", None, "", None, Some("Dialog")));
+        assert!(!matcher.matches("Safari", None, "", None, Some("AXStandardWindow")));
+    }
+
+    #[test]
+    fn test_rule_matcher_combined_ax_id_and_subrole() {
+        let matcher = RuleMatcher::with_all(
+            Some(GlobPattern::new("Ghostty")),
+            None,
+            None,
+            Some(GlobPattern::new("*quickTerminal*")),
+            Some(GlobPattern::new("FloatingWindow")),
+        );
+        assert!(matcher.matches(
+            "Ghostty",
+            None,
+            "",
+            Some("com.mitchellh.ghostty.quickTerminal"),
+            Some("AXFloatingWindow")
+        ));
+        // All conditions must match
+        assert!(!matcher.matches(
+            "Ghostty",
+            None,
+            "",
+            Some("com.mitchellh.ghostty.quickTerminal"),
+            Some("AXStandardWindow")
+        ));
+        assert!(!matcher.matches(
+            "Ghostty",
+            None,
+            "",
+            Some("other-identifier"),
+            Some("AXFloatingWindow")
+        ));
     }
 
     #[test]
@@ -1071,6 +1220,8 @@ mod tests {
                 app_name: Some("Safari".to_string()),
                 app_id: None,
                 title: None,
+                ax_id: None,
+                subrole: None,
                 action: "float".to_string(),
             }],
         };
@@ -1094,6 +1245,8 @@ mod tests {
                 app_name: None,
                 app_id: Some("com.apple.Safari".to_string()),
                 title: None,
+                ax_id: None,
+                subrole: None,
                 action: "float".to_string(),
             }],
         };
@@ -1105,6 +1258,36 @@ mod tests {
             Response::Rules { rules } => {
                 assert_eq!(rules.len(), 1);
                 assert_eq!(rules[0].app_id, Some("com.apple.Safari".to_string()));
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_response_rules_with_ax_id_and_subrole_serialization() {
+        let resp = Response::Rules {
+            rules: vec![RuleInfo {
+                app_name: None,
+                app_id: None,
+                title: None,
+                ax_id: Some("com.mitchellh.ghostty.quickTerminal".to_string()),
+                subrole: Some("Dialog".to_string()),
+                action: "float".to_string(),
+            }],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"ax_id\":\"com.mitchellh.ghostty.quickTerminal\""));
+        assert!(json.contains("\"subrole\":\"Dialog\""));
+
+        let deserialized: Response = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Response::Rules { rules } => {
+                assert_eq!(rules.len(), 1);
+                assert_eq!(
+                    rules[0].ax_id,
+                    Some("com.mitchellh.ghostty.quickTerminal".to_string())
+                );
+                assert_eq!(rules[0].subrole, Some("Dialog".to_string()));
             }
             _ => panic!("Wrong variant"),
         }

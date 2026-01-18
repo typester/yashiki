@@ -346,6 +346,12 @@ struct RuleAddCmd {
     /// window title pattern (glob)
     #[argh(option)]
     title: Option<String>,
+    /// AXIdentifier pattern (glob, e.g., "com.mitchellh.ghostty.quickTerminal")
+    #[argh(option)]
+    ax_id: Option<String>,
+    /// AXSubrole pattern (glob, AX prefix optional, e.g., "Dialog", "FloatingWindow")
+    #[argh(option)]
+    subrole: Option<String>,
     /// action and arguments (e.g., "float", "tags 2", "dimensions 800 600")
     #[argh(positional, greedy)]
     action: Vec<String>,
@@ -364,6 +370,12 @@ struct RuleDelCmd {
     /// window title pattern (glob)
     #[argh(option)]
     title: Option<String>,
+    /// AXIdentifier pattern (glob)
+    #[argh(option)]
+    ax_id: Option<String>,
+    /// AXSubrole pattern (glob, AX prefix optional)
+    #[argh(option)]
+    subrole: Option<String>,
     /// action to remove (e.g., "float", "tags")
     #[argh(positional, greedy)]
     action: Vec<String>,
@@ -552,6 +564,12 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
                 if let Some(title) = &r.title {
                     matchers.push(format!("--title {}", title));
                 }
+                if let Some(ax_id) = &r.ax_id {
+                    matchers.push(format!("--ax-id {}", ax_id));
+                }
+                if let Some(subrole) = &r.subrole {
+                    matchers.push(format!("--subrole {}", subrole));
+                }
                 if matchers.is_empty() {
                     matchers.push("*".to_string());
                 }
@@ -653,16 +671,23 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             append: cmd.append,
         }),
         SubCommand::RuleAdd(cmd) => {
-            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
-                bail!("rule-add requires --app-name, --app-id, or --title");
+            if cmd.app_name.is_none()
+                && cmd.app_id.is_none()
+                && cmd.title.is_none()
+                && cmd.ax_id.is_none()
+                && cmd.subrole.is_none()
+            {
+                bail!("rule-add requires --app-name, --app-id, --title, --ax-id, or --subrole");
             }
             if cmd.action.is_empty() {
                 bail!("rule-add requires an action");
             }
-            let matcher = RuleMatcher::with_app_id(
+            let matcher = RuleMatcher::with_all(
                 cmd.app_name.map(GlobPattern::new),
                 cmd.app_id.map(GlobPattern::new),
                 cmd.title.map(GlobPattern::new),
+                cmd.ax_id.map(GlobPattern::new),
+                cmd.subrole.map(GlobPattern::new),
             );
             let action = parse_rule_action(&cmd.action)?;
             Ok(Command::RuleAdd {
@@ -670,16 +695,23 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             })
         }
         SubCommand::RuleDel(cmd) => {
-            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
-                bail!("rule-del requires --app-name, --app-id, or --title");
+            if cmd.app_name.is_none()
+                && cmd.app_id.is_none()
+                && cmd.title.is_none()
+                && cmd.ax_id.is_none()
+                && cmd.subrole.is_none()
+            {
+                bail!("rule-del requires --app-name, --app-id, --title, --ax-id, or --subrole");
             }
             if cmd.action.is_empty() {
                 bail!("rule-del requires an action");
             }
-            let matcher = RuleMatcher::with_app_id(
+            let matcher = RuleMatcher::with_all(
                 cmd.app_name.map(GlobPattern::new),
                 cmd.app_id.map(GlobPattern::new),
                 cmd.title.map(GlobPattern::new),
+                cmd.ax_id.map(GlobPattern::new),
+                cmd.subrole.map(GlobPattern::new),
             );
             let action = parse_rule_action(&cmd.action)?;
             Ok(Command::RuleDel { matcher, action })
@@ -850,16 +882,23 @@ fn parse_command(args: &[String]) -> Result<Command> {
         }
         "rule-add" => {
             let cmd: RuleAddCmd = from_argh(cmd_name, &cmd_args)?;
-            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
-                bail!("rule-add requires --app-name, --app-id, or --title");
+            if cmd.app_name.is_none()
+                && cmd.app_id.is_none()
+                && cmd.title.is_none()
+                && cmd.ax_id.is_none()
+                && cmd.subrole.is_none()
+            {
+                bail!("rule-add requires --app-name, --app-id, --title, --ax-id, or --subrole");
             }
             if cmd.action.is_empty() {
                 bail!("rule-add requires an action");
             }
-            let matcher = RuleMatcher::with_app_id(
+            let matcher = RuleMatcher::with_all(
                 cmd.app_name.map(GlobPattern::new),
                 cmd.app_id.map(GlobPattern::new),
                 cmd.title.map(GlobPattern::new),
+                cmd.ax_id.map(GlobPattern::new),
+                cmd.subrole.map(GlobPattern::new),
             );
             let action = parse_rule_action(&cmd.action)?;
             Ok(Command::RuleAdd {
@@ -868,16 +907,23 @@ fn parse_command(args: &[String]) -> Result<Command> {
         }
         "rule-del" => {
             let cmd: RuleDelCmd = from_argh(cmd_name, &cmd_args)?;
-            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
-                bail!("rule-del requires --app-name, --app-id, or --title");
+            if cmd.app_name.is_none()
+                && cmd.app_id.is_none()
+                && cmd.title.is_none()
+                && cmd.ax_id.is_none()
+                && cmd.subrole.is_none()
+            {
+                bail!("rule-del requires --app-name, --app-id, --title, --ax-id, or --subrole");
             }
             if cmd.action.is_empty() {
                 bail!("rule-del requires an action");
             }
-            let matcher = RuleMatcher::with_app_id(
+            let matcher = RuleMatcher::with_all(
                 cmd.app_name.map(GlobPattern::new),
                 cmd.app_id.map(GlobPattern::new),
                 cmd.title.map(GlobPattern::new),
+                cmd.ax_id.map(GlobPattern::new),
+                cmd.subrole.map(GlobPattern::new),
             );
             let action = parse_rule_action(&cmd.action)?;
             Ok(Command::RuleDel { matcher, action })

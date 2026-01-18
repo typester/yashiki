@@ -220,6 +220,8 @@ yashiki rule-add --app-name Preview dimensions 800 600  # Set initial size
 yashiki rule-add --app-name "Google Chrome" output 2    # Chrome to display 2
 yashiki rule-add --app-id com.apple.finder float  # Match by bundle identifier
 yashiki rule-add --app-id "com.google.*" output 2 # Glob pattern for bundle ID
+yashiki rule-add --ax-id "com.mitchellh.ghostty.quickTerminal" float  # Match by AXIdentifier
+yashiki rule-add --subrole Dialog float           # Match by AXSubrole (AX prefix optional)
 yashiki rule-del --app-name Finder float          # Remove a rule
 yashiki list-rules                # List all rules
 yashiki set-cursor-warp disabled          # Disable cursor warp (default)
@@ -322,7 +324,7 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
   - Display targeting: `resolve_output()`, `get_target_display()` - resolve OutputSpecifier to DisplayId
   - Display change: `handle_display_change()` - handle monitor connect/disconnect
   - Window rules: `add_rule()`, `remove_rule()`, `apply_rules_to_new_window()`
-- **core/window.rs** - Window struct with tags, display_id, app_id, saved_frame, is_floating, is_fullscreen
+- **core/window.rs** - Window struct with tags, display_id, app_id, ax_id, subrole, saved_frame, is_floating, is_fullscreen
 - **core/tag.rs** - Tag bitmask
 - **ipc/server.rs** - IPC server on `/tmp/yashiki.sock`
 - **ipc/client.rs** - IPC client for CLI and event subscription
@@ -541,7 +543,8 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
 ### Window Rules
 - Rules stored in `State.rules: Vec<WindowRule>`
 - Rules sorted by specificity (more specific rules first)
-- Matching: `--app-name` (app name), `--app-id` (bundle identifier), `--title` (window title)
+- Matching: `--app-name` (app name), `--app-id` (bundle identifier), `--title` (window title), `--ax-id` (AXIdentifier), `--subrole` (AXSubrole)
+- For subrole matching, "AX" prefix is optional: `--subrole Dialog` matches `AXDialog`
 - Specificity calculation: exact match > prefix/suffix > contains > wildcard
 - Multiple rules can match; each action type uses "first match wins"
 - Floating windows excluded from tiling (`visible_windows_on_display()` filter)

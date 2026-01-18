@@ -158,6 +158,8 @@ mod tests {
             title: format!("{} Window", app_name),
             app_name: app_name.to_string(),
             app_id: Some(format!("com.test.{}", app_name.to_lowercase())),
+            ax_id: None,
+            subrole: None,
             frame: Rect {
                 x: 0,
                 y: 0,
