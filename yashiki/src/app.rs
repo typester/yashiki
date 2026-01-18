@@ -164,7 +164,7 @@ impl App {
         let _workspace_watcher = WorkspaceWatcher::new(workspace_event_tx, mtm);
 
         // Initialize state with current windows
-        let window_system = MacOSWindowSystem::default();
+        let window_system = MacOSWindowSystem;
         let mut state = State::new();
         state.sync_all(&window_system);
         let state = RefCell::new(state);
@@ -173,7 +173,7 @@ impl App {
         let layout_engine_manager = RefCell::new(LayoutEngineManager::new());
 
         // Create window manipulator
-        let window_manipulator = MacOSWindowManipulator::default();
+        let window_manipulator = MacOSWindowManipulator;
 
         // Initial retile
         do_retile(&state, &layout_engine_manager, &window_manipulator);
