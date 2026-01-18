@@ -1,7 +1,8 @@
 use crate::core::{State, WindowMove};
 use crate::effect::{CommandResult, Effect};
 use crate::event::Event;
-use crate::ipc::IpcServer;
+use crate::event_emitter::{create_snapshot, EventEmitter};
+use crate::ipc::{EventBroadcaster, EventServer, IpcServer};
 use crate::layout::LayoutEngineManager;
 use crate::macos;
 use crate::macos::{HotkeyManager, ObserverManager, WorkspaceEvent, WorkspaceWatcher};
@@ -22,17 +23,22 @@ use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use yashiki_ipc::{
-    BindingInfo, Command, CursorWarpMode, OutputInfo, Response, RuleInfo, StateInfo, WindowInfo,
+    BindingInfo, Command, CursorWarpMode, OutputInfo, Response, RuleInfo, StateEvent, StateInfo,
+    WindowInfo,
 };
 
 type IpcCommandWithResponse = (Command, mpsc::Sender<Response>);
+
+type SnapshotRequest = tokio::sync::oneshot::Sender<StateEvent>;
 
 struct RunLoopContext {
     ipc_cmd_rx: std_mpsc::Receiver<IpcCommandWithResponse>,
     hotkey_cmd_rx: std_mpsc::Receiver<Command>,
     observer_event_rx: std_mpsc::Receiver<Event>,
     workspace_event_rx: std_mpsc::Receiver<WorkspaceEvent>,
+    snapshot_request_rx: std_mpsc::Receiver<SnapshotRequest>,
     event_tx: mpsc::Sender<Event>,
+    event_emitter: EventEmitter,
     observer_manager: RefCell<ObserverManager>,
     state: RefCell<State>,
     layout_engine_manager: RefCell<LayoutEngineManager>,
@@ -74,6 +80,18 @@ impl App {
         // Channel for IPC server (tokio internal)
         let (ipc_tx, ipc_rx) = mpsc::channel::<IpcCommandWithResponse>(256);
 
+        // Event broadcasting for state streaming
+        let event_broadcaster = EventBroadcaster::new(256);
+        let event_server_rx = event_broadcaster.subscribe();
+
+        // Channel: state events (main thread -> tokio)
+        let (state_event_tx, state_event_rx) = std_mpsc::channel::<StateEvent>();
+
+        // Channel: snapshot requests (tokio -> main thread)
+        let (snapshot_request_tx, snapshot_request_rx) = mpsc::channel::<SnapshotRequest>(16);
+        let (snapshot_request_main_tx, snapshot_request_main_rx) =
+            std_mpsc::channel::<SnapshotRequest>();
+
         // Shared pointer to CFRunLoopSource (will be set by main thread)
         let ipc_source = Arc::new(AtomicPtr::new(ptr::null_mut()));
         let ipc_source_clone = Arc::clone(&ipc_source);
@@ -82,7 +100,20 @@ impl App {
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async move {
-                Self::run_async(ipc_cmd_tx, ipc_tx, ipc_rx, event_rx, ipc_source_clone).await;
+                Self::run_async(
+                    ipc_cmd_tx,
+                    ipc_tx,
+                    ipc_rx,
+                    event_rx,
+                    ipc_source_clone,
+                    event_broadcaster,
+                    event_server_rx,
+                    state_event_rx,
+                    snapshot_request_tx,
+                    snapshot_request_rx,
+                    snapshot_request_main_tx,
+                )
+                .await;
             });
         });
 
@@ -92,6 +123,8 @@ impl App {
             observer_event_tx,
             observer_event_rx,
             event_tx,
+            state_event_tx,
+            snapshot_request_main_rx,
             ipc_source,
         );
 
@@ -106,6 +139,12 @@ impl App {
         mut ipc_rx: mpsc::Receiver<IpcCommandWithResponse>,
         mut event_rx: mpsc::Receiver<Event>,
         ipc_source: Arc<AtomicPtr<std::ffi::c_void>>,
+        event_broadcaster: EventBroadcaster,
+        event_server_rx: tokio::sync::broadcast::Receiver<StateEvent>,
+        state_event_rx: std_mpsc::Receiver<StateEvent>,
+        snapshot_request_tx: mpsc::Sender<SnapshotRequest>,
+        mut snapshot_request_rx: mpsc::Receiver<SnapshotRequest>,
+        snapshot_request_main_tx: std_mpsc::Sender<SnapshotRequest>,
     ) {
         tracing::info!("Tokio runtime started");
 
@@ -114,6 +153,22 @@ impl App {
         tokio::spawn(async move {
             if let Err(e) = ipc_server.run().await {
                 tracing::error!("IPC server error: {}", e);
+            }
+        });
+
+        // Start Event server
+        let event_server = EventServer::new(event_server_rx, snapshot_request_tx);
+        tokio::spawn(async move {
+            if let Err(e) = event_server.run().await {
+                tracing::error!("Event server error: {}", e);
+            }
+        });
+
+        // Spawn task to forward state events from main thread to broadcast channel
+        let broadcaster_clone = event_broadcaster.clone();
+        std::thread::spawn(move || {
+            while let Ok(event) = state_event_rx.recv() {
+                broadcaster_clone.send(event);
             }
         });
 
@@ -137,6 +192,12 @@ impl App {
                 Some(event) = event_rx.recv() => {
                     tracing::debug!("Received event: {:?}", event);
                 }
+                Some(snapshot_req) = snapshot_request_rx.recv() => {
+                    // Forward snapshot request to main thread
+                    if snapshot_request_main_tx.send(snapshot_req).is_err() {
+                        tracing::error!("Failed to forward snapshot request to main thread");
+                    }
+                }
                 else => break,
             }
         }
@@ -150,6 +211,8 @@ impl App {
         observer_event_tx: std_mpsc::Sender<Event>,
         observer_event_rx: std_mpsc::Receiver<Event>,
         event_tx: mpsc::Sender<Event>,
+        state_event_tx: std_mpsc::Sender<StateEvent>,
+        snapshot_request_rx: std_mpsc::Receiver<SnapshotRequest>,
         ipc_source_ptr: Arc<AtomicPtr<std::ffi::c_void>>,
     ) {
         tracing::info!("Starting main loop");
@@ -181,6 +244,9 @@ impl App {
         // Create window manipulator
         let window_manipulator = MacOSWindowManipulator;
 
+        // Create event emitter
+        let event_emitter = EventEmitter::new(state_event_tx);
+
         // Initial retile
         do_retile(&state, &layout_engine_manager, &window_manipulator);
 
@@ -199,7 +265,9 @@ impl App {
             hotkey_cmd_rx,
             observer_event_rx,
             workspace_event_rx,
+            snapshot_request_rx,
             event_tx,
+            event_emitter,
             observer_manager: RefCell::new(observer_manager),
             state,
             layout_engine_manager,
@@ -216,6 +284,10 @@ impl App {
             // Process all pending IPC commands
             while let Ok((cmd, resp_tx)) = ctx.ipc_cmd_rx.try_recv() {
                 tracing::debug!("Received IPC command: {:?}", cmd);
+
+                // Capture state before command for event emission
+                let pre_state = capture_event_state(&ctx.state);
+
                 let response = handle_ipc_command(
                     &ctx.state,
                     &ctx.layout_engine_manager,
@@ -224,6 +296,9 @@ impl App {
                     &cmd,
                 );
                 let _ = resp_tx.blocking_send(response);
+
+                // Emit events based on state changes
+                emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
 
                 // Handle Quit command after sending response
                 if matches!(cmd, Command::Quit) {
@@ -278,9 +353,19 @@ impl App {
         ) {
             let ctx = unsafe { &*(info as *const RunLoopContext) };
 
+            // Process snapshot requests
+            while let Ok(resp_tx) = ctx.snapshot_request_rx.try_recv() {
+                let snapshot = create_snapshot(&ctx.state.borrow());
+                let _ = resp_tx.send(snapshot);
+            }
+
             // Process hotkey commands (no response needed)
             while let Ok(cmd) = ctx.hotkey_cmd_rx.try_recv() {
                 tracing::debug!("Received hotkey command: {:?}", cmd);
+
+                // Capture state before command for event emission
+                let pre_state = capture_event_state(&ctx.state);
+
                 let _ = handle_ipc_command(
                     &ctx.state,
                     &ctx.layout_engine_manager,
@@ -288,6 +373,9 @@ impl App {
                     &ctx.window_manipulator,
                     &cmd,
                 );
+
+                // Emit events based on state changes
+                emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
             }
 
             // Process workspace events (app launch/terminate/display change)
@@ -302,6 +390,17 @@ impl App {
                     WorkspaceEvent::AppTerminated { pid } => {
                         tracing::info!("App terminated, removing observer for pid {}", pid);
                         ctx.observer_manager.borrow_mut().remove_observer(pid);
+
+                        // Emit window destroyed events before removing windows
+                        {
+                            let state = ctx.state.borrow();
+                            for window in state.windows.values() {
+                                if window.pid == pid {
+                                    ctx.event_emitter.emit_window_destroyed(window.id);
+                                }
+                            }
+                        }
+
                         // Remove windows belonging to this PID from state
                         let (changed, _) = ctx.state.borrow_mut().sync_pid(&ctx.window_system, pid);
                         if changed {
@@ -363,8 +462,16 @@ impl App {
                     needs_retile = true;
                 }
 
-                // Apply rules to newly created windows
+                // Apply rules to newly created windows and emit events
                 for window_id in new_window_ids {
+                    // Emit window created event
+                    {
+                        let state = ctx.state.borrow();
+                        if let Some(window) = state.windows.get(&window_id) {
+                            ctx.event_emitter.emit_window_created(window, state.focused);
+                        }
+                    }
+
                     let effects = ctx.state.borrow_mut().apply_rules_to_new_window(window_id);
                     if !effects.is_empty() {
                         let _ = execute_effects(
@@ -378,7 +485,11 @@ impl App {
 
                 // On external focus change, notify layout engine and switch tag if focused window is hidden
                 if is_focus_event {
-                    if let Some(focused_id) = ctx.state.borrow().focused {
+                    let focused_id = ctx.state.borrow().focused;
+                    // Emit focus change event
+                    ctx.event_emitter.emit_window_focused(focused_id);
+
+                    if let Some(focused_id) = focused_id {
                         if notify_layout_focus(&ctx.state, &ctx.layout_engine_manager, focused_id) {
                             needs_retile = true;
                         }
@@ -1347,6 +1458,68 @@ fn notify_layout_focus(
         Err(e) => {
             tracing::warn!("Failed to notify layout engine of focus change: {}", e);
             false
+        }
+    }
+}
+
+/// State captured before command execution for event comparison
+struct PreEventState {
+    /// Map of display_id to (visible_tags, current_layout)
+    displays: std::collections::HashMap<u32, (u32, Option<String>)>,
+    focused: Option<u32>,
+    focused_display: u32,
+}
+
+/// Capture relevant state for event emission comparison
+fn capture_event_state(state: &RefCell<State>) -> PreEventState {
+    let state = state.borrow();
+    let displays = state
+        .displays
+        .iter()
+        .map(|(id, d)| (*id, (d.visible_tags.mask(), d.current_layout.clone())))
+        .collect();
+
+    PreEventState {
+        displays,
+        focused: state.focused,
+        focused_display: state.focused_display,
+    }
+}
+
+/// Emit events based on state changes
+fn emit_state_change_events(
+    event_emitter: &EventEmitter,
+    state: &RefCell<State>,
+    pre: &PreEventState,
+) {
+    let state = state.borrow();
+
+    // Check for focus changes
+    if state.focused != pre.focused {
+        event_emitter.emit_window_focused(state.focused);
+    }
+
+    // Check for display focus changes
+    if state.focused_display != pre.focused_display {
+        event_emitter.emit_display_focused(state.focused_display);
+    }
+
+    // Check for tag and layout changes on each display
+    for (display_id, display) in &state.displays {
+        if let Some((pre_tags, pre_layout)) = pre.displays.get(display_id) {
+            let current_tags = display.visible_tags.mask();
+
+            // Emit tags changed event
+            if current_tags != *pre_tags {
+                event_emitter.emit_tags_changed(*display_id, current_tags, *pre_tags);
+            }
+
+            // Emit layout changed event
+            if display.current_layout != *pre_layout {
+                if let Some(ref layout) = display.current_layout {
+                    event_emitter.emit_layout_changed(*display_id, layout);
+                }
+            }
         }
     }
 }
