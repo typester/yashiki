@@ -99,3 +99,40 @@ jobs:
         with:
           tag_name: ${{ needs.detect-release.outputs.tag }}
           files: target/${{ steps.artifact.outputs.name }}
+
+  update-homebrew:
+    name: Update Homebrew cask
+    needs: [detect-release, build]
+    runs-on: ubuntu-latest
+    if: needs.detect-release.outputs.should_build == 'true'
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${{ needs.detect-release.outputs.tag }}"
+          VERSION="${TAG#yashiki-v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Download release assets and calculate SHA256
+        id: sha256
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ needs.detect-release.outputs.tag }}"
+
+          curl -sL "https://github.com/${{ github.repository }}/releases/download/${TAG}/Yashiki-arm64-${VERSION}.zip" -o arm64.zip
+          ARM64_SHA=$(shasum -a 256 arm64.zip | cut -d ' ' -f 1)
+          echo "arm64_sha256=${ARM64_SHA}" >> "$GITHUB_OUTPUT"
+
+          curl -sL "https://github.com/${{ github.repository }}/releases/download/${TAG}/Yashiki-x86_64-${VERSION}.zip" -o x86_64.zip
+          X86_64_SHA=$(shasum -a 256 x86_64.zip | cut -d ' ' -f 1)
+          echo "x86_64_sha256=${X86_64_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch update to homebrew-yashiki
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/typester/homebrew-yashiki/dispatches \
+            -f event_type="update-cask" \
+            -f "client_payload[version]=${{ steps.version.outputs.version }}" \
+            -f "client_payload[arm64_sha256]=${{ steps.sha256.outputs.arm64_sha256 }}" \
+            -f "client_payload[x86_64_sha256]=${{ steps.sha256.outputs.x86_64_sha256 }}"
