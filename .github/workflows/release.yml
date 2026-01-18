@@ -1,8 +1,9 @@
 name: Release
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Release-plz"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -13,8 +14,47 @@ permissions:
   contents: write
 
 jobs:
+  detect-release:
+    name: Detect yashiki release
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'
+    outputs:
+      tag: ${{ steps.detect.outputs.tag }}
+      should_build: ${{ steps.detect.outputs.should_build }}
+    steps:
+      - name: Detect recent yashiki release
+        id: detect
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "Using manual input tag: ${{ inputs.tag }}"
+            exit 0
+          fi
+
+          # Find yashiki-v* releases created in the last 10 minutes
+          TEN_MIN_AGO=$(date -u -d '10 minutes ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-10M '+%Y-%m-%dT%H:%M:%SZ')
+
+          # Get recent releases and filter for yashiki-v* tags
+          RELEASE=$(gh api repos/${{ github.repository }}/releases \
+            --jq ".[] | select(.tag_name | startswith(\"yashiki-v\")) | select(.created_at >= \"${TEN_MIN_AGO}\") | .tag_name" \
+            | head -1)
+
+          if [ -n "$RELEASE" ]; then
+            echo "tag=${RELEASE}" >> "$GITHUB_OUTPUT"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "Found recent yashiki release: ${RELEASE}"
+          else
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "No recent yashiki-v* release found (only builds yashiki releases, skips ipc/layout-*)"
+          fi
+
   build:
     name: Build ${{ matrix.target }}
+    needs: detect-release
+    if: needs.detect-release.outputs.should_build == 'true'
     runs-on: macos-latest
     strategy:
       matrix:
@@ -25,7 +65,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.detect-release.outputs.tag }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -57,5 +97,5 @@ jobs:
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag || github.event.release.tag_name }}
+          tag_name: ${{ needs.detect-release.outputs.tag }}
           files: target/${{ steps.artifact.outputs.name }}
