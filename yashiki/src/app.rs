@@ -735,6 +735,24 @@ fn process_command(
                 path: path.clone(),
             }])
         }
+        Command::AddExecPath { path, append } => {
+            let new_exec_path = if *append {
+                if state.exec_path.is_empty() {
+                    path.clone()
+                } else {
+                    format!("{}:{}", state.exec_path, path)
+                }
+            } else if state.exec_path.is_empty() {
+                path.clone()
+            } else {
+                format!("{}:{}", path, state.exec_path)
+            };
+            tracing::info!("Add exec path: {} (append={})", path, append);
+            state.exec_path = new_exec_path.clone();
+            CommandResult::ok_with_effects(vec![Effect::UpdateLayoutExecPath {
+                path: new_exec_path,
+            }])
+        }
 
         // Exec commands
         Command::Exec { command } => CommandResult::ok_with_effects(vec![Effect::ExecCommand {

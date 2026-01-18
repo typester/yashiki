@@ -90,6 +90,10 @@ pub enum Command {
     SetExecPath {
         path: String,
     },
+    AddExecPath {
+        path: String,
+        append: bool,
+    },
 
     // Control
     Quit,
@@ -525,6 +529,44 @@ mod tests {
         match deserialized {
             Command::SetExecPath { path } => {
                 assert_eq!(path, "/opt/homebrew/bin:/usr/local/bin");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_command_add_exec_path_serialization() {
+        // Prepend (default)
+        let cmd = Command::AddExecPath {
+            path: "/opt/homebrew/bin".to_string(),
+            append: false,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"add_exec_path\""));
+        assert!(json.contains("\"append\":false"));
+
+        let deserialized: Command = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Command::AddExecPath { path, append } => {
+                assert_eq!(path, "/opt/homebrew/bin");
+                assert!(!append);
+            }
+            _ => panic!("Wrong variant"),
+        }
+
+        // Append
+        let cmd = Command::AddExecPath {
+            path: "/usr/local/bin".to_string(),
+            append: true,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"append\":true"));
+
+        let deserialized: Command = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Command::AddExecPath { path, append } => {
+                assert_eq!(path, "/usr/local/bin");
+                assert!(append);
             }
             _ => panic!("Wrong variant"),
         }

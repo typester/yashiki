@@ -53,6 +53,7 @@ enum SubCommand {
     ExecOrFocus(ExecOrFocusCmd),
     ExecPath(ExecPathCmd),
     SetExecPath(SetExecPathCmd),
+    AddExecPath(AddExecPathCmd),
     Quit(QuitCmd),
 }
 
@@ -290,6 +291,18 @@ struct SetExecPathCmd {
     path: String,
 }
 
+/// Add a path to exec path
+#[derive(FromArgs)]
+#[argh(subcommand, name = "add-exec-path")]
+struct AddExecPathCmd {
+    /// append to end instead of prepending to start
+    #[argh(switch)]
+    append: bool,
+    /// the path to add
+    #[argh(positional)]
+    path: String,
+}
+
 /// Quit the yashiki daemon
 #[derive(FromArgs)]
 #[argh(subcommand, name = "quit")]
@@ -471,6 +484,10 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
         }),
         SubCommand::ExecPath(_) => Ok(Command::GetExecPath),
         SubCommand::SetExecPath(cmd) => Ok(Command::SetExecPath { path: cmd.path }),
+        SubCommand::AddExecPath(cmd) => Ok(Command::AddExecPath {
+            path: cmd.path,
+            append: cmd.append,
+        }),
         SubCommand::Quit(_) => Ok(Command::Quit),
     }
 }
@@ -605,6 +622,13 @@ fn parse_command(args: &[String]) -> Result<Command> {
         "set-exec-path" => {
             let cmd: SetExecPathCmd = from_argh(cmd_name, &cmd_args)?;
             Ok(Command::SetExecPath { path: cmd.path })
+        }
+        "add-exec-path" => {
+            let cmd: AddExecPathCmd = from_argh(cmd_name, &cmd_args)?;
+            Ok(Command::AddExecPath {
+                path: cmd.path,
+                append: cmd.append,
+            })
         }
         "quit" => Ok(Command::Quit),
         _ => bail!("Unknown command: {}", cmd_name),
