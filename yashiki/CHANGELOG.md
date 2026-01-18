@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/typester/yashiki/compare/yashiki-v0.4.1...yashiki-v0.5.0) - 2026-01-18
+
+### Added
+
+- move outer-gap to core ([#31](https://github.com/typester/yashiki/pull/31))
+- add state streaming for external tools ([#30](https://github.com/typester/yashiki/pull/30))
+- add cursor warp (mouse follows focus) ([#29](https://github.com/typester/yashiki/pull/29))
+
 ## [0.4.1](https://github.com/typester/yashiki/compare/yashiki-v0.4.0...yashiki-v0.4.1) - 2026-01-18
 
 ### Fixed
