@@ -667,6 +667,22 @@ impl State {
         ))
     }
 
+    /// Toggle floating state for focused window.
+    /// Returns Some((display_id, is_now_floating, window_id, pid)) if toggled successfully.
+    pub fn toggle_focused_float(&mut self) -> Option<(DisplayId, bool, u32, i32)> {
+        let focused_id = self.focused?;
+        let window = self.windows.get_mut(&focused_id)?;
+
+        window.is_floating = !window.is_floating;
+        tracing::info!(
+            "Toggle floating for window {}: {}",
+            window.id,
+            window.is_floating
+        );
+
+        Some((window.display_id, window.is_floating, window.id, window.pid))
+    }
+
     pub fn focus_window(&self, direction: Direction) -> Option<(WindowId, i32)> {
         let visible_tags = self.visible_tags();
         let visible: Vec<_> = self

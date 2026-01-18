@@ -42,6 +42,7 @@ enum SubCommand {
     WindowFocus(WindowFocusCmd),
     WindowSwap(WindowSwapCmd),
     WindowToggleFullscreen(WindowToggleFullscreenCmd),
+    WindowToggleFloat(WindowToggleFloatCmd),
     OutputFocus(OutputFocusCmd),
     OutputSend(OutputSendCmd),
     Retile(RetileCmd),
@@ -169,6 +170,11 @@ struct WindowSwapCmd {
 #[derive(FromArgs)]
 #[argh(subcommand, name = "window-toggle-fullscreen")]
 struct WindowToggleFullscreenCmd {}
+
+/// Toggle floating state for focused window
+#[derive(FromArgs)]
+#[argh(subcommand, name = "window-toggle-float")]
+struct WindowToggleFloatCmd {}
 
 /// Focus the next or previous display
 #[derive(FromArgs)]
@@ -535,6 +541,7 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             direction: parse_direction(&cmd.direction)?,
         }),
         SubCommand::WindowToggleFullscreen(_) => Ok(Command::WindowToggleFullscreen),
+        SubCommand::WindowToggleFloat(_) => Ok(Command::WindowToggleFloat),
         SubCommand::OutputFocus(cmd) => Ok(Command::OutputFocus {
             direction: parse_output_direction(&cmd.direction)?,
         }),
@@ -678,6 +685,7 @@ fn parse_command(args: &[String]) -> Result<Command> {
             })
         }
         "window-toggle-fullscreen" => Ok(Command::WindowToggleFullscreen),
+        "window-toggle-float" => Ok(Command::WindowToggleFloat),
         "output-focus" => {
             let cmd: OutputFocusCmd = from_argh(cmd_name, &cmd_args)?;
             Ok(Command::OutputFocus {
