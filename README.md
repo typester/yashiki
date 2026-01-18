@@ -8,6 +8,7 @@ macOS tiling window manager written in Rust.
 - **External layout engines** - Stdin/stdout JSON protocol lets you write custom layouts in any language
 - **Multi-monitor support** - Each display has independent tags
 - **Window rules** - Automatically configure windows by app name, bundle identifier, or title
+- **Cursor warp** - Mouse follows focus (configurable: disabled, on-output-change, on-focus-change)
 - **No SIP disable required** - Uses only public Accessibility API
 - **Shell script configuration** - Config is just a shell script (`~/.config/yashiki/init`)
 
@@ -75,6 +76,9 @@ cargo install --path yashiki-layout-byobu    # Accordion layout
    yashiki layout-set-default tatami
    yashiki layout-cmd --layout tatami set-outer-gap 10
    yashiki layout-cmd --layout tatami set-inner-gap 10
+
+   # Cursor warp (mouse follows focus)
+   yashiki set-cursor-warp on-focus-change
 
    # Tag bindings (tag N = bitmask $((1<<(N-1))))
    for i in 1 2 3 4 5 6 7 8 9; do
@@ -202,6 +206,17 @@ yashiki list-outputs             # List all displays
 yashiki get-state                # Get current state
 yashiki exec "open -a Safari"    # Execute command
 yashiki exec-or-focus --app-name Safari "open -a Safari"  # Focus or launch
+```
+
+### Cursor Warp
+
+Control whether mouse cursor follows window focus.
+
+```sh
+yashiki set-cursor-warp disabled          # Don't move cursor (default)
+yashiki set-cursor-warp on-output-change  # Move cursor when switching displays
+yashiki set-cursor-warp on-focus-change   # Always move cursor to focused window
+yashiki get-cursor-warp                   # Get current mode
 ```
 
 ### Exec Path

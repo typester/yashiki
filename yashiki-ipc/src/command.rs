@@ -1,5 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+/// Cursor warp mode - controls when the mouse cursor follows focus
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorWarpMode {
+    #[default]
+    Disabled,
+    OnOutputChange,
+    OnFocusChange,
+}
+
 /// Glob pattern for matching strings.
 /// Supports: exact match, prefix (*suffix), suffix (prefix*), contains (*middle*)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -298,6 +308,12 @@ pub enum Command {
     ListRules,
     ApplyRules,
 
+    // Cursor warp
+    SetCursorWarp {
+        mode: CursorWarpMode,
+    },
+    GetCursorWarp,
+
     // Control
     Quit,
 }
@@ -340,6 +356,7 @@ pub enum Response {
     WindowId { id: Option<u32> },
     Layout { layout: String },
     ExecPath { path: String },
+    CursorWarp { mode: CursorWarpMode },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

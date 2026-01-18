@@ -13,8 +13,8 @@ use argh::FromArgs;
 use ipc::IpcClient;
 use tracing_subscriber::EnvFilter;
 use yashiki_ipc::{
-    Command, Direction, GlobPattern, OutputDirection, OutputSpecifier, Response, RuleAction,
-    RuleMatcher, WindowRule,
+    Command, CursorWarpMode, Direction, GlobPattern, OutputDirection, OutputSpecifier, Response,
+    RuleAction, RuleMatcher, WindowRule,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -63,6 +63,8 @@ enum SubCommand {
     RuleAdd(RuleAddCmd),
     RuleDel(RuleDelCmd),
     ListRules(ListRulesCmd),
+    SetCursorWarp(SetCursorWarpCmd),
+    GetCursorWarp(GetCursorWarpCmd),
     Quit(QuitCmd),
 }
 
@@ -368,6 +370,20 @@ struct RuleDelCmd {
 #[argh(subcommand, name = "list-rules")]
 struct ListRulesCmd {}
 
+/// Set cursor warp mode (mouse follows focus)
+#[derive(FromArgs)]
+#[argh(subcommand, name = "set-cursor-warp")]
+struct SetCursorWarpCmd {
+    /// mode: disabled, on-output-change, on-focus-change
+    #[argh(positional)]
+    mode: String,
+}
+
+/// Get current cursor warp mode
+#[derive(FromArgs)]
+#[argh(subcommand, name = "get-cursor-warp")]
+struct GetCursorWarpCmd {}
+
 /// Quit the yashiki daemon
 #[derive(FromArgs)]
 #[argh(subcommand, name = "quit")]
@@ -507,6 +523,14 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
                 println!("{} -> {}", matchers.join(" "), r.action);
             }
         }
+        Response::CursorWarp { mode } => {
+            let mode_str = match mode {
+                CursorWarpMode::Disabled => "disabled",
+                CursorWarpMode::OnOutputChange => "on-output-change",
+                CursorWarpMode::OnFocusChange => "on-focus-change",
+            };
+            println!("{}", mode_str);
+        }
     }
 
     Ok(())
@@ -623,6 +647,11 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             Ok(Command::RuleDel { matcher, action })
         }
         SubCommand::ListRules(_) => Ok(Command::ListRules),
+        SubCommand::SetCursorWarp(cmd) => {
+            let mode = parse_cursor_warp_mode(&cmd.mode)?;
+            Ok(Command::SetCursorWarp { mode })
+        }
+        SubCommand::GetCursorWarp(_) => Ok(Command::GetCursorWarp),
         SubCommand::Quit(_) => Ok(Command::Quit),
     }
 }
@@ -803,6 +832,12 @@ fn parse_command(args: &[String]) -> Result<Command> {
             Ok(Command::RuleDel { matcher, action })
         }
         "list-rules" => Ok(Command::ListRules),
+        "set-cursor-warp" => {
+            let cmd: SetCursorWarpCmd = from_argh(cmd_name, &cmd_args)?;
+            let mode = parse_cursor_warp_mode(&cmd.mode)?;
+            Ok(Command::SetCursorWarp { mode })
+        }
+        "get-cursor-warp" => Ok(Command::GetCursorWarp),
         "quit" => Ok(Command::Quit),
         _ => bail!("Unknown command: {}", cmd_name),
     }
@@ -828,6 +863,18 @@ fn parse_output_direction(s: &str) -> Result<OutputDirection> {
         "next" => Ok(OutputDirection::Next),
         "prev" => Ok(OutputDirection::Prev),
         _ => bail!("Unknown output direction: {} (use next or prev)", s),
+    }
+}
+
+fn parse_cursor_warp_mode(s: &str) -> Result<CursorWarpMode> {
+    match s.to_lowercase().as_str() {
+        "disabled" => Ok(CursorWarpMode::Disabled),
+        "on-output-change" => Ok(CursorWarpMode::OnOutputChange),
+        "on-focus-change" => Ok(CursorWarpMode::OnFocusChange),
+        _ => bail!(
+            "Unknown cursor warp mode: {} (use disabled, on-output-change, on-focus-change)",
+            s
+        ),
     }
 }
 
