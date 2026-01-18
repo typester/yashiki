@@ -2,6 +2,15 @@
 
 macOS tiling window manager written in Rust.
 
+## Workspace Notes
+
+- Version control: `jj` (not `git`)
+- Before starting work:
+  1. Run `jj workspace root` to get the workspace root path
+  2. Run `jj status` to confirm current workspace state
+- All file edits must target files under the workspace root path
+- Update only this CLAUDE.md, not the root one
+
 ## Project Structure
 
 ```
@@ -126,6 +135,7 @@ yashiki window-focus next         # Focus next window
 yashiki window-focus prev         # Focus previous window
 yashiki window-focus left         # Focus window to the left
 yashiki window-swap next          # Swap with next window (not yet implemented)
+yashiki window-toggle-fullscreen  # Toggle fullscreen for focused window (AeroSpace-style)
 yashiki focused-window            # Get focused window ID
 yashiki output-focus next         # Focus next display
 yashiki output-focus prev         # Focus previous display
@@ -205,6 +215,7 @@ yashiki bind alt-h layout-cmd dec-main-ratio
 yashiki bind alt-l layout-cmd inc-main-ratio
 yashiki bind alt-o output-focus next
 yashiki bind alt-shift-o output-send next
+yashiki bind alt-f window-toggle-fullscreen
 
 # Gap configuration (--layout sends to specific engine, without sends to current)
 yashiki layout-cmd --layout tatami set-inner-gap 10
@@ -246,7 +257,7 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
   - Display targeting: `resolve_output()`, `get_target_display()` - resolve OutputSpecifier to DisplayId
   - Display change: `handle_display_change()` - handle monitor connect/disconnect
   - Window rules: `add_rule()`, `remove_rule()`, `apply_rules_to_new_window()`
-- **core/window.rs** - Window struct with tags, display_id, app_id, saved_frame, is_floating
+- **core/window.rs** - Window struct with tags, display_id, app_id, saved_frame, is_floating, is_fullscreen
 - **core/tag.rs** - Tag bitmask
 - **ipc/server.rs** - IPC server on `/tmp/yashiki.sock`
 - **ipc/client.rs** - IPC client for CLI
