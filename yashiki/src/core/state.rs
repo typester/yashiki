@@ -235,19 +235,21 @@ impl State {
         // Sync displays
         let display_infos = ws.get_all_displays();
         for info in &display_infos {
-            if !self.displays.contains_key(&info.id) {
-                let display = Display::new(
-                    info.id,
-                    info.name.clone(),
-                    Rect::from_bounds(&info.frame),
-                    info.is_main,
-                );
-                self.displays.insert(info.id, display);
-            } else if let Some(display) = self.displays.get_mut(&info.id) {
-                display.name = info.name.clone();
-                display.frame = Rect::from_bounds(&info.frame);
-                display.is_main = info.is_main;
-            }
+            self.displays
+                .entry(info.id)
+                .and_modify(|display| {
+                    display.name = info.name.clone();
+                    display.frame = Rect::from_bounds(&info.frame);
+                    display.is_main = info.is_main;
+                })
+                .or_insert_with(|| {
+                    Display::new(
+                        info.id,
+                        info.name.clone(),
+                        Rect::from_bounds(&info.frame),
+                        info.is_main,
+                    )
+                });
             if info.is_main && self.focused_display == 0 {
                 self.focused_display = info.id;
             }

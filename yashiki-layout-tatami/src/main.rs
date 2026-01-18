@@ -307,7 +307,7 @@ fn generate_layout(
     let main_total_gaps = inner_gap.saturating_mul(main_count.saturating_sub(1));
     let main_window_height = usable_height.saturating_sub(main_total_gaps) / main_count.max(1);
 
-    for i in 0..main_count as usize {
+    for (i, &window_id) in window_ids.iter().enumerate().take(main_count as usize) {
         let y = outer_gap.top + (i as u32 * (main_window_height + inner_gap));
         // Last window in main fills remaining space to handle rounding
         let h = if i == main_count as usize - 1 {
@@ -316,7 +316,7 @@ fn generate_layout(
             main_window_height
         };
         windows.push(WindowGeometry {
-            id: window_ids[i],
+            id: window_id,
             x: outer_gap.left as i32,
             y: y as i32,
             width: main_width,
