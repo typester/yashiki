@@ -855,7 +855,7 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 
 [[package]]
 name = "yashiki"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "argh",
@@ -878,7 +878,7 @@ dependencies = [
 
 [[package]]
 name = "yashiki-ipc"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -886,7 +886,7 @@ dependencies = [
 
 [[package]]
 name = "yashiki-layout-byobu"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -896,7 +896,7 @@ dependencies = [
 
 [[package]]
 name = "yashiki-layout-tatami"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",

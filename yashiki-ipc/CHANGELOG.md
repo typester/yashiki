@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.3.0...yashiki-ipc-v0.4.0) - 2026-01-18
+
+### Fixed
+
+- fix the issue where rules doesn't apply correct timing ([#22](https://github.com/typester/yashiki/pull/22))
+
 ## [0.3.0](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.2.0...yashiki-ipc-v0.3.0) - 2026-01-18
 
 ### Added
