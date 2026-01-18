@@ -50,6 +50,7 @@ pub trait WindowManipulator {
     fn apply_layout(&self, display_id: DisplayId, frame: &Rect, geometries: &[WindowGeometry]);
     fn focus_window(&self, window_id: u32, pid: i32);
     fn move_window_to_position(&self, window_id: u32, pid: i32, x: i32, y: i32);
+    fn set_window_dimensions(&self, window_id: u32, pid: i32, width: u32, height: u32);
     fn exec_command(&self, command: &str, path: &str) -> Result<(), String>;
 }
 
@@ -255,6 +256,43 @@ impl WindowManipulator for MacOSWindowManipulator {
                         );
                     } else {
                         tracing::info!("Moved window {} to ({}, {})", window_id, x, y);
+                    }
+                    return;
+                }
+            }
+        }
+
+        tracing::warn!(
+            "Could not find AX window for id {} (pid {})",
+            window_id,
+            pid
+        );
+    }
+
+    fn set_window_dimensions(&self, window_id: u32, pid: i32, width: u32, height: u32) {
+        let app = AXUIElement::application(pid);
+        let ax_windows = match app.windows() {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!("Failed to get windows for pid {}: {}", pid, e);
+                return;
+            }
+        };
+
+        for ax_win in &ax_windows {
+            if let Some(wid) = ax_win.window_id() {
+                if wid == window_id {
+                    let new_size = CGSize::new(width as f64, height as f64);
+                    if let Err(e) = ax_win.set_size(new_size) {
+                        tracing::warn!(
+                            "Failed to resize window {} to {}x{}: {}",
+                            window_id,
+                            width,
+                            height,
+                            e
+                        );
+                    } else {
+                        tracing::info!("Resized window {} to {}x{}", window_id, width, height);
                     }
                     return;
                 }

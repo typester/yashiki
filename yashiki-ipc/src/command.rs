@@ -1,5 +1,169 @@
 use serde::{Deserialize, Serialize};
 
+/// Glob pattern for matching strings.
+/// Supports: exact match, prefix (*suffix), suffix (prefix*), contains (*middle*)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GlobPattern(pub String);
+
+impl GlobPattern {
+    pub fn new(pattern: impl Into<String>) -> Self {
+        Self(pattern.into())
+    }
+
+    /// Check if the pattern matches a given string (case-insensitive)
+    pub fn matches(&self, s: &str) -> bool {
+        let pattern = self.0.to_lowercase();
+        let s = s.to_lowercase();
+
+        if !pattern.contains('*') {
+            // Exact match
+            return pattern == s;
+        }
+
+        // Special case: "*" matches everything
+        if pattern == "*" {
+            return true;
+        }
+
+        let starts_with_star = pattern.starts_with('*');
+        let ends_with_star = pattern.ends_with('*');
+
+        if starts_with_star && ends_with_star {
+            // *middle* - contains
+            let middle = &pattern[1..pattern.len() - 1];
+            s.contains(middle)
+        } else if starts_with_star {
+            // *suffix - ends with
+            let suffix = &pattern[1..];
+            s.ends_with(suffix)
+        } else if ends_with_star {
+            // prefix* - starts with
+            let prefix = &pattern[..pattern.len() - 1];
+            s.starts_with(prefix)
+        } else {
+            // No wildcard (shouldn't reach here but handle gracefully)
+            pattern == s
+        }
+    }
+
+    /// Get the specificity of this pattern. Higher is more specific.
+    /// Exact match > prefix/suffix > contains > wildcard only
+    pub fn specificity(&self) -> u32 {
+        let pattern = &self.0;
+
+        if !pattern.contains('*') {
+            // Exact match - highest specificity (length * 4)
+            return (pattern.len() as u32) * 4;
+        }
+
+        let starts_with_star = pattern.starts_with('*');
+        let ends_with_star = pattern.ends_with('*');
+
+        if pattern == "*" {
+            // Matches everything - lowest
+            return 0;
+        }
+
+        if starts_with_star && ends_with_star {
+            // *middle* - contains (length * 1)
+            let middle_len = pattern.len().saturating_sub(2);
+            middle_len as u32
+        } else {
+            // prefix* or *suffix (length * 2)
+            let len = pattern.len().saturating_sub(1);
+            (len as u32) * 2
+        }
+    }
+
+    pub fn pattern(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Matcher for window rules - matches on app_name and/or title
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuleMatcher {
+    /// Pattern to match against app name (e.g., "Safari", "*Chrome*")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_name: Option<GlobPattern>,
+    /// Pattern to match against window title
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<GlobPattern>,
+}
+
+impl RuleMatcher {
+    pub fn new(app_name: Option<GlobPattern>, title: Option<GlobPattern>) -> Self {
+        Self { app_name, title }
+    }
+
+    /// Check if this matcher matches the given app_name and title
+    pub fn matches(&self, app_name: &str, title: &str) -> bool {
+        let app_matches = self
+            .app_name
+            .as_ref()
+            .map(|p| p.matches(app_name))
+            .unwrap_or(true);
+        let title_matches = self
+            .title
+            .as_ref()
+            .map(|p| p.matches(title))
+            .unwrap_or(true);
+        app_matches && title_matches
+    }
+
+    /// Get the combined specificity of this matcher
+    pub fn specificity(&self) -> u32 {
+        let app_spec = self.app_name.as_ref().map(|p| p.specificity()).unwrap_or(0);
+        let title_spec = self.title.as_ref().map(|p| p.specificity()).unwrap_or(0);
+        app_spec + title_spec
+    }
+}
+
+/// Action to apply when a rule matches
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum RuleAction {
+    /// Exclude from tiling (floating)
+    Float,
+    /// Include in tiling (default behavior)
+    NoFloat,
+    /// Set initial tags (bitmask)
+    Tags { tags: u32 },
+    /// Set initial display
+    Output { output: OutputSpecifier },
+    /// Set initial position (for floating windows)
+    Position { x: i32, y: i32 },
+    /// Set initial dimensions (for floating windows)
+    Dimensions { width: u32, height: u32 },
+}
+
+/// A window rule: a matcher + action pair
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowRule {
+    pub matcher: RuleMatcher,
+    pub action: RuleAction,
+}
+
+impl WindowRule {
+    pub fn new(matcher: RuleMatcher, action: RuleAction) -> Self {
+        Self { matcher, action }
+    }
+
+    pub fn specificity(&self) -> u32 {
+        self.matcher.specificity()
+    }
+}
+
+/// Information about a rule for list-rules output
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub action: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Command {
@@ -95,6 +259,16 @@ pub enum Command {
         append: bool,
     },
 
+    // Rules
+    RuleAdd {
+        rule: WindowRule,
+    },
+    RuleDel {
+        matcher: RuleMatcher,
+        action: RuleAction,
+    },
+    ListRules,
+
     // Control
     Quit,
 }
@@ -117,7 +291,7 @@ pub enum OutputDirection {
     Prev,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OutputSpecifier {
     Id(u32),
@@ -133,6 +307,7 @@ pub enum Response {
     Outputs { outputs: Vec<OutputInfo> },
     State { state: StateInfo },
     Bindings { bindings: Vec<BindingInfo> },
+    Rules { rules: Vec<RuleInfo> },
     WindowId { id: Option<u32> },
     Layout { layout: String },
     ExecPath { path: String },
@@ -169,6 +344,7 @@ pub struct WindowInfo {
     pub width: u32,
     pub height: u32,
     pub is_focused: bool,
+    pub is_floating: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -341,6 +517,7 @@ mod tests {
                 width: 800,
                 height: 600,
                 is_focused: true,
+                is_floating: false,
             }],
         };
         let json = serde_json::to_string(&resp).unwrap();
@@ -352,6 +529,7 @@ mod tests {
                 assert_eq!(windows[0].id, 123);
                 assert_eq!(windows[0].title, "Test Window");
                 assert!(windows[0].is_focused);
+                assert!(!windows[0].is_floating);
             }
             _ => panic!("Wrong variant"),
         }
@@ -585,6 +763,216 @@ mod tests {
         match deserialized {
             Response::ExecPath { path } => {
                 assert_eq!(path, "/opt/homebrew/bin:/usr/local/bin");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_glob_pattern_exact_match() {
+        let pattern = GlobPattern::new("Safari");
+        assert!(pattern.matches("Safari"));
+        assert!(pattern.matches("safari")); // case insensitive
+        assert!(!pattern.matches("Safari Browser"));
+        assert!(!pattern.matches("Google Safari"));
+    }
+
+    #[test]
+    fn test_glob_pattern_prefix() {
+        let pattern = GlobPattern::new("Google*");
+        assert!(pattern.matches("Google Chrome"));
+        assert!(pattern.matches("Google"));
+        assert!(!pattern.matches("Not Google Chrome"));
+    }
+
+    #[test]
+    fn test_glob_pattern_suffix() {
+        let pattern = GlobPattern::new("*Editor");
+        assert!(pattern.matches("Code Editor"));
+        assert!(pattern.matches("Editor"));
+        assert!(!pattern.matches("Editor Pro"));
+    }
+
+    #[test]
+    fn test_glob_pattern_contains() {
+        let pattern = GlobPattern::new("*Dialog*");
+        assert!(pattern.matches("Save Dialog"));
+        assert!(pattern.matches("Dialog Box"));
+        assert!(pattern.matches("Open Dialog Window"));
+        assert!(!pattern.matches("Diag"));
+    }
+
+    #[test]
+    fn test_glob_pattern_wildcard_only() {
+        let pattern = GlobPattern::new("*");
+        assert!(pattern.matches("anything"));
+        assert!(pattern.matches(""));
+    }
+
+    #[test]
+    fn test_glob_pattern_specificity() {
+        let exact = GlobPattern::new("Safari");
+        let prefix = GlobPattern::new("Safari*");
+        let suffix = GlobPattern::new("*Safari");
+        let contains = GlobPattern::new("*Safari*");
+        let wildcard = GlobPattern::new("*");
+
+        assert!(exact.specificity() > prefix.specificity());
+        assert!(prefix.specificity() > contains.specificity());
+        assert!(suffix.specificity() > contains.specificity());
+        assert!(contains.specificity() > wildcard.specificity());
+        assert_eq!(wildcard.specificity(), 0);
+    }
+
+    #[test]
+    fn test_rule_matcher_app_name_only() {
+        let matcher = RuleMatcher::new(Some(GlobPattern::new("Safari")), None);
+        assert!(matcher.matches("Safari", "Any Title"));
+        assert!(matcher.matches("Safari", ""));
+        assert!(!matcher.matches("Chrome", "Any Title"));
+    }
+
+    #[test]
+    fn test_rule_matcher_title_only() {
+        let matcher = RuleMatcher::new(None, Some(GlobPattern::new("*Preferences*")));
+        assert!(matcher.matches("Any App", "Preferences"));
+        assert!(matcher.matches("Safari", "Safari Preferences"));
+        assert!(!matcher.matches("Safari", "Settings"));
+    }
+
+    #[test]
+    fn test_rule_matcher_both() {
+        let matcher = RuleMatcher::new(
+            Some(GlobPattern::new("Safari")),
+            Some(GlobPattern::new("*Preferences*")),
+        );
+        assert!(matcher.matches("Safari", "Preferences"));
+        assert!(matcher.matches("Safari", "Safari Preferences"));
+        assert!(!matcher.matches("Safari", "Main Window"));
+        assert!(!matcher.matches("Chrome", "Preferences"));
+    }
+
+    #[test]
+    fn test_rule_action_serialization() {
+        let cases: Vec<(RuleAction, &str)> = vec![
+            (RuleAction::Float, "\"action\":\"float\""),
+            (RuleAction::NoFloat, "\"action\":\"no_float\""),
+            (RuleAction::Tags { tags: 2 }, "\"action\":\"tags\""),
+            (
+                RuleAction::Output {
+                    output: OutputSpecifier::Id(1),
+                },
+                "\"action\":\"output\"",
+            ),
+            (
+                RuleAction::Position { x: 100, y: 200 },
+                "\"action\":\"position\"",
+            ),
+            (
+                RuleAction::Dimensions {
+                    width: 800,
+                    height: 600,
+                },
+                "\"action\":\"dimensions\"",
+            ),
+        ];
+
+        for (action, expected_pattern) in cases {
+            let json = serde_json::to_string(&action).unwrap();
+            assert!(
+                json.contains(expected_pattern),
+                "Expected '{}' in '{}'",
+                expected_pattern,
+                json
+            );
+        }
+    }
+
+    #[test]
+    fn test_window_rule_specificity() {
+        let rule1 = WindowRule::new(
+            RuleMatcher::new(Some(GlobPattern::new("Safari")), None),
+            RuleAction::Float,
+        );
+        let rule2 = WindowRule::new(
+            RuleMatcher::new(
+                Some(GlobPattern::new("Safari")),
+                Some(GlobPattern::new("*Preferences*")),
+            ),
+            RuleAction::Float,
+        );
+
+        // Rule with both app_name and title should be more specific
+        assert!(rule2.specificity() > rule1.specificity());
+    }
+
+    #[test]
+    fn test_command_rule_add_serialization() {
+        let cmd = Command::RuleAdd {
+            rule: WindowRule::new(
+                RuleMatcher::new(Some(GlobPattern::new("Safari")), None),
+                RuleAction::Float,
+            ),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"rule_add\""));
+
+        let deserialized: Command = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Command::RuleAdd { rule } => {
+                assert!(rule.matcher.app_name.is_some());
+                assert!(matches!(rule.action, RuleAction::Float));
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_command_rule_del_serialization() {
+        let cmd = Command::RuleDel {
+            matcher: RuleMatcher::new(Some(GlobPattern::new("Finder")), None),
+            action: RuleAction::Float,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"rule_del\""));
+
+        let deserialized: Command = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Command::RuleDel { matcher, action } => {
+                assert!(matcher.app_name.is_some());
+                assert!(matches!(action, RuleAction::Float));
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_command_list_rules_serialization() {
+        let cmd = Command::ListRules;
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"list_rules\""));
+
+        let deserialized: Command = serde_json::from_str(&json).unwrap();
+        assert!(matches!(deserialized, Command::ListRules));
+    }
+
+    #[test]
+    fn test_response_rules_serialization() {
+        let resp = Response::Rules {
+            rules: vec![RuleInfo {
+                app_name: Some("Safari".to_string()),
+                title: None,
+                action: "float".to_string(),
+            }],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"type\":\"rules\""));
+
+        let deserialized: Response = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Response::Rules { rules } => {
+                assert_eq!(rules.len(), 1);
+                assert_eq!(rules[0].app_name, Some("Safari".to_string()));
             }
             _ => panic!("Wrong variant"),
         }

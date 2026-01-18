@@ -13,6 +13,7 @@ pub struct Window {
     pub app_name: String,
     pub frame: Rect,
     pub saved_frame: Option<Rect>,
+    pub is_floating: bool,
 }
 
 impl Window {
@@ -26,6 +27,7 @@ impl Window {
             app_name: info.owner_name.clone(),
             frame: Rect::from_bounds(&info.bounds),
             saved_frame: None,
+            is_floating: false,
         }
     }
 

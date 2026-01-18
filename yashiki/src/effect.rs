@@ -15,6 +15,12 @@ pub enum Effect {
         x: i32,
         y: i32,
     },
+    SetWindowDimensions {
+        window_id: u32,
+        pid: i32,
+        width: u32,
+        height: u32,
+    },
     Retile,
     RetileDisplays(Vec<DisplayId>),
     SendLayoutCommand {

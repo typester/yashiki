@@ -70,6 +70,11 @@ Like AeroSpace, uses virtual workspaces instead of macOS native Spaces:
   - Config is a shell script (`~/.config/yashiki/init`)
   - Uses CLI commands for configuration
   - Dynamic binding changes supported
+- **Window rules** (riverctl-style)
+  - Automatically configure window properties based on app name or title
+  - Glob pattern matching (`*Chrome*`, `Safari`, `*Dialog*`)
+  - Actions: float, no-float, tags, output, position, dimensions
+  - Rules sorted by specificity (more specific rules take priority)
 
 ## Layout Protocol
 
@@ -149,6 +154,14 @@ yashiki exec-path                 # Get current exec path
 yashiki set-exec-path "/opt/homebrew/bin:/usr/local/bin"  # Set exec path
 yashiki add-exec-path /opt/homebrew/bin      # Add to start of exec path (high priority)
 yashiki add-exec-path --append /usr/local/bin  # Add to end of exec path (low priority)
+yashiki rule-add --app-name Safari tags $((1<<1)) # Safari windows go to tag 2 (bitmask 2)
+yashiki rule-add --app-name Finder float          # Finder windows float
+yashiki rule-add --title "*Dialog*" float         # Windows with "Dialog" in title float
+yashiki rule-add --app-name Safari --title "*Preferences*" float  # More specific rule
+yashiki rule-add --app-name Preview dimensions 800 600  # Set initial size
+yashiki rule-add --app-name "Google Chrome" output 2    # Chrome to display 2
+yashiki rule-del --app-name Finder float          # Remove a rule
+yashiki list-rules                # List all rules
 yashiki quit                      # Quit daemon
 ```
 
@@ -196,6 +209,13 @@ yashiki layout-cmd --layout tatami set-inner-gap 10
 yashiki layout-cmd --layout tatami set-outer-gap 10
 yashiki layout-cmd --layout byobu set-padding 30
 
+# Window rules (applied to new windows automatically)
+yashiki rule-add --app-name Finder float          # Finder windows float
+yashiki rule-add --app-name "System Preferences" float
+yashiki rule-add --title "*Dialog*" float         # Dialog windows float
+yashiki rule-add --app-name Safari tags $((1<<1)) # Safari goes to tag 2 (bitmask 2)
+yashiki rule-add --app-name "Google Chrome" output 2  # Chrome to external display
+
 # App launchers
 yashiki bind alt-return exec "open -n /Applications/Ghostty.app"
 yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
@@ -221,7 +241,8 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
   - Output: `focus_output()`, `send_to_output()` - move focus/window between displays
   - Display targeting: `resolve_output()`, `get_target_display()` - resolve OutputSpecifier to DisplayId
   - Display change: `handle_display_change()` - handle monitor connect/disconnect
-- **core/window.rs** - Window struct with tags, display_id, saved_frame for off-screen
+  - Window rules: `add_rule()`, `remove_rule()`, `apply_rules_to_new_window()`
+- **core/window.rs** - Window struct with tags, display_id, saved_frame, is_floating
 - **core/tag.rs** - Tag bitmask
 - **ipc/server.rs** - IPC server on `/tmp/yashiki.sock`
 - **ipc/client.rs** - IPC client for CLI
@@ -241,7 +262,7 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
   - `MacOSWindowSystem` / `MacOSWindowManipulator` - Production implementations
   - `MockWindowSystem` / `MockWindowManipulator` - Test implementations
 - **main.rs** - Daemon + CLI mode
-- **yashiki-ipc/** - Command/Response/LayoutMessage enums, OutputSpecifier, OutputInfo
+- **yashiki-ipc/** - Command/Response/LayoutMessage enums, OutputSpecifier, OutputInfo, GlobPattern, RuleMatcher, RuleAction, WindowRule
 
 ### yashiki-layout-tatami (layout engine)
 - Master-stack layout
@@ -421,16 +442,33 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
   - Without `--layout`: sends to current active layout and retiles
   - With `--layout <name>`: sends to specified layout (lazy spawns if needed), no retile
 
+### Window Rules
+- Rules stored in `State.rules: Vec<WindowRule>`
+- Rules sorted by specificity (more specific rules first)
+- Specificity calculation: exact match > prefix/suffix > contains > wildcard
+- Multiple rules can match; each action type uses "first match wins"
+- Floating windows excluded from tiling (`visible_windows_on_display()` filter)
+- Rules applied in `timer_callback` after `sync_pid()` returns new window IDs
+- Actions:
+  | Action | Effect |
+  |--------|--------|
+  | `float` | Set `window.is_floating = true`, excluded from tiling |
+  | `no-float` | Set `window.is_floating = false` (override more general float rule) |
+  | `tags N` | Set `window.tags = N` |
+  | `output N` | Set `window.display_id` to resolved display |
+  | `position X Y` | Move window to position (immediate effect) |
+  | `dimensions W H` | Resize window (immediate effect) |
+
 ## Testing
 
-### Current Test Coverage (75 tests)
+### Current Test Coverage (94 tests)
 
 Run tests: `cargo test --all`
 
 **Tested modules:**
 - `core/tag.rs` - Tag bitmask operations (7 tests)
 - `macos/hotkey.rs` - `parse_hotkey()`, `format_hotkey()` (15 tests)
-- `yashiki-ipc` - Command/Response/LayoutMessage serialization (21 tests)
+- `yashiki-ipc` - Command/Response/LayoutMessage/WindowRule serialization (40 tests)
 - `core/state.rs` - State management with MockWindowSystem (13 tests)
 - `app.rs` - `process_command()` effect generation (9 tests)
 - `yashiki-layout-byobu` - Accordion layout and commands (9 tests)
@@ -453,7 +491,8 @@ pub trait WindowManipulator {
     fn apply_layout(&self, display_id: DisplayId, frame: &Rect, geometries: &[WindowGeometry]);
     fn focus_window(&self, window_id: u32, pid: i32);
     fn move_window_to_position(&self, window_id: u32, pid: i32, x: i32, y: i32);
-    fn exec_command(&self, command: &str) -> Result<(), String>;
+    fn set_window_dimensions(&self, window_id: u32, pid: i32, width: u32, height: u32);
+    fn exec_command(&self, command: &str, path: &str) -> Result<(), String>;
 }
 ```
 
@@ -516,10 +555,12 @@ pub enum Effect {
     ApplyWindowMoves(Vec<WindowMove>),
     FocusWindow { window_id: u32, pid: i32 },
     MoveWindowToPosition { window_id: u32, pid: i32, x: i32, y: i32 },
+    SetWindowDimensions { window_id: u32, pid: i32, width: u32, height: u32 },
     Retile,
     RetileDisplays(Vec<DisplayId>),
     SendLayoutCommand { layout: Option<String>, cmd: String, args: Vec<String> },
-    ExecCommand(String),
+    ExecCommand { command: String, path: String },
+    UpdateLayoutExecPath { path: String },
     FocusVisibleWindowIfNeeded,
 }
 ```

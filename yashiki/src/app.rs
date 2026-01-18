@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use yashiki_ipc::{BindingInfo, Command, OutputInfo, Response, StateInfo, WindowInfo};
+use yashiki_ipc::{BindingInfo, Command, OutputInfo, Response, RuleInfo, StateInfo, WindowInfo};
 
 type IpcCommandWithResponse = (Command, mpsc::Sender<Response>);
 
@@ -301,7 +301,8 @@ impl App {
                         tracing::info!("App terminated, removing observer for pid {}", pid);
                         ctx.observer_manager.borrow_mut().remove_observer(pid);
                         // Remove windows belonging to this PID from state
-                        if ctx.state.borrow_mut().sync_pid(&ctx.window_system, pid) {
+                        let (changed, _) = ctx.state.borrow_mut().sync_pid(&ctx.window_system, pid);
+                        if changed {
                             do_retile(
                                 &ctx.state,
                                 &ctx.layout_engine_manager,
@@ -351,12 +352,33 @@ impl App {
                     Event::FocusedWindowChanged | Event::ApplicationActivated { .. }
                 );
 
-                if ctx
+                let (changed, new_window_ids) = ctx
                     .state
                     .borrow_mut()
-                    .handle_event(&ctx.window_system, &event)
-                {
+                    .handle_event(&ctx.window_system, &event);
+
+                if changed {
                     needs_retile = true;
+                }
+
+                // Apply rules to newly created windows
+                for window_id in new_window_ids {
+                    let (position, dimensions) =
+                        ctx.state.borrow_mut().apply_rules_to_new_window(window_id);
+
+                    // Execute effects for position and dimensions
+                    if let Some((window_id, pid)) =
+                        ctx.state.borrow().get_window_info_for_effects(window_id)
+                    {
+                        if let Some((x, y)) = position {
+                            ctx.window_manipulator
+                                .move_window_to_position(window_id, pid, x, y);
+                        }
+                        if let Some((width, height)) = dimensions {
+                            ctx.window_manipulator
+                                .set_window_dimensions(window_id, pid, width, height);
+                        }
+                    }
                 }
 
                 // On external focus change, notify layout engine and switch tag if focused window is hidden
@@ -513,6 +535,7 @@ fn process_command(
                     width: w.frame.width,
                     height: w.frame.height,
                     is_focused: state.focused == Some(w.id),
+                    is_floating: w.is_floating,
                 })
                 .collect();
             CommandResult::with_response(Response::Windows { windows })
@@ -817,6 +840,50 @@ fn process_command(
             }
         }
 
+        // Rules
+        Command::RuleAdd { rule } => {
+            state.add_rule(rule.clone());
+            CommandResult::ok()
+        }
+        Command::RuleDel { matcher, action } => {
+            if state.remove_rule(matcher, action) {
+                CommandResult::ok()
+            } else {
+                CommandResult::error("Rule not found")
+            }
+        }
+        Command::ListRules => {
+            let rules: Vec<RuleInfo> = state
+                .rules
+                .iter()
+                .map(|r| {
+                    let action_str = match &r.action {
+                        yashiki_ipc::RuleAction::Float => "float".to_string(),
+                        yashiki_ipc::RuleAction::NoFloat => "no-float".to_string(),
+                        yashiki_ipc::RuleAction::Tags { tags } => format!("tags {}", tags),
+                        yashiki_ipc::RuleAction::Output { output } => match output {
+                            yashiki_ipc::OutputSpecifier::Id(id) => format!("output {}", id),
+                            yashiki_ipc::OutputSpecifier::Name(name) => {
+                                format!("output {}", name)
+                            }
+                        },
+                        yashiki_ipc::RuleAction::Position { x, y } => {
+                            format!("position {} {}", x, y)
+                        }
+                        yashiki_ipc::RuleAction::Dimensions { width, height } => {
+                            format!("dimensions {} {}", width, height)
+                        }
+                    };
+                    RuleInfo {
+                        app_name: r.matcher.app_name.as_ref().map(|p| p.pattern().to_string()),
+                        title: r.matcher.title.as_ref().map(|p| p.pattern().to_string()),
+                        action: action_str,
+                    }
+                })
+                .collect();
+            CommandResult::with_response(Response::Rules { rules })
+        }
+
         // Control
         Command::Quit => {
             tracing::info!("Quit command received");
@@ -856,6 +923,14 @@ fn execute_effects<M: WindowManipulator>(
                 y,
             } => {
                 manipulator.move_window_to_position(window_id, pid, x, y);
+            }
+            Effect::SetWindowDimensions {
+                window_id,
+                pid,
+                width,
+                height,
+            } => {
+                manipulator.set_window_dimensions(window_id, pid, width, height);
             }
             Effect::Retile => {
                 do_retile(state, layout_engine_manager, manipulator);
