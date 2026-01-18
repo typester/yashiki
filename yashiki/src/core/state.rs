@@ -1614,4 +1614,110 @@ mod tests {
         let visible = state.visible_windows_on_display(1);
         assert_eq!(visible.len(), 2);
     }
+
+    #[test]
+    fn test_handle_display_change_display_added() {
+        // Start with 1 display
+        let ws1 = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws1);
+        assert_eq!(state.displays.len(), 1);
+
+        // Simulate display added: create new MockWindowSystem with 2 displays
+        let ws2 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let result = state.handle_display_change(&ws2);
+
+        // Check that display 2 was added
+        assert_eq!(result.added.len(), 1);
+        assert_eq!(result.added[0].id, 2);
+        assert!(result.removed.is_empty());
+        assert_eq!(state.displays.len(), 2);
+    }
+
+    #[test]
+    fn test_handle_display_change_display_removed() {
+        // Start with 2 displays
+        let ws1 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws1);
+        assert_eq!(state.displays.len(), 2);
+
+        // Simulate display 2 disconnected
+        let ws2 = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let result = state.handle_display_change(&ws2);
+
+        // Check that display 2 was removed
+        assert!(result.added.is_empty());
+        assert_eq!(result.removed.len(), 1);
+        assert_eq!(result.removed[0], 2);
+        assert_eq!(state.displays.len(), 1);
+    }
+
+    #[test]
+    fn test_handle_display_change_orphaned_windows() {
+        // Start with 2 displays, window on display 2
+        let ws1 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws1);
+
+        // Verify window 101 is on display 2
+        assert_eq!(state.windows.get(&101).unwrap().display_id, 2);
+
+        // Simulate display 2 disconnected
+        let ws2 = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let result = state.handle_display_change(&ws2);
+
+        // Check that window 101 was moved to fallback display (display 1)
+        assert_eq!(state.windows.get(&101).unwrap().display_id, 1);
+
+        // Check displays_to_retile includes the fallback display
+        assert!(result.displays_to_retile.contains(&1));
+    }
 }

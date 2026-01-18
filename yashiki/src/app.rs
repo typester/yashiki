@@ -1906,4 +1906,116 @@ mod tests {
         assert!(matches!(result.response, Response::Ok));
         assert!(result.effects.is_empty());
     }
+
+    #[test]
+    fn test_window_property_change_detection_tags() {
+        use crate::event_emitter::EventEmitter;
+        use std::cell::RefCell;
+        use std::sync::mpsc as std_mpsc;
+        use yashiki_ipc::StateEvent;
+
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 0.0, 0.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        let state_cell = RefCell::new(state);
+        let (tx, rx) = std_mpsc::channel::<StateEvent>();
+        let event_emitter = EventEmitter::new(tx);
+
+        // Capture initial state
+        let pre = capture_event_state(&state_cell);
+
+        // Modify window tags
+        state_cell.borrow_mut().windows.get_mut(&100).unwrap().tags =
+            crate::core::Tag::from_mask(0b10);
+
+        // Emit events
+        emit_state_change_events(&event_emitter, &state_cell, &pre);
+
+        // Verify WindowUpdated event was emitted
+        let events: Vec<_> = rx.try_iter().collect();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], StateEvent::WindowUpdated { .. }));
+    }
+
+    #[test]
+    fn test_window_property_change_detection_floating() {
+        use crate::event_emitter::EventEmitter;
+        use std::cell::RefCell;
+        use std::sync::mpsc as std_mpsc;
+        use yashiki_ipc::StateEvent;
+
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 0.0, 0.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        let state_cell = RefCell::new(state);
+        let (tx, rx) = std_mpsc::channel::<StateEvent>();
+        let event_emitter = EventEmitter::new(tx);
+
+        // Capture initial state
+        let pre = capture_event_state(&state_cell);
+
+        // Modify window is_floating
+        state_cell
+            .borrow_mut()
+            .windows
+            .get_mut(&100)
+            .unwrap()
+            .is_floating = true;
+
+        // Emit events
+        emit_state_change_events(&event_emitter, &state_cell, &pre);
+
+        // Verify WindowUpdated event was emitted
+        let events: Vec<_> = rx.try_iter().collect();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], StateEvent::WindowUpdated { .. }));
+    }
+
+    #[test]
+    fn test_window_property_no_change_no_event() {
+        use crate::event_emitter::EventEmitter;
+        use std::cell::RefCell;
+        use std::sync::mpsc as std_mpsc;
+        use yashiki_ipc::StateEvent;
+
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 0.0, 0.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        let state_cell = RefCell::new(state);
+        let (tx, rx) = std_mpsc::channel::<StateEvent>();
+        let event_emitter = EventEmitter::new(tx);
+
+        // Capture initial state
+        let pre = capture_event_state(&state_cell);
+
+        // No modifications to state
+
+        // Emit events
+        emit_state_change_events(&event_emitter, &state_cell, &pre);
+
+        // Verify no events were emitted
+        let events: Vec<_> = rx.try_iter().collect();
+        assert!(events.is_empty());
+    }
 }
