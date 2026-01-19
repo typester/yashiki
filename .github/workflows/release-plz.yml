@@ -29,6 +29,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Set yashiki release as latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find the latest yashiki-v* release and mark it as latest
+          TAG=$(gh release list --repo ${{ github.repository }} --limit 20 \
+            | grep '^yashiki-v' | head -1 | cut -f1)
+          if [ -n "$TAG" ]; then
+            gh release edit "$TAG" --repo ${{ github.repository }} --latest
+            echo "Set $TAG as latest release"
+          fi
 
   # Create a PR with the new versions and changelog, preparing the next release.
   release-plz-pr:
