@@ -84,6 +84,7 @@ struct RunLoopContext {
     hotkey_manager: RefCell<HotkeyManager>,
     window_system: MacOSWindowSystem,
     window_manipulator: MacOSWindowManipulator,
+    previous_display_ids: RefCell<Vec<u32>>,
 }
 
 pub struct App {}
@@ -331,6 +332,9 @@ impl App {
             tracing::warn!("Failed to start hotkey tap: {}", e);
         }
 
+        // Get initial display IDs for polling-based display change detection
+        let initial_display_ids = macos::get_active_display_ids();
+
         // Create shared context for timer and IPC source
         let context = Box::new(RunLoopContext {
             ipc_cmd_rx,
@@ -346,6 +350,7 @@ impl App {
             hotkey_manager: RefCell::new(hotkey_manager),
             window_system,
             window_manipulator,
+            previous_display_ids: RefCell::new(initial_display_ids),
         });
         let context_ptr = Box::into_raw(context) as *mut std::ffi::c_void;
 
@@ -487,6 +492,62 @@ impl App {
             while let Ok(resp_tx) = ctx.snapshot_request_rx.try_recv() {
                 let snapshot = create_snapshot(&ctx.state.borrow());
                 let _ = resp_tx.send(snapshot);
+            }
+
+            // Poll for display changes using CGGetActiveDisplayList
+            // NSApplicationDidChangeScreenParametersNotification doesn't work without NSApplication's event loop
+            {
+                let current_ids = macos::get_active_display_ids();
+                let mut prev_ids = ctx.previous_display_ids.borrow_mut();
+
+                let mut current_sorted = current_ids.clone();
+                let mut prev_sorted = prev_ids.clone();
+                current_sorted.sort();
+                prev_sorted.sort();
+
+                if current_sorted != prev_sorted {
+                    tracing::info!("Display configuration changed (polling)");
+                    *prev_ids = current_ids;
+
+                    let result = ctx
+                        .state
+                        .borrow_mut()
+                        .handle_display_change(&ctx.window_system);
+
+                    // Emit display events
+                    let focused_display = ctx.state.borrow().focused_display;
+                    for display in &result.added {
+                        ctx.event_emitter
+                            .emit_display_added(display, focused_display);
+                    }
+                    for display_id in &result.removed {
+                        ctx.event_emitter.emit_display_removed(*display_id);
+                    }
+
+                    // Apply window moves for orphaned windows
+                    if !result.window_moves.is_empty() {
+                        ctx.window_manipulator
+                            .apply_window_moves(&result.window_moves);
+                    }
+
+                    // Retile affected displays
+                    if !result.displays_to_retile.is_empty() {
+                        for display_id in result.displays_to_retile {
+                            do_retile_display(
+                                &ctx.state,
+                                &ctx.layout_engine_manager,
+                                &ctx.window_manipulator,
+                                display_id,
+                            );
+                        }
+                    } else {
+                        do_retile(
+                            &ctx.state,
+                            &ctx.layout_engine_manager,
+                            &ctx.window_manipulator,
+                        );
+                    }
+                }
             }
 
             // Process workspace events (app launch/terminate/display change)

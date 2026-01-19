@@ -165,7 +165,9 @@ impl WorkspaceWatcher {
                 None,
             );
 
-            // Register for screen change notifications using default notification center
+            // Register for screen change notifications using default notification center.
+            // Note: This notification doesn't work without NSApplication's event loop.
+            // Display changes are detected via polling in timer_callback instead.
             let default_center = objc2_foundation::NSNotificationCenter::defaultCenter();
             let screen_changed_name =
                 NSString::from_str("NSApplicationDidChangeScreenParametersNotification");

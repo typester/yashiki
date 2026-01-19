@@ -170,3 +170,23 @@ fn get_display_id_for_screen(screen: &NSScreen) -> Option<DisplayId> {
     let number: &NSNumber = unsafe { &*(&*value as *const _ as *const NSNumber) };
     Some(number.unsignedIntValue())
 }
+
+/// Get active display IDs using Core Graphics directly.
+/// Unlike NSScreen::screens(), this doesn't depend on NSApplication's event loop.
+pub fn get_active_display_ids() -> Vec<DisplayId> {
+    use core_graphics::display::CGGetActiveDisplayList;
+
+    const MAX_DISPLAYS: u32 = 16;
+    let mut display_ids: [u32; 16] = [0; 16];
+    let mut display_count: u32 = 0;
+
+    let result = unsafe {
+        CGGetActiveDisplayList(MAX_DISPLAYS, display_ids.as_mut_ptr(), &mut display_count)
+    };
+
+    if result != 0 {
+        return Vec::new();
+    }
+
+    display_ids[..display_count as usize].to_vec()
+}

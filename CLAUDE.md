@@ -329,9 +329,10 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
   - Permission check, window manipulation (position, size), `raise()` for focus
 - **macos/display.rs** - CGWindowList window enumeration, display info
   - `get_on_screen_windows()` (includes bundle_id), `get_all_displays()` (uses NSScreen visibleFrame)
+  - `get_active_display_ids()` - uses CGGetActiveDisplayList for polling-based display change detection
 - **macos/observer.rs** - AXObserver for window events
   - `ObserverManager` with `add_observer()`, `remove_observer()`, `has_observer()`
-- **macos/workspace.rs** - NSWorkspace app launch/terminate notifications, display change notifications, `activate_application()`, `get_frontmost_app_pid()`, `get_bundle_id_for_pid()`, `exec_command()`
+- **macos/workspace.rs** - NSWorkspace app launch/terminate notifications, `activate_application()`, `get_frontmost_app_pid()`, `get_bundle_id_for_pid()`, `exec_command()`
 - **macos/hotkey.rs** - CGEventTap global hotkeys
   - `HotkeyManager` with dynamic bind/unbind
   - Deferred tap recreation via dirty flag (batches multiple bind/unbind calls)
@@ -530,9 +531,10 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
 - `output-focus`: cycles displays by sorted ID, focuses first visible window on target
 - `output-send`: moves window to target display, updates `focused_display`, retiles both displays
 
-### Monitor Disconnection Handling
-- Listens for `NSApplicationDidChangeScreenParametersNotification`
-- When a display is disconnected:
+### Monitor Connection/Disconnection Handling
+- Polls `CGGetActiveDisplayList` in timer_callback (50ms interval)
+  - `NSApplicationDidChangeScreenParametersNotification` doesn't work without NSApplication's event loop
+- When display configuration changes:
   - Orphaned windows are moved to fallback display (main display preferred)
   - `focused_display` is updated if it was on the disconnected display
   - Affected displays are automatically retiled
