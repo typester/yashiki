@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.5.1...yashiki-ipc-v0.5.2) - 2026-01-19
+
+### Added
+
+- eliminate hotkey processing latency with CFRunLoopSource ([#38](https://github.com/typester/yashiki/pull/38))
+
 ## [0.5.1](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.5.0...yashiki-ipc-v0.5.1) - 2026-01-19
 
 ### Added
