@@ -503,26 +503,13 @@ impl App {
                             ctx.state.borrow_mut().sync_pid(&ctx.window_system, pid);
 
                         // Apply rules to newly discovered windows and emit events
-                        for window_id in new_window_ids {
-                            let effects =
-                                ctx.state.borrow_mut().apply_rules_to_new_window(window_id);
-                            if !effects.is_empty() {
-                                let _ = execute_effects(
-                                    effects,
-                                    &ctx.state,
-                                    &ctx.layout_engine_manager,
-                                    &ctx.window_manipulator,
-                                );
-                            }
-
-                            // Emit window created event
-                            {
-                                let state = ctx.state.borrow();
-                                if let Some(window) = state.windows.get(&window_id) {
-                                    ctx.event_emitter.emit_window_created(window, state.focused);
-                                }
-                            }
-                        }
+                        process_new_windows(
+                            new_window_ids,
+                            &ctx.state,
+                            &ctx.layout_engine_manager,
+                            &ctx.window_manipulator,
+                            &ctx.event_emitter,
+                        );
 
                         if changed {
                             do_retile(
@@ -632,25 +619,13 @@ impl App {
                         }
 
                         // Apply rules to new windows
-                        for window_id in new_window_ids {
-                            let effects =
-                                ctx.state.borrow_mut().apply_rules_to_new_window(window_id);
-                            if !effects.is_empty() {
-                                let _ = execute_effects(
-                                    effects,
-                                    &ctx.state,
-                                    &ctx.layout_engine_manager,
-                                    &ctx.window_manipulator,
-                                );
-                            }
-                            // Emit window created event
-                            {
-                                let state = ctx.state.borrow();
-                                if let Some(window) = state.windows.get(&window_id) {
-                                    ctx.event_emitter.emit_window_created(window, state.focused);
-                                }
-                            }
-                        }
+                        process_new_windows(
+                            new_window_ids,
+                            &ctx.state,
+                            &ctx.layout_engine_manager,
+                            &ctx.window_manipulator,
+                            &ctx.event_emitter,
+                        );
                     }
                 }
 
@@ -664,26 +639,13 @@ impl App {
                 }
 
                 // Apply rules to newly created windows and emit events
-                for window_id in new_window_ids {
-                    // Apply rules first (may change tags, display_id, is_floating)
-                    let effects = ctx.state.borrow_mut().apply_rules_to_new_window(window_id);
-                    if !effects.is_empty() {
-                        let _ = execute_effects(
-                            effects,
-                            &ctx.state,
-                            &ctx.layout_engine_manager,
-                            &ctx.window_manipulator,
-                        );
-                    }
-
-                    // Emit window created event after rules are applied
-                    {
-                        let state = ctx.state.borrow();
-                        if let Some(window) = state.windows.get(&window_id) {
-                            ctx.event_emitter.emit_window_created(window, state.focused);
-                        }
-                    }
-                }
+                process_new_windows(
+                    new_window_ids,
+                    &ctx.state,
+                    &ctx.layout_engine_manager,
+                    &ctx.window_manipulator,
+                    &ctx.event_emitter,
+                );
 
                 // On external focus change, notify layout engine and switch tag if focused window is hidden
                 if is_focus_event {
@@ -748,25 +710,13 @@ impl App {
                 }
 
                 // Apply rules to newly discovered windows and emit events
-                for window_id in new_window_ids {
-                    let effects = ctx.state.borrow_mut().apply_rules_to_new_window(window_id);
-                    if !effects.is_empty() {
-                        let _ = execute_effects(
-                            effects,
-                            &ctx.state,
-                            &ctx.layout_engine_manager,
-                            &ctx.window_manipulator,
-                        );
-                    }
-
-                    // Emit window created event
-                    {
-                        let state = ctx.state.borrow();
-                        if let Some(window) = state.windows.get(&window_id) {
-                            ctx.event_emitter.emit_window_created(window, state.focused);
-                        }
-                    }
-                }
+                process_new_windows(
+                    new_window_ids,
+                    &ctx.state,
+                    &ctx.layout_engine_manager,
+                    &ctx.window_manipulator,
+                    &ctx.event_emitter,
+                );
             }
 
             if scan_needs_retile {
@@ -1665,6 +1615,30 @@ fn list_all_windows<S: WindowSystem>(
     }
 
     Response::Windows { windows }
+}
+
+/// Process newly discovered windows: apply rules and emit events
+fn process_new_windows<M: WindowManipulator>(
+    new_window_ids: Vec<u32>,
+    state: &RefCell<State>,
+    layout_engine_manager: &RefCell<LayoutEngineManager>,
+    manipulator: &M,
+    event_emitter: &EventEmitter,
+) {
+    for window_id in new_window_ids {
+        let effects = state.borrow_mut().apply_rules_to_new_window(window_id);
+        if !effects.is_empty() {
+            let _ = execute_effects(effects, state, layout_engine_manager, manipulator);
+        }
+
+        // Emit window created event
+        {
+            let state = state.borrow();
+            if let Some(window) = state.windows.get(&window_id) {
+                event_emitter.emit_window_created(window, state.focused);
+            }
+        }
+    }
 }
 
 fn do_retile<M: WindowManipulator>(
