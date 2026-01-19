@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/typester/yashiki/compare/yashiki-v0.5.4...yashiki-v0.6.0) - 2026-01-19
+
+### Added
+
+- add --all and --debug option to list-windows ([#48](https://github.com/typester/yashiki/pull/48))
+
+### Fixed
+
+- [**breaking**] remove duplicate codes ([#50](https://github.com/typester/yashiki/pull/50))
+- focus cycling and new window tag assignment ([#49](https://github.com/typester/yashiki/pull/49))
+- apply ignore rules and fetch ax attributes for initial windows ([#47](https://github.com/typester/yashiki/pull/47))
+- Apply "first match wins" logic to Float/NoFloat rules ([#46](https://github.com/typester/yashiki/pull/46))
+
 ## [0.5.4](https://github.com/typester/yashiki/compare/yashiki-v0.5.3...yashiki-v0.5.4) - 2026-01-19
 
 ### Added

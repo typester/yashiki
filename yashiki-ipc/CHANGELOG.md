@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.5.4...yashiki-ipc-v0.6.0) - 2026-01-19
+
+### Added
+
+- add --all and --debug option to list-windows ([#48](https://github.com/typester/yashiki/pull/48))
+
 ## [0.5.2](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.5.1...yashiki-ipc-v0.5.2) - 2026-01-19
 
 ### Added
