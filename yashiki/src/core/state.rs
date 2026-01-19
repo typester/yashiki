@@ -17,7 +17,7 @@ pub struct RuleApplicationResult {
     pub display_id: Option<DisplayId>,
     pub position: Option<(i32, i32)>,
     pub dimensions: Option<(u32, u32)>,
-    pub is_floating: bool,
+    pub is_floating: Option<bool>,
 }
 
 /// Result of handling display configuration changes
@@ -1309,10 +1309,14 @@ impl State {
                     // Ignore rules are handled separately in should_ignore_window()
                 }
                 RuleAction::Float => {
-                    result.is_floating = true;
+                    if result.is_floating.is_none() {
+                        result.is_floating = Some(true);
+                    }
                 }
                 RuleAction::NoFloat => {
-                    result.is_floating = false;
+                    if result.is_floating.is_none() {
+                        result.is_floating = Some(false);
+                    }
                 }
                 RuleAction::Tags { tags: t } => {
                     if result.tags.is_none() {
@@ -1381,9 +1385,13 @@ impl State {
                     display_id
                 );
             }
-            if rule_result.is_floating {
-                window.is_floating = true;
-                tracing::info!("Applied rule: window {} set to floating", window_id);
+            if let Some(floating) = rule_result.is_floating {
+                window.is_floating = floating;
+                tracing::info!(
+                    "Applied rule: window {} set to floating={}",
+                    window_id,
+                    floating
+                );
             }
         }
 
@@ -1554,12 +1562,13 @@ impl State {
                         display_id
                     );
                 }
-                if rule_result.is_floating {
-                    window.is_floating = true;
+                if let Some(floating) = rule_result.is_floating {
+                    window.is_floating = floating;
                     tracing::info!(
-                        "Applied rule: window {} ({}) set to floating",
+                        "Applied rule: window {} ({}) set to floating={}",
                         window_id,
-                        app_name
+                        app_name,
+                        floating
                     );
                 }
             }
@@ -2171,5 +2180,117 @@ mod tests {
 
         // After swap, 101 should be before 100 in the order (they swapped places)
         assert!(idx_101 < idx_100);
+    }
+
+    #[test]
+    fn test_float_nofloat_first_match_wins() {
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        let mut state = State::new();
+
+        // Add a more specific no-float rule (specificity ~140: app_id + subrole)
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: None,
+                app_id: Some(GlobPattern::new("org.mozilla.firefox")),
+                title: None,
+                ax_id: None,
+                subrole: Some(GlobPattern::new("AXStandardWindow")),
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::NoFloat,
+        });
+
+        // Add a less specific float rule (specificity ~76: app_id + title with wildcard)
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: None,
+                app_id: Some(GlobPattern::new("org.mozilla.firefox")),
+                title: Some(GlobPattern::new("*")),
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Float,
+        });
+
+        // Firefox AXStandardWindow should NOT be floating (more specific no-float wins)
+        let ext = ExtendedWindowAttributes {
+            ax_id: None,
+            subrole: Some("AXStandardWindow".to_string()),
+            window_level: 0,
+            ..Default::default()
+        };
+        let result = state.apply_rules_to_window_extended(
+            "Firefox",
+            Some("org.mozilla.firefox"),
+            "Some Title",
+            &ext,
+        );
+        assert_eq!(result.is_floating, Some(false));
+
+        // Firefox AXUnknown should be floating (only float rule matches)
+        let ext_unknown = ExtendedWindowAttributes {
+            ax_id: None,
+            subrole: Some("AXUnknown".to_string()),
+            window_level: 0,
+            ..Default::default()
+        };
+        let result_unknown = state.apply_rules_to_window_extended(
+            "Firefox",
+            Some("org.mozilla.firefox"),
+            "Dropdown",
+            &ext_unknown,
+        );
+        assert_eq!(result_unknown.is_floating, Some(true));
+    }
+
+    #[test]
+    fn test_nofloat_rule_sets_floating_false() {
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        let mut state = State::new();
+
+        // Add a no-float rule
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Terminal")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::NoFloat,
+        });
+
+        let ext = ExtendedWindowAttributes::default();
+        let result = state.apply_rules_to_window_extended("Terminal", None, "Window", &ext);
+
+        // NoFloat should set is_floating to Some(false)
+        assert_eq!(result.is_floating, Some(false));
+    }
+
+    #[test]
+    fn test_no_float_rules_returns_none() {
+        let state = State::new();
+
+        let ext = ExtendedWindowAttributes::default();
+        let result = state.apply_rules_to_window_extended("Safari", None, "Window", &ext);
+
+        // No matching rules should return None
+        assert_eq!(result.is_floating, None);
     }
 }

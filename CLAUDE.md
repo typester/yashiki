@@ -627,7 +627,7 @@ Run tests: `cargo test --all`
 - `core/tag.rs` - Tag bitmask operations (7 tests)
 - `macos/hotkey.rs` - `parse_hotkey()`, `format_hotkey()` (15 tests)
 - `yashiki-ipc` - Command/Response/LayoutMessage/WindowRule/StateEvent/OuterGap serialization
-- `core/state.rs` - State management with MockWindowSystem (19 tests)
+- `core/state.rs` - State management with MockWindowSystem (22 tests)
 - `app.rs` - `process_command()` effect generation, `emit_state_change_events()` event detection (15 tests)
 - `event_emitter.rs` - `create_snapshot()`, `window_to_info()`, `display_to_info()` (3 tests)
 - `yashiki-layout-byobu` - Accordion layout and commands (9 tests)
