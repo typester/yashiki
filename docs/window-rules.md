@@ -207,58 +207,61 @@ Accessibility Inspector is included with Xcode:
 
 ### Using Terminal
 
-You can query AX attributes using a Swift script. Save this as `ax-inspect.swift`:
+Two Swift scripts are provided in the `scripts/` directory for inspecting window attributes.
 
-```swift
-#!/usr/bin/env swift
+#### Focused Window Inspector
 
-import Cocoa
-
-// Get the frontmost application
-guard let frontApp = NSWorkspace.shared.frontmostApplication else {
-    print("No frontmost application")
-    exit(1)
-}
-
-let pid = frontApp.processIdentifier
-let appElement = AXUIElementCreateApplication(pid)
-
-// Get the focused window
-var focusedWindow: CFTypeRef?
-AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow)
-
-guard let window = focusedWindow else {
-    print("No focused window")
-    exit(1)
-}
-
-// Query attributes
-func getAttribute(_ element: AXUIElement, _ attribute: String) -> String? {
-    var value: CFTypeRef?
-    let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
-    if result == .success, let str = value as? String {
-        return str
-    }
-    return nil
-}
-
-let windowElement = window as! AXUIElement
-
-print("Application: \(frontApp.localizedName ?? "Unknown")")
-print("Bundle ID: \(frontApp.bundleIdentifier ?? "Unknown")")
-print("AXIdentifier: \(getAttribute(windowElement, "AXIdentifier") ?? "(none)")")
-print("AXSubrole: \(getAttribute(windowElement, "AXSubrole") ?? "(none)")")
-print("AXTitle: \(getAttribute(windowElement, "AXTitle") ?? "(none)")")
-```
-
-Run with:
+`scripts/ax-inspect.swift` prints attributes of the currently focused window:
 
 ```sh
-chmod +x ax-inspect.swift
-./ax-inspect.swift
+./scripts/ax-inspect.swift
 ```
 
-This prints attributes of the currently focused window.
+Output:
+```
+Application: Ghostty
+Bundle ID: com.mitchellh.ghostty
+AXIdentifier: TerminalWindowRestoration
+AXSubrole: AXStandardWindow
+AXTitle: tmux a -d
+```
+
+#### All Windows Inspector
+
+`scripts/ax-inspect-all.swift` lists all on-screen windows grouped by application:
+
+```sh
+./scripts/ax-inspect-all.swift
+```
+
+This is useful for:
+- Finding Firefox popup windows (AXUnknown subrole)
+- Discovering all windows an app creates
+- Debugging window rules that don't match
+
+#### Using with yashiki Hotkeys
+
+When bound to a yashiki hotkey via `yashiki exec`, there's no terminal to display output. Redirect to a file instead:
+
+1. Copy the script to your config directory:
+   ```sh
+   cp scripts/ax-inspect.swift ~/.config/yashiki/
+   chmod +x ~/.config/yashiki/ax-inspect.swift
+   ```
+
+2. Bind a hotkey that appends output to a file:
+   ```sh
+   yashiki bind alt-i exec "~/.config/yashiki/ax-inspect.swift >> /tmp/ax-inspect.txt"
+   ```
+
+3. Focus on a window and press the hotkey
+
+4. Check the output:
+   ```sh
+   cat /tmp/ax-inspect.txt
+   ```
+
+Using `>>` (append) allows inspecting multiple windows in sequence. Clear the file with `> /tmp/ax-inspect.txt` when needed.
 
 ### Debugging Window Discovery
 
