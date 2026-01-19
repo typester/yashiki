@@ -102,6 +102,7 @@ mod attr {
     pub const FULLSCREEN_BUTTON: &str = "AXFullScreenButton";
     pub const MINIMIZE_BUTTON: &str = "AXMinimizeButton";
     pub const ZOOM_BUTTON: &str = "AXZoomButton";
+    pub const ENABLED: &str = "AXEnabled";
 }
 
 pub mod notification {
@@ -383,6 +384,61 @@ impl AXUIElement {
                 true
             }
             Err(_) => false,
+        }
+    }
+
+    /// Check if this element is enabled (AXEnabled attribute)
+    pub fn is_enabled(&self) -> Result<bool, AXError> {
+        let value = self.get_attribute(attr::ENABLED)?;
+        let cf = unsafe { CFBoolean::wrap_under_create_rule(value as *const _) };
+        Ok(cf.into())
+    }
+
+    /// Get button info (exists + enabled) for close button
+    pub fn get_close_button_info(&self) -> (bool, Option<bool>) {
+        match self.get_attribute(attr::CLOSE_BUTTON) {
+            Ok(value) => {
+                let btn = unsafe { AXUIElement::wrap_under_create_rule(value as AXUIElementRef) };
+                let enabled = btn.is_enabled().ok();
+                (true, enabled)
+            }
+            Err(_) => (false, None),
+        }
+    }
+
+    /// Get button info (exists + enabled) for fullscreen button
+    pub fn get_fullscreen_button_info(&self) -> (bool, Option<bool>) {
+        match self.get_attribute(attr::FULLSCREEN_BUTTON) {
+            Ok(value) => {
+                let btn = unsafe { AXUIElement::wrap_under_create_rule(value as AXUIElementRef) };
+                let enabled = btn.is_enabled().ok();
+                (true, enabled)
+            }
+            Err(_) => (false, None),
+        }
+    }
+
+    /// Get button info (exists + enabled) for minimize button
+    pub fn get_minimize_button_info(&self) -> (bool, Option<bool>) {
+        match self.get_attribute(attr::MINIMIZE_BUTTON) {
+            Ok(value) => {
+                let btn = unsafe { AXUIElement::wrap_under_create_rule(value as AXUIElementRef) };
+                let enabled = btn.is_enabled().ok();
+                (true, enabled)
+            }
+            Err(_) => (false, None),
+        }
+    }
+
+    /// Get button info (exists + enabled) for zoom button
+    pub fn get_zoom_button_info(&self) -> (bool, Option<bool>) {
+        match self.get_attribute(attr::ZOOM_BUTTON) {
+            Ok(value) => {
+                let btn = unsafe { AXUIElement::wrap_under_create_rule(value as AXUIElementRef) };
+                let enabled = btn.is_enabled().ok();
+                (true, enabled)
+            }
+            Err(_) => (false, None),
         }
     }
 }

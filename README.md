@@ -260,7 +260,7 @@ Default exec path: `<yashiki_executable_dir>:<system_PATH>`
 
 ### Window Rules
 
-Automatically configure window properties based on app name, bundle identifier, title, AXIdentifier, or AXSubrole.
+Automatically configure window properties based on app name, bundle identifier, title, AXIdentifier, AXSubrole, window level, or button states.
 
 ```sh
 # Match by app name
@@ -280,6 +280,15 @@ yashiki rule-add --ax-id "com.mitchellh.ghostty.quickTerminal" float
 # Match by AXSubrole (AX prefix optional: "Dialog" matches "AXDialog")
 yashiki rule-add --subrole Dialog float
 yashiki rule-add --subrole FloatingWindow float
+
+# Match by window level (normal, floating, modal, utility, popup, other, or numeric)
+yashiki rule-add --window-level other ignore      # Ignore non-normal windows (palettes, etc.)
+yashiki rule-add --window-level floating float    # Float utility panels
+
+# Match by button states (exists, none, enabled, disabled)
+yashiki rule-add --fullscreen-button none float   # Float windows without fullscreen button
+yashiki rule-add --close-button none ignore       # Ignore windows without close button (popups)
+yashiki rule-add --app-id com.mitchellh.ghostty --fullscreen-button disabled ignore  # Ghostty Quick Terminal
 
 # Ignore windows completely (never manage - useful for popups/dropdowns)
 yashiki rule-add --subrole AXUnknown ignore  # Ignore all popup windows

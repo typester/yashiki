@@ -1,5 +1,6 @@
 use super::Tag;
 use crate::macos::{Bounds, DisplayId, WindowInfo};
+use yashiki_ipc::ButtonInfo;
 
 pub type WindowId = u32;
 
@@ -14,6 +15,11 @@ pub struct Window {
     pub app_id: Option<String>,
     pub ax_id: Option<String>,
     pub subrole: Option<String>,
+    pub window_level: i32,
+    pub close_button: ButtonInfo,
+    pub fullscreen_button: ButtonInfo,
+    pub minimize_button: ButtonInfo,
+    pub zoom_button: ButtonInfo,
     pub frame: Rect,
     pub saved_frame: Option<Rect>,
     pub is_floating: bool,
@@ -32,6 +38,11 @@ impl Window {
             app_id: info.bundle_id.clone(),
             ax_id: None,
             subrole: None,
+            window_level: info.layer,
+            close_button: ButtonInfo::default(),
+            fullscreen_button: ButtonInfo::default(),
+            minimize_button: ButtonInfo::default(),
+            zoom_button: ButtonInfo::default(),
             frame: Rect::from_bounds(&info.bounds),
             saved_frame: None,
             is_floating: false,
@@ -53,6 +64,19 @@ impl Window {
     /// Check if window is hidden (has a saved frame from being moved offscreen)
     pub fn is_hidden(&self) -> bool {
         self.saved_frame.is_some()
+    }
+
+    /// Get extended window attributes for rule matching
+    pub fn extended_attributes(&self) -> yashiki_ipc::ExtendedWindowAttributes {
+        yashiki_ipc::ExtendedWindowAttributes {
+            ax_id: self.ax_id.clone(),
+            subrole: self.subrole.clone(),
+            window_level: self.window_level,
+            close_button: self.close_button.clone(),
+            fullscreen_button: self.fullscreen_button.clone(),
+            minimize_button: self.minimize_button.clone(),
+            zoom_button: self.zoom_button.clone(),
+        }
     }
 }
 

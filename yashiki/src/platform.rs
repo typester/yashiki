@@ -1,7 +1,7 @@
 use crate::core::{Rect, WindowMove};
 use crate::macos::{activate_application, AXUIElement, DisplayId, DisplayInfo, WindowInfo};
 use core_graphics::geometry::{CGPoint, CGSize};
-use yashiki_ipc::WindowGeometry;
+use yashiki_ipc::{ButtonInfo, ExtendedWindowAttributes, WindowGeometry};
 
 pub struct FocusedWindowInfo {
     pub window_id: u32,
@@ -16,6 +16,13 @@ pub trait WindowSystem {
     /// Get AXIdentifier and AXSubrole attributes for a window.
     /// Returns (ax_id, subrole) if successful.
     fn get_ax_attributes(&self, window_id: u32, pid: i32) -> (Option<String>, Option<String>);
+    /// Get extended window attributes including window_level and button info.
+    fn get_extended_attributes(
+        &self,
+        window_id: u32,
+        pid: i32,
+        layer: i32,
+    ) -> ExtendedWindowAttributes;
 }
 
 /// macOS implementation of WindowSystem
@@ -55,6 +62,51 @@ impl WindowSystem for MacOSWindowSystem {
         }
 
         (None, None)
+    }
+
+    fn get_extended_attributes(
+        &self,
+        window_id: u32,
+        pid: i32,
+        layer: i32,
+    ) -> ExtendedWindowAttributes {
+        let app = AXUIElement::application(pid);
+        let ax_windows = match app.windows() {
+            Ok(w) => w,
+            Err(_) => {
+                return ExtendedWindowAttributes {
+                    window_level: layer,
+                    ..Default::default()
+                }
+            }
+        };
+
+        for ax_win in ax_windows {
+            if ax_win.window_id() == Some(window_id) {
+                let ax_id = ax_win.identifier().ok();
+                let subrole = ax_win.subrole().ok();
+
+                let (close_exists, close_enabled) = ax_win.get_close_button_info();
+                let (fullscreen_exists, fullscreen_enabled) = ax_win.get_fullscreen_button_info();
+                let (minimize_exists, minimize_enabled) = ax_win.get_minimize_button_info();
+                let (zoom_exists, zoom_enabled) = ax_win.get_zoom_button_info();
+
+                return ExtendedWindowAttributes {
+                    ax_id,
+                    subrole,
+                    window_level: layer,
+                    close_button: ButtonInfo::new(close_exists, close_enabled),
+                    fullscreen_button: ButtonInfo::new(fullscreen_exists, fullscreen_enabled),
+                    minimize_button: ButtonInfo::new(minimize_exists, minimize_enabled),
+                    zoom_button: ButtonInfo::new(zoom_exists, zoom_enabled),
+                };
+            }
+        }
+
+        ExtendedWindowAttributes {
+            window_level: layer,
+            ..Default::default()
+        }
     }
 }
 
@@ -515,6 +567,23 @@ pub mod mock {
         ) -> (Option<String>, Option<String>) {
             // In tests, return None for AX attributes by default
             (None, None)
+        }
+
+        fn get_extended_attributes(
+            &self,
+            _window_id: u32,
+            _pid: i32,
+            layer: i32,
+        ) -> ExtendedWindowAttributes {
+            // In tests, return default extended attributes with provided layer
+            ExtendedWindowAttributes {
+                window_level: layer,
+                close_button: ButtonInfo::new(true, Some(true)),
+                fullscreen_button: ButtonInfo::new(true, Some(true)),
+                minimize_button: ButtonInfo::new(true, Some(true)),
+                zoom_button: ButtonInfo::new(true, Some(true)),
+                ..Default::default()
+            }
         }
     }
 

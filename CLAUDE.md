@@ -223,6 +223,11 @@ yashiki rule-add --app-id "com.google.*" output 2 # Glob pattern for bundle ID
 yashiki rule-add --ax-id "com.mitchellh.ghostty.quickTerminal" float  # Match by AXIdentifier
 yashiki rule-add --subrole Dialog float           # Match by AXSubrole (AX prefix optional)
 yashiki rule-add --subrole AXUnknown ignore       # Ignore popup windows (never manage)
+yashiki rule-add --window-level other ignore      # Ignore non-normal windows (palettes, etc.)
+yashiki rule-add --window-level floating float    # Float utility panels (level 3)
+yashiki rule-add --fullscreen-button none float   # Float windows without fullscreen button
+yashiki rule-add --close-button none ignore       # Ignore windows without close button (popups)
+yashiki rule-add --app-id com.mitchellh.ghostty --fullscreen-button disabled ignore  # Ghostty Quick Terminal
 yashiki rule-del --app-name Finder float          # Remove a rule
 yashiki list-rules                # List all rules
 yashiki set-cursor-warp disabled          # Disable cursor warp (default)
@@ -324,7 +329,7 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
   - Display targeting: `resolve_output()`, `get_target_display()` - resolve OutputSpecifier to DisplayId
   - Display change: `handle_display_change()` - handle monitor connect/disconnect
   - Window rules: `add_rule()`, `remove_rule()`, `should_ignore_window()`, `apply_rules_to_new_window()`
-- **core/window.rs** - Window struct with tags, display_id, app_id, ax_id, subrole, saved_frame, is_floating, is_fullscreen
+- **core/window.rs** - Window struct with tags, display_id, app_id, ax_id, subrole, window_level, button states (close, fullscreen, minimize, zoom), saved_frame, is_floating, is_fullscreen
 - **core/tag.rs** - Tag bitmask
 - **ipc/server.rs** - IPC server on `/tmp/yashiki.sock`
 - **ipc/client.rs** - IPC client for CLI and event subscription
@@ -343,12 +348,12 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
   - Effect pattern: `process_command()` (pure) + `execute_effects()` (side effects)
 - **effect.rs** - Effect enum and CommandResult for separating pure computation from side effects
 - **platform.rs** - Platform abstraction layer
-  - `WindowSystem` trait for querying window/display info
+  - `WindowSystem` trait for querying window/display info (`get_extended_attributes()` for window_level and button states)
   - `WindowManipulator` trait for window manipulation side effects
   - `MacOSWindowSystem` / `MacOSWindowManipulator` - Production implementations
   - `MockWindowSystem` / `MockWindowManipulator` - Test implementations
 - **main.rs** - Daemon + CLI mode
-- **yashiki-ipc/** - Command/Response/LayoutMessage enums, OutputSpecifier, OutputInfo, GlobPattern, RuleMatcher, RuleAction, WindowRule, StateEvent, SubscribeRequest, EventFilter
+- **yashiki-ipc/** - Command/Response/LayoutMessage enums, OutputSpecifier, OutputInfo, GlobPattern, RuleMatcher, RuleAction, WindowRule, StateEvent, SubscribeRequest, EventFilter, ButtonState, WindowLevel, ButtonInfo, ExtendedWindowAttributes
 
 ### yashiki-layout-tatami (layout engine)
 - Master-stack layout
@@ -543,9 +548,13 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
 ### Window Rules
 - Rules stored in `State.rules: Vec<WindowRule>`
 - Rules sorted by specificity (more specific rules first)
-- Matching: `--app-name` (app name), `--app-id` (bundle identifier), `--title` (window title), `--ax-id` (AXIdentifier), `--subrole` (AXSubrole)
+- Matching options:
+  - `--app-name` (app name), `--app-id` (bundle identifier), `--title` (window title)
+  - `--ax-id` (AXIdentifier), `--subrole` (AXSubrole)
+  - `--window-level` (CGWindowLevel: normal, floating, modal, utility, popup, other, or numeric)
+  - `--close-button`, `--fullscreen-button`, `--minimize-button`, `--zoom-button` (button states: exists, none, enabled, disabled)
 - For subrole matching, "AX" prefix is optional: `--subrole Dialog` matches `AXDialog`
-- Specificity calculation: exact match > prefix/suffix > contains > wildcard
+- Specificity calculation: exact match > prefix/suffix > contains > wildcard; button matchers add fixed specificity
 - Multiple rules can match; each action type uses "first match wins"
 - Floating windows excluded from tiling (`visible_windows_on_display()` filter)
 - Rules applied in `timer_callback` after `sync_pid()` returns new window IDs
