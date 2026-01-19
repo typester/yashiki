@@ -23,7 +23,7 @@ use crate::layout::LayoutEngineManager;
 use crate::macos;
 use crate::macos::{HotkeyManager, ObserverManager, WorkspaceEvent, WorkspaceWatcher};
 use crate::pid;
-use crate::platform::{MacOSWindowManipulator, MacOSWindowSystem, WindowManipulator};
+use crate::platform::{MacOSWindowManipulator, MacOSWindowSystem, WindowManipulator, WindowSystem};
 use yashiki_ipc::{
     BindingInfo, ButtonState, Command, CursorWarpMode, OuterGap, OutputInfo, Response, RuleInfo,
     StateEvent, StateInfo, WindowInfo, WindowLevel, WindowLevelName, WindowLevelOther,
@@ -636,6 +636,63 @@ impl App {
             // Apply pending hotkey binding changes (deferred tap recreation)
             if let Err(e) = ctx.hotkey_manager.borrow_mut().ensure_tap() {
                 tracing::error!("Failed to update hotkey tap: {}", e);
+            }
+
+            // Scan for new windows from apps without observers
+            // This handles apps like Finder that may be running without windows at startup
+            let on_screen_windows = ctx.window_system.get_on_screen_windows();
+            let mut pids_without_observers: Vec<i32> = on_screen_windows
+                .iter()
+                .map(|w| w.pid)
+                .filter(|pid| !ctx.observer_manager.borrow().has_observer(*pid))
+                .collect();
+            pids_without_observers.sort();
+            pids_without_observers.dedup();
+
+            let mut scan_needs_retile = false;
+            for pid in pids_without_observers {
+                tracing::info!(
+                    "Discovered windows from app without observer, adding observer for pid {}",
+                    pid
+                );
+                if let Err(e) = ctx.observer_manager.borrow_mut().add_observer(pid) {
+                    tracing::warn!("Failed to add observer for pid {}: {}", pid, e);
+                }
+
+                let (changed, new_window_ids) =
+                    ctx.state.borrow_mut().sync_pid(&ctx.window_system, pid);
+                if changed {
+                    scan_needs_retile = true;
+                }
+
+                // Apply rules to newly discovered windows and emit events
+                for window_id in new_window_ids {
+                    let effects = ctx.state.borrow_mut().apply_rules_to_new_window(window_id);
+                    if !effects.is_empty() {
+                        let _ = execute_effects(
+                            effects,
+                            &ctx.state,
+                            &ctx.layout_engine_manager,
+                            &ctx.window_manipulator,
+                        );
+                    }
+
+                    // Emit window created event
+                    {
+                        let state = ctx.state.borrow();
+                        if let Some(window) = state.windows.get(&window_id) {
+                            ctx.event_emitter.emit_window_created(window, state.focused);
+                        }
+                    }
+                }
+            }
+
+            if scan_needs_retile {
+                do_retile(
+                    &ctx.state,
+                    &ctx.layout_engine_manager,
+                    &ctx.window_manipulator,
+                );
             }
         }
 

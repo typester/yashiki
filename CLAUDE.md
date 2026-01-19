@@ -319,6 +319,7 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
 - **macos/display.rs** - CGWindowList window enumeration, display info
   - `get_on_screen_windows()` (includes bundle_id), `get_all_displays()` (uses NSScreen visibleFrame)
 - **macos/observer.rs** - AXObserver for window events
+  - `ObserverManager` with `add_observer()`, `remove_observer()`, `has_observer()`
 - **macos/workspace.rs** - NSWorkspace app launch/terminate notifications, display change notifications, `activate_application()`, `get_frontmost_app_pid()`, `get_bundle_id_for_pid()`, `exec_command()`
 - **macos/hotkey.rs** - CGEventTap global hotkeys
   - `HotkeyManager` with dynamic bind/unbind
@@ -348,6 +349,7 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
   - CFRunLoopSource for immediate IPC command processing
   - CFRunLoopSource for immediate hotkey command processing
   - CFRunLoop timer (50ms) for workspace events, observer events, and deferred hotkey tap updates
+  - Periodic window scanning for apps without observers (e.g., Finder with only desktop at startup)
   - Auto-retile on window add/remove
   - Runs init script at startup
   - Effect pattern: `process_command()` (pure) + `execute_effects()` (side effects)

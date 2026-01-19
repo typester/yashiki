@@ -99,6 +99,10 @@ impl ObserverManager {
             tracing::debug!("Removed observer for pid {}", pid);
         }
     }
+
+    pub fn has_observer(&self, pid: i32) -> bool {
+        self.observers.contains_key(&pid)
+    }
 }
 
 extern "C" fn observer_callback(
