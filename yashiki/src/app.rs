@@ -1316,12 +1316,6 @@ fn process_command(
             tracing::info!("Quit command received");
             CommandResult::ok()
         }
-
-        // Unhandled commands
-        _ => {
-            tracing::warn!("Unhandled command: {:?}", cmd);
-            CommandResult::error("Command not yet implemented")
-        }
     }
 }
 
