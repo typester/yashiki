@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/typester/yashiki/compare/yashiki-v0.6.0...yashiki-v0.7.0) - 2026-01-19
+
+### Added
+
+- support "none" matcher for --ax-id and --subrole ([#55](https://github.com/typester/yashiki/pull/55))
+- [**breaking**] manage non-normal layer windows as floating by default ([#53](https://github.com/typester/yashiki/pull/53))
+
+### Fixed
+
+- apply rules immediately on rule-add after init completed ([#54](https://github.com/typester/yashiki/pull/54))
+
 ## [0.6.0](https://github.com/typester/yashiki/compare/yashiki-v0.5.4...yashiki-v0.6.0) - 2026-01-19
 
 ### Added
