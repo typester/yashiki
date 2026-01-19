@@ -210,7 +210,9 @@ yashiki layout-cmd --layout tatami set-inner-gap 10  # Configure specific layout
 ### Utilities
 
 ```sh
-yashiki list-windows             # List all windows
+yashiki list-windows             # List managed windows
+yashiki list-windows --all       # Include ignored windows (popups, tooltips)
+yashiki list-windows --debug     # Show debug info (ax_id, subrole, window_level, buttons)
 yashiki list-outputs             # List all displays
 yashiki get-state                # Get current state
 yashiki exec "open -a Safari"    # Execute command

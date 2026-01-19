@@ -67,6 +67,30 @@ pub fn get_on_screen_windows() -> Vec<WindowInfo> {
     windows
 }
 
+/// Get all on-screen windows without layer filtering.
+/// Used for --all option to include popup/utility windows.
+pub fn get_all_windows_unfiltered() -> Vec<WindowInfo> {
+    let options = kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements;
+    let window_list: CFArray = unsafe {
+        CFArray::wrap_under_create_rule(CGWindowListCopyWindowInfo(options, kCGNullWindowID))
+    };
+
+    let mut windows = Vec::new();
+
+    for i in 0..window_list.len() {
+        let dict_ptr = unsafe { *window_list.get_unchecked(i) };
+        let dict: CFDictionary = unsafe { CFDictionary::wrap_under_get_rule(dict_ptr as *const _) };
+
+        let Some(info) = parse_window_info(&dict) else {
+            continue;
+        };
+
+        windows.push(info);
+    }
+
+    windows
+}
+
 fn parse_window_info(dict: &CFDictionary) -> Option<WindowInfo> {
     let pid = get_number(dict, "kCGWindowOwnerPID")?.to_i32()?;
     let window_id = get_number(dict, "kCGWindowNumber")?.to_i32()? as u32;

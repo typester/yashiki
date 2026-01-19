@@ -95,8 +95,8 @@ yashiki rule-add --close-button none ignore
 # Ghostty Quick Terminal: fullscreen disabled, close enabled
 yashiki rule-add --app-id com.mitchellh.ghostty --fullscreen-button disabled ignore
 
-# Firefox PiP: minimize button is disabled
-yashiki rule-add --app-id org.mozilla.firefox --minimize-button disabled float
+# Firefox PiP: use window-level floating
+yashiki rule-add --app-id org.mozilla.firefox --window-level floating float
 ```
 
 ### Combining Matchers
@@ -266,7 +266,32 @@ Using `>>` (append) allows inspecting multiple windows in sequence. Clear the fi
 
 ### Debugging Window Discovery
 
-To see what windows yashiki discovers and their attributes, run with debug logging:
+#### Using list-windows with Debug Info
+
+The easiest way to inspect window attributes is using `list-windows --debug`:
+
+```sh
+# Show managed windows with debug info (ax_id, subrole, window_level, buttons)
+yashiki list-windows --debug
+
+# Show ALL windows including ignored ones (popups, tooltips)
+yashiki list-windows --all
+
+# Combine both to see everything
+yashiki list-windows --all --debug
+```
+
+This shows output like:
+```
+12345: Firefox (org.mozilla.firefox) - Menu [tags=1, 200x50 @ (100,200)] [ignored]
+  ax_id=None, subrole=AXUnknown, level=normal, close=enabled, fullscreen=enabled, minimize=enabled, zoom=enabled
+```
+
+The `--all` flag is useful for finding ignored windows (like Firefox dropdowns) that you might want to create rules for.
+
+#### Using Debug Logging
+
+For more detailed logs during window discovery, run with debug logging:
 
 ```sh
 RUST_LOG=yashiki=debug yashiki start

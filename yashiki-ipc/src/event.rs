@@ -179,6 +179,14 @@ mod tests {
                 is_focused: false,
                 is_floating: false,
                 is_fullscreen: false,
+                status: None,
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
             }
         }));
         assert!(window_filter.matches(&StateEvent::WindowDestroyed { window_id: 1 }));

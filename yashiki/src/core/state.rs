@@ -459,7 +459,12 @@ impl State {
         // Update existing windows
         for id in current_ids.intersection(&new_ids) {
             if let Some(info) = pid_window_infos.iter().find(|w| w.window_id == *id) {
-                let new_title = info.name.clone().unwrap_or_default();
+                // Fetch extended attributes to get AX title
+                let ext = ws.get_extended_attributes(info.window_id, info.pid, info.layer);
+                let new_title = ext
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| info.name.clone().unwrap_or_default());
                 let new_frame = Rect::from_bounds(&info.bounds);
                 let new_display_id = self.find_display_for_bounds(&info.bounds);
 
@@ -524,12 +529,17 @@ impl State {
         info: &crate::macos::WindowInfo,
         display_id: DisplayId,
     ) -> Option<Window> {
-        let title = info.name.clone().unwrap_or_default();
         let app_name = &info.owner_name;
         let app_id = info.bundle_id.as_deref();
 
         // Fetch extended attributes early for rule matching and debug logging
         let ext = ws.get_extended_attributes(info.window_id, info.pid, info.layer);
+
+        // Use AX title if available, otherwise fall back to CGWindowList name
+        let title = ext
+            .title
+            .clone()
+            .unwrap_or_else(|| info.name.clone().unwrap_or_default());
 
         // Log discovered window at debug level
         tracing::debug!(
@@ -566,6 +576,7 @@ impl State {
 
         // Create Window and set extended attributes
         let mut window = Window::from_window_info(info, self.default_tag, display_id);
+        window.title = title;
         window.ax_id = ext.ax_id;
         window.subrole = ext.subrole;
         window.window_level = ext.window_level;
@@ -648,7 +659,13 @@ impl State {
         for info in window_infos {
             let new_display_id = self.find_display_for_bounds(&info.bounds);
             if let Some(window) = self.windows.get_mut(&info.window_id) {
-                window.title = info.name.clone().unwrap_or_default();
+                // Fetch extended attributes to get AX title
+                let ext = ws.get_extended_attributes(info.window_id, info.pid, info.layer);
+                let new_title = ext
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| info.name.clone().unwrap_or_default());
+                window.title = new_title;
                 window.frame = Rect::from_bounds(&info.bounds);
                 window.display_id = new_display_id;
             }

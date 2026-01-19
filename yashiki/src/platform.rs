@@ -12,6 +12,9 @@ pub struct FocusedWindowInfo {
 /// This abstraction allows mocking in tests.
 pub trait WindowSystem {
     fn get_on_screen_windows(&self) -> Vec<WindowInfo>;
+    /// Get all on-screen windows without layer filtering.
+    /// Used for --all option to include popup/utility windows.
+    fn get_all_windows_unfiltered(&self) -> Vec<WindowInfo>;
     fn get_all_displays(&self) -> Vec<DisplayInfo>;
     fn get_focused_window(&self) -> Option<FocusedWindowInfo>;
     /// Get extended window attributes including window_level and button info.
@@ -29,6 +32,10 @@ pub struct MacOSWindowSystem;
 impl WindowSystem for MacOSWindowSystem {
     fn get_on_screen_windows(&self) -> Vec<WindowInfo> {
         crate::macos::get_on_screen_windows()
+    }
+
+    fn get_all_windows_unfiltered(&self) -> Vec<WindowInfo> {
+        crate::macos::get_all_windows_unfiltered()
     }
 
     fn get_all_displays(&self) -> Vec<DisplayInfo> {
@@ -65,6 +72,7 @@ impl WindowSystem for MacOSWindowSystem {
             if ax_win.window_id() == Some(window_id) {
                 let ax_id = ax_win.identifier().ok();
                 let subrole = ax_win.subrole().ok();
+                let title = ax_win.title().ok();
 
                 let (close_exists, close_enabled) = ax_win.get_close_button_info();
                 let (fullscreen_exists, fullscreen_enabled) = ax_win.get_fullscreen_button_info();
@@ -74,6 +82,7 @@ impl WindowSystem for MacOSWindowSystem {
                 return ExtendedWindowAttributes {
                     ax_id,
                     subrole,
+                    title,
                     window_level: layer,
                     close_button: ButtonInfo::new(close_exists, close_enabled),
                     fullscreen_button: ButtonInfo::new(fullscreen_exists, fullscreen_enabled),
@@ -528,6 +537,11 @@ pub mod mock {
 
     impl WindowSystem for MockWindowSystem {
         fn get_on_screen_windows(&self) -> Vec<WindowInfo> {
+            self.windows.clone()
+        }
+
+        fn get_all_windows_unfiltered(&self) -> Vec<WindowInfo> {
+            // In tests, return all windows (same as get_on_screen_windows for simplicity)
             self.windows.clone()
         }
 

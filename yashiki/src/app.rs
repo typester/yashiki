@@ -27,6 +27,7 @@ use crate::platform::{MacOSWindowManipulator, MacOSWindowSystem, WindowManipulat
 use yashiki_ipc::{
     BindingInfo, ButtonState, Command, CursorWarpMode, OuterGap, OutputInfo, Response, RuleInfo,
     StateEvent, StateInfo, WindowInfo, WindowLevel, WindowLevelName, WindowLevelOther,
+    WindowStatus,
 };
 
 type IpcCommandWithResponse = (Command, mpsc::Sender<Response>);
@@ -363,6 +364,7 @@ impl App {
                     &ctx.state,
                     &ctx.layout_engine_manager,
                     &ctx.hotkey_manager,
+                    &ctx.window_system,
                     &ctx.window_manipulator,
                     &cmd,
                 );
@@ -425,6 +427,7 @@ impl App {
                     &ctx.state,
                     &ctx.layout_engine_manager,
                     &ctx.hotkey_manager,
+                    &ctx.window_system,
                     &ctx.window_manipulator,
                     &cmd,
                 );
@@ -810,27 +813,58 @@ fn process_command(
 ) -> CommandResult {
     match cmd {
         // Query commands - no effects
-        Command::ListWindows => {
-            let windows: Vec<WindowInfo> = state
-                .windows
-                .values()
-                .map(|w| WindowInfo {
-                    id: w.id,
-                    pid: w.pid,
-                    title: w.title.clone(),
-                    app_name: w.app_name.clone(),
-                    app_id: w.app_id.clone(),
-                    tags: w.tags.mask(),
-                    x: w.frame.x,
-                    y: w.frame.y,
-                    width: w.frame.width,
-                    height: w.frame.height,
-                    is_focused: state.focused == Some(w.id),
-                    is_floating: w.is_floating,
-                    is_fullscreen: w.is_fullscreen,
-                })
-                .collect();
-            CommandResult::with_response(Response::Windows { windows })
+        Command::ListWindows { all, debug } => {
+            // For all=true, we need system access - handled specially in handle_ipc_command
+            // For all=false, we can use state data only
+            if *all {
+                // Return a marker response; handle_ipc_command will intercept this
+                CommandResult::with_response(Response::Windows { windows: vec![] })
+            } else {
+                let windows: Vec<WindowInfo> = state
+                    .windows
+                    .values()
+                    .map(|w| WindowInfo {
+                        id: w.id,
+                        pid: w.pid,
+                        title: w.title.clone(),
+                        app_name: w.app_name.clone(),
+                        app_id: w.app_id.clone(),
+                        tags: w.tags.mask(),
+                        x: w.frame.x,
+                        y: w.frame.y,
+                        width: w.frame.width,
+                        height: w.frame.height,
+                        is_focused: state.focused == Some(w.id),
+                        is_floating: w.is_floating,
+                        is_fullscreen: w.is_fullscreen,
+                        status: None,
+                        ax_id: if *debug { w.ax_id.clone() } else { None },
+                        subrole: if *debug { w.subrole.clone() } else { None },
+                        window_level: if *debug { Some(w.window_level) } else { None },
+                        close_button: if *debug {
+                            Some(w.close_button.clone())
+                        } else {
+                            None
+                        },
+                        fullscreen_button: if *debug {
+                            Some(w.fullscreen_button.clone())
+                        } else {
+                            None
+                        },
+                        minimize_button: if *debug {
+                            Some(w.minimize_button.clone())
+                        } else {
+                            None
+                        },
+                        zoom_button: if *debug {
+                            Some(w.zoom_button.clone())
+                        } else {
+                            None
+                        },
+                    })
+                    .collect();
+                CommandResult::with_response(Response::Windows { windows })
+            }
         }
         Command::ListOutputs => {
             let outputs: Vec<OutputInfo> = state
@@ -1428,13 +1462,19 @@ fn execute_effects<M: WindowManipulator>(
 
 /// Main entry point for handling IPC commands.
 /// This function orchestrates process_command and execute_effects.
-fn handle_ipc_command<M: WindowManipulator>(
+fn handle_ipc_command<S: WindowSystem, M: WindowManipulator>(
     state: &RefCell<State>,
     layout_engine_manager: &RefCell<LayoutEngineManager>,
     hotkey_manager: &RefCell<HotkeyManager>,
+    window_system: &S,
     manipulator: &M,
     cmd: &Command,
 ) -> Response {
+    // Handle ListWindows with all=true specially (requires system query)
+    if let Command::ListWindows { all: true, debug } = cmd {
+        return list_all_windows(state, window_system, *debug);
+    }
+
     let result = process_command(
         &mut state.borrow_mut(),
         &mut hotkey_manager.borrow_mut(),
@@ -1446,6 +1486,101 @@ fn handle_ipc_command<M: WindowManipulator>(
     }
 
     result.response
+}
+
+/// List all system windows (managed and ignored) for --all option
+fn list_all_windows<S: WindowSystem>(
+    state: &RefCell<State>,
+    window_system: &S,
+    debug: bool,
+) -> Response {
+    let state = state.borrow();
+    let system_windows = window_system.get_all_windows_unfiltered();
+
+    let mut windows: Vec<WindowInfo> = Vec::new();
+
+    for sys_win in &system_windows {
+        // Check if this window is managed (in state)
+        if let Some(w) = state.windows.get(&sys_win.window_id) {
+            // Managed window - use state data
+            windows.push(WindowInfo {
+                id: w.id,
+                pid: w.pid,
+                title: w.title.clone(),
+                app_name: w.app_name.clone(),
+                app_id: w.app_id.clone(),
+                tags: w.tags.mask(),
+                x: w.frame.x,
+                y: w.frame.y,
+                width: w.frame.width,
+                height: w.frame.height,
+                is_focused: state.focused == Some(w.id),
+                is_floating: w.is_floating,
+                is_fullscreen: w.is_fullscreen,
+                status: Some(WindowStatus::Managed),
+                ax_id: if debug { w.ax_id.clone() } else { None },
+                subrole: if debug { w.subrole.clone() } else { None },
+                window_level: if debug { Some(w.window_level) } else { None },
+                close_button: if debug {
+                    Some(w.close_button.clone())
+                } else {
+                    None
+                },
+                fullscreen_button: if debug {
+                    Some(w.fullscreen_button.clone())
+                } else {
+                    None
+                },
+                minimize_button: if debug {
+                    Some(w.minimize_button.clone())
+                } else {
+                    None
+                },
+                zoom_button: if debug {
+                    Some(w.zoom_button.clone())
+                } else {
+                    None
+                },
+            });
+        } else {
+            // Ignored window - use system window info, query extended attrs if debug
+            let ext_attrs = if debug {
+                Some(window_system.get_extended_attributes(
+                    sys_win.window_id,
+                    sys_win.pid,
+                    sys_win.layer,
+                ))
+            } else {
+                None
+            };
+
+            windows.push(WindowInfo {
+                id: sys_win.window_id,
+                pid: sys_win.pid,
+                title: sys_win.name.clone().unwrap_or_default(),
+                app_name: sys_win.owner_name.clone(),
+                app_id: sys_win.bundle_id.clone(),
+                tags: 0,
+                x: sys_win.bounds.x as i32,
+                y: sys_win.bounds.y as i32,
+                width: sys_win.bounds.width as u32,
+                height: sys_win.bounds.height as u32,
+                is_focused: false,
+                is_floating: false,
+                is_fullscreen: false,
+                status: Some(WindowStatus::Ignored),
+                ax_id: ext_attrs.as_ref().and_then(|a| a.ax_id.clone()),
+                subrole: ext_attrs.as_ref().and_then(|a| a.subrole.clone()),
+                window_level: ext_attrs.as_ref().map(|a| a.window_level),
+                close_button: ext_attrs.as_ref().map(|a| a.close_button.clone()),
+                fullscreen_button: ext_attrs.as_ref().map(|a| a.fullscreen_button.clone()),
+                minimize_button: ext_attrs.as_ref().map(|a| a.minimize_button.clone()),
+                zoom_button: ext_attrs.as_ref().map(|a| a.zoom_button.clone()),
+            });
+        }
+    }
+
+    Response::Windows { windows }
 }
 
 fn do_retile<M: WindowManipulator>(
@@ -1850,7 +1985,14 @@ mod tests {
         let (mut state, mut hotkey_manager) = setup_state();
 
         // ListWindows
-        let result = process_command(&mut state, &mut hotkey_manager, &Command::ListWindows);
+        let result = process_command(
+            &mut state,
+            &mut hotkey_manager,
+            &Command::ListWindows {
+                all: false,
+                debug: false,
+            },
+        );
         assert!(result.effects.is_empty());
         assert!(matches!(result.response, Response::Windows { .. }));
 
@@ -1868,6 +2010,61 @@ mod tests {
         let result = process_command(&mut state, &mut hotkey_manager, &Command::ListBindings);
         assert!(result.effects.is_empty());
         assert!(matches!(result.response, Response::Bindings { .. }));
+    }
+
+    #[test]
+    fn test_list_windows_with_debug_includes_debug_fields() {
+        let (mut state, mut hotkey_manager) = setup_state();
+
+        let result = process_command(
+            &mut state,
+            &mut hotkey_manager,
+            &Command::ListWindows {
+                all: false,
+                debug: true,
+            },
+        );
+
+        assert!(result.effects.is_empty());
+
+        if let Response::Windows { windows } = result.response {
+            assert!(!windows.is_empty());
+            // Debug fields should be populated when debug=true
+            let first_window = &windows[0];
+            // window_level should be Some when debug=true
+            assert!(first_window.window_level.is_some());
+            // close_button should be Some when debug=true
+            assert!(first_window.close_button.is_some());
+            // Status should be None for non-all mode
+            assert!(first_window.status.is_none());
+        } else {
+            panic!("Expected Response::Windows");
+        }
+    }
+
+    #[test]
+    fn test_list_windows_all_true_returns_empty_marker() {
+        let (mut state, mut hotkey_manager) = setup_state();
+
+        // When all=true, process_command returns an empty marker
+        // (the actual implementation happens in handle_ipc_command with system access)
+        let result = process_command(
+            &mut state,
+            &mut hotkey_manager,
+            &Command::ListWindows {
+                all: true,
+                debug: false,
+            },
+        );
+
+        assert!(result.effects.is_empty());
+
+        if let Response::Windows { windows } = result.response {
+            // Empty marker - actual implementation is in handle_ipc_command
+            assert!(windows.is_empty());
+        } else {
+            panic!("Expected Response::Windows");
+        }
     }
 
     #[test]
