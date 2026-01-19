@@ -776,6 +776,7 @@ fn run_init_script() {
         Some(dir) => dir.join(".config").join("yashiki"),
         None => {
             tracing::warn!("Could not determine home directory");
+            send_apply_rules(true);
             return;
         }
     };
@@ -783,15 +784,14 @@ fn run_init_script() {
     let init_script = config_dir.join("init");
     if !init_script.exists() {
         tracing::debug!("No init script found at {:?}", init_script);
+        send_apply_rules(true);
         return;
     }
 
     tracing::info!("Running init script: {:?}", init_script);
 
-    // Small delay to ensure IPC server is ready
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    // Add yashiki's directory to PATH so init script can use `yashiki` command
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()));
@@ -812,13 +812,6 @@ fn run_init_script() {
             let elapsed = start.elapsed();
             if status.success() {
                 tracing::info!("Init script completed in {:.2?}", elapsed);
-                // Apply rules to existing windows after init script completes
-                if let Ok(mut client) = crate::ipc::IpcClient::connect() {
-                    match client.send(&Command::ApplyRules) {
-                        Ok(_) => tracing::info!("Applied rules to existing windows"),
-                        Err(e) => tracing::warn!("Failed to apply rules: {}", e),
-                    }
-                }
             } else {
                 tracing::warn!(
                     "Init script exited with status: {} (took {:.2?})",
@@ -831,6 +824,41 @@ fn run_init_script() {
             tracing::error!("Failed to run init script: {}", e);
         }
     }
+
+    send_apply_rules(false);
+}
+
+fn send_apply_rules(needs_delay: bool) {
+    if needs_delay {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    if let Ok(mut client) = crate::ipc::IpcClient::connect() {
+        match client.send(&Command::ApplyRules) {
+            Ok(_) => tracing::info!("Applied rules to existing windows"),
+            Err(e) => tracing::warn!("Failed to apply rules: {}", e),
+        }
+    }
+}
+
+fn apply_rules_effects(state: &mut State) -> Vec<Effect> {
+    let (affected_displays, mut effects, _removed_window_ids) = state.apply_rules_to_all_windows();
+
+    let mut all_moves = Vec::new();
+    for display_id in &affected_displays {
+        let moves = state.compute_layout_changes(*display_id);
+        all_moves.extend(moves);
+    }
+
+    if !all_moves.is_empty() {
+        effects.insert(0, Effect::ApplyWindowMoves(all_moves));
+    }
+
+    if !affected_displays.is_empty() {
+        effects.push(Effect::RetileDisplays(affected_displays));
+    }
+
+    effects
 }
 
 /// Pure function: processes a command and returns a response with effects.
@@ -1277,7 +1305,12 @@ fn process_command(
         // Rules
         Command::RuleAdd { rule } => {
             state.add_rule(rule.clone());
-            CommandResult::ok()
+
+            if state.init_completed {
+                CommandResult::ok_with_effects(apply_rules_effects(state))
+            } else {
+                CommandResult::ok()
+            }
         }
         Command::RuleDel { matcher, action } => {
             if state.remove_rule(matcher, action) {
@@ -1327,29 +1360,9 @@ fn process_command(
             CommandResult::with_response(Response::Rules { rules })
         }
         Command::ApplyRules => {
-            // Apply rules to all existing windows
-            let (affected_displays, mut effects, _removed_window_ids) =
-                state.apply_rules_to_all_windows();
-
-            // For each affected display, compute window hide/show moves
-            let mut all_moves = Vec::new();
-            for display_id in &affected_displays {
-                let moves = state.compute_layout_changes(*display_id);
-                all_moves.extend(moves);
-            }
-
-            // Prepend window moves to effects
-            if !all_moves.is_empty() {
-                effects.insert(0, Effect::ApplyWindowMoves(all_moves));
-            }
-
-            // Add retile for affected displays
-            if !affected_displays.is_empty() {
-                effects.push(Effect::RetileDisplays(affected_displays));
-            }
-
+            state.init_completed = true;
             tracing::info!("Applied rules to all existing windows");
-            CommandResult::ok_with_effects(effects)
+            CommandResult::ok_with_effects(apply_rules_effects(state))
         }
 
         // Cursor warp
