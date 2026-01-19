@@ -51,6 +51,7 @@ pub struct State {
     pub rules: Vec<WindowRule>,
     pub cursor_warp: CursorWarpMode,
     pub outer_gap: OuterGap,
+    pub init_completed: bool,
 }
 
 impl State {
@@ -67,6 +68,7 @@ impl State {
             rules: Vec::new(),
             cursor_warp: CursorWarpMode::default(),
             outer_gap: OuterGap::default(),
+            init_completed: false,
         }
     }
 
