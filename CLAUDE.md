@@ -575,6 +575,8 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
 - `Effect::FocusWindow` includes `is_output_change: bool` to distinguish output changes
 
 ### Window Rules
+- **Default tag assignment**: New windows inherit the display's current `visible_tags` (like river/awesomewm)
+  - Rules with `tags N` action override this default
 - Rules stored in `State.rules: Vec<WindowRule>`
 - Rules sorted by specificity (more specific rules first)
 - Matching options:

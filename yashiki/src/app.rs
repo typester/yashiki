@@ -497,6 +497,40 @@ impl App {
                         if let Err(e) = ctx.observer_manager.borrow_mut().add_observer(pid) {
                             tracing::warn!("Failed to add observer for pid {}: {}", pid, e);
                         }
+
+                        // Sync windows for this pid immediately after adding observer
+                        let (changed, new_window_ids) =
+                            ctx.state.borrow_mut().sync_pid(&ctx.window_system, pid);
+
+                        // Apply rules to newly discovered windows and emit events
+                        for window_id in new_window_ids {
+                            let effects =
+                                ctx.state.borrow_mut().apply_rules_to_new_window(window_id);
+                            if !effects.is_empty() {
+                                let _ = execute_effects(
+                                    effects,
+                                    &ctx.state,
+                                    &ctx.layout_engine_manager,
+                                    &ctx.window_manipulator,
+                                );
+                            }
+
+                            // Emit window created event
+                            {
+                                let state = ctx.state.borrow();
+                                if let Some(window) = state.windows.get(&window_id) {
+                                    ctx.event_emitter.emit_window_created(window, state.focused);
+                                }
+                            }
+                        }
+
+                        if changed {
+                            do_retile(
+                                &ctx.state,
+                                &ctx.layout_engine_manager,
+                                &ctx.window_manipulator,
+                            );
+                        }
                     }
                     WorkspaceEvent::AppTerminated { pid } => {
                         tracing::info!("App terminated, removing observer for pid {}", pid);
@@ -574,6 +608,51 @@ impl App {
                     event,
                     Event::FocusedWindowChanged | Event::ApplicationActivated { .. }
                 );
+
+                // For ApplicationActivated, sync windows if none exist for this pid.
+                // This handles cases where AppLaunched event was missed.
+                if let Event::ApplicationActivated { pid } = &event {
+                    if !ctx.state.borrow().has_windows_for_pid(*pid) {
+                        // Ensure observer exists
+                        if !ctx.observer_manager.borrow().has_observer(*pid) {
+                            tracing::info!(
+                                "Adding missing observer for activated app pid {}",
+                                *pid
+                            );
+                            let _ = ctx.observer_manager.borrow_mut().add_observer(*pid);
+                        }
+
+                        // Sync windows for this pid
+                        tracing::info!("Syncing windows for activated app pid {}", *pid);
+                        let (changed, new_window_ids) =
+                            ctx.state.borrow_mut().sync_pid(&ctx.window_system, *pid);
+
+                        if changed {
+                            needs_retile = true;
+                        }
+
+                        // Apply rules to new windows
+                        for window_id in new_window_ids {
+                            let effects =
+                                ctx.state.borrow_mut().apply_rules_to_new_window(window_id);
+                            if !effects.is_empty() {
+                                let _ = execute_effects(
+                                    effects,
+                                    &ctx.state,
+                                    &ctx.layout_engine_manager,
+                                    &ctx.window_manipulator,
+                                );
+                            }
+                            // Emit window created event
+                            {
+                                let state = ctx.state.borrow();
+                                if let Some(window) = state.windows.get(&window_id) {
+                                    ctx.event_emitter.emit_window_created(window, state.focused);
+                                }
+                            }
+                        }
+                    }
+                }
 
                 let (changed, new_window_ids) = ctx
                     .state
@@ -1372,6 +1451,11 @@ fn execute_effects<M: WindowManipulator>(
                 is_output_change,
             } => {
                 manipulator.focus_window(window_id, pid);
+
+                // Update state.focused immediately after focusing
+                // This ensures consecutive focus commands work correctly
+                // even if accessibility events are delayed or missing
+                state.borrow_mut().set_focused(Some(window_id));
 
                 // Warp cursor based on cursor_warp mode
                 let cursor_warp_mode = state.borrow().cursor_warp;

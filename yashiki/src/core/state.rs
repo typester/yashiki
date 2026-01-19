@@ -152,6 +152,11 @@ impl State {
             .unwrap_or(Tag::new(1))
     }
 
+    /// Check if we have any managed windows for a given PID
+    pub fn has_windows_for_pid(&self, pid: i32) -> bool {
+        self.windows.values().any(|w| w.pid == pid)
+    }
+
     pub fn resolve_output(&self, spec: &OutputSpecifier) -> Option<DisplayId> {
         match spec {
             OutputSpecifier::Id(id) => {
@@ -574,8 +579,16 @@ impl State {
             return None;
         }
 
+        // Use the display's visible_tags instead of default_tag
+        // This ensures new windows appear on the currently visible tag
+        let initial_tag = self
+            .displays
+            .get(&display_id)
+            .map(|d| d.visible_tags)
+            .unwrap_or(self.default_tag);
+
         // Create Window and set extended attributes
-        let mut window = Window::from_window_info(info, self.default_tag, display_id);
+        let mut window = Window::from_window_info(info, initial_tag, display_id);
         window.title = title;
         window.ax_id = ext.ax_id;
         window.subrole = ext.subrole;
