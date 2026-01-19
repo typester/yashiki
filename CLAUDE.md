@@ -44,7 +44,10 @@ Layout engine naming convention: `yashiki-layout-<name>` (e.g., `yashiki-layout-
   - Commands are queued via mpsc channel
   - `CFRunLoopSourceSignal` + `CFRunLoopWakeUp` wakes up main thread immediately
   - No polling delay for IPC command processing
-- Hotkey commands: CGEventTap callback → main thread via `std::sync::mpsc`
+- Hotkey commands: CGEventTap callback → main thread via `std::sync::mpsc` + `CFRunLoopSource`
+  - Commands are queued via mpsc channel
+  - `CFRunLoopSourceSignal` triggers immediate processing (no `CFRunLoopWakeUp` needed - same thread)
+  - No polling delay for hotkey command processing
 - Layout engine: stdin/stdout JSON (synchronous, from main thread)
 
 ### Virtual Workspaces (No SIP Required)
@@ -320,6 +323,7 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
 - **macos/hotkey.rs** - CGEventTap global hotkeys
   - `HotkeyManager` with dynamic bind/unbind
   - Deferred tap recreation via dirty flag (batches multiple bind/unbind calls)
+  - Signals CFRunLoopSource for immediate command processing
 - **core/display.rs** - Display struct with visible_tags per display
 - **core/state.rs** - Window and display state management
   - Multi-monitor: `displays`, `focused_display`, per-display visible_tags
@@ -342,7 +346,8 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
   - `LayoutEngineManager` manages multiple engines with lazy spawning
 - **app.rs** - Main event loop with CFRunLoop
   - CFRunLoopSource for immediate IPC command processing
-  - CFRunLoop timer (50ms) for hotkey commands, workspace events, observer events, and deferred hotkey tap updates
+  - CFRunLoopSource for immediate hotkey command processing
+  - CFRunLoop timer (50ms) for workspace events, observer events, and deferred hotkey tap updates
   - Auto-retile on window add/remove
   - Runs init script at startup
   - Effect pattern: `process_command()` (pure) + `execute_effects()` (side effects)
@@ -481,6 +486,13 @@ Each group should be sorted alphabetically. Module declarations (`mod`, `pub mod
 - `ensure_tap()` called in timer callback (50ms interval) recreates tap only if dirty
 - This batches multiple bind/unbind calls during init script execution
 - No Mutex needed - tap callback gets owned clone of bindings
+
+### Hotkey Immediate Processing
+- CGEventTap callback signals CFRunLoopSource after sending command to channel
+- CFRunLoopSource callback processes commands immediately (no polling delay)
+- Only `CFRunLoopSourceSignal` is needed (no `CFRunLoopWakeUp`) because CGEventTap runs on main thread
+- `HotkeyManager` holds `Arc<AtomicPtr<c_void>>` to share source pointer with tap callback
+- Source pointer is set after CFRunLoopSource is created and registered
 
 ### Focus Direction
 Implemented in core (layout-agnostic):

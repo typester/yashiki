@@ -1,7 +1,10 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopSource};
+use core_foundation_sys::runloop::{CFRunLoopSourceRef, CFRunLoopSourceSignal};
 use core_graphics::event::{
     CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventType, CallbackResult, EventField,
@@ -73,15 +76,20 @@ pub struct HotkeyManager {
     command_tx: mpsc::Sender<Command>,
     tap: Option<HotkeyTap>,
     dirty: bool,
+    runloop_source: Arc<AtomicPtr<std::ffi::c_void>>,
 }
 
 impl HotkeyManager {
-    pub fn new(command_tx: mpsc::Sender<Command>) -> Self {
+    pub fn new(
+        command_tx: mpsc::Sender<Command>,
+        runloop_source: Arc<AtomicPtr<std::ffi::c_void>>,
+    ) -> Self {
         Self {
             bindings: HashMap::new(),
             command_tx,
             tap: None,
             dirty: false,
+            runloop_source,
         }
     }
 
@@ -129,6 +137,7 @@ impl HotkeyManager {
     fn create_tap(&self) -> Result<HotkeyTap, String> {
         let bindings = self.bindings.clone();
         let tx = self.command_tx.clone();
+        let source = Arc::clone(&self.runloop_source);
 
         let tap = CGEventTap::new(
             CGEventTapLocation::Session,
@@ -156,6 +165,13 @@ impl HotkeyManager {
                     tracing::debug!("Hotkey matched: {:?} -> {:?}", hotkey, command);
                     if tx.send(command).is_err() {
                         tracing::error!("Failed to send command from hotkey");
+                    }
+                    // Signal CFRunLoopSource for immediate processing
+                    let source_ptr = source.load(Ordering::Acquire);
+                    if !source_ptr.is_null() {
+                        unsafe {
+                            CFRunLoopSourceSignal(source_ptr as CFRunLoopSourceRef);
+                        }
                     }
                     return CallbackResult::Drop;
                 }
