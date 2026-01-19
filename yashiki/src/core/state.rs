@@ -1108,6 +1108,7 @@ impl State {
 
     /// Check if a window should be ignored based on ignore rules.
     /// Returns true if any RuleAction::Ignore rule matches.
+    #[cfg(test)]
     pub fn should_ignore_window(
         &self,
         app_name: &str,
@@ -1141,24 +1142,6 @@ impl State {
     }
 
     /// Get all rules that match a window
-    pub fn get_matching_rules(
-        &self,
-        app_name: &str,
-        app_id: Option<&str>,
-        title: &str,
-        ax_id: Option<&str>,
-        subrole: Option<&str>,
-    ) -> Vec<&WindowRule> {
-        let ext = ExtendedWindowAttributes {
-            ax_id: ax_id.map(|s| s.to_string()),
-            subrole: subrole.map(|s| s.to_string()),
-            window_level: 0,
-            ..Default::default()
-        };
-        self.get_matching_rules_extended(app_name, app_id, title, &ext)
-    }
-
-    /// Get all rules that match a window (extended version)
     pub fn get_matching_rules_extended(
         &self,
         app_name: &str,
@@ -1173,24 +1156,6 @@ impl State {
     }
 
     /// Apply matching rules to a window and return effects to execute.
-    pub fn apply_rules_to_window(
-        &self,
-        app_name: &str,
-        app_id: Option<&str>,
-        title: &str,
-        ax_id: Option<&str>,
-        subrole: Option<&str>,
-    ) -> RuleApplicationResult {
-        let ext = ExtendedWindowAttributes {
-            ax_id: ax_id.map(|s| s.to_string()),
-            subrole: subrole.map(|s| s.to_string()),
-            window_level: 0,
-            ..Default::default()
-        };
-        self.apply_rules_to_window_extended(app_name, app_id, title, &ext)
-    }
-
-    /// Apply matching rules to a window and return effects to execute (extended version).
     pub fn apply_rules_to_window_extended(
         &self,
         app_name: &str,

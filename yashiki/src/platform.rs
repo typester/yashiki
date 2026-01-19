@@ -13,9 +13,6 @@ pub trait WindowSystem {
     fn get_on_screen_windows(&self) -> Vec<WindowInfo>;
     fn get_all_displays(&self) -> Vec<DisplayInfo>;
     fn get_focused_window(&self) -> Option<FocusedWindowInfo>;
-    /// Get AXIdentifier and AXSubrole attributes for a window.
-    /// Returns (ax_id, subrole) if successful.
-    fn get_ax_attributes(&self, window_id: u32, pid: i32) -> (Option<String>, Option<String>);
     /// Get extended window attributes including window_level and button info.
     fn get_extended_attributes(
         &self,
@@ -44,24 +41,6 @@ impl WindowSystem for MacOSWindowSystem {
                 .map(|id| FocusedWindowInfo { window_id: id }),
             Err(_) => None,
         }
-    }
-
-    fn get_ax_attributes(&self, window_id: u32, pid: i32) -> (Option<String>, Option<String>) {
-        let app = AXUIElement::application(pid);
-        let ax_windows = match app.windows() {
-            Ok(w) => w,
-            Err(_) => return (None, None),
-        };
-
-        for ax_win in ax_windows {
-            if ax_win.window_id() == Some(window_id) {
-                let ax_id = ax_win.identifier().ok();
-                let subrole = ax_win.subrole().ok();
-                return (ax_id, subrole);
-            }
-        }
-
-        (None, None)
     }
 
     fn get_extended_attributes(
@@ -560,15 +539,6 @@ pub mod mock {
                 .map(|id| FocusedWindowInfo { window_id: id })
         }
 
-        fn get_ax_attributes(
-            &self,
-            _window_id: u32,
-            _pid: i32,
-        ) -> (Option<String>, Option<String>) {
-            // In tests, return None for AX attributes by default
-            (None, None)
-        }
-
         fn get_extended_attributes(
             &self,
             _window_id: u32,
@@ -622,32 +592,6 @@ pub mod mock {
             name: Some(format!("{} Window", owner_name)),
             owner_name: owner_name.to_string(),
             bundle_id: None,
-            bounds: Bounds {
-                x,
-                y,
-                width,
-                height,
-            },
-            layer: 0,
-        }
-    }
-
-    pub fn create_test_window_with_bundle_id(
-        window_id: u32,
-        pid: i32,
-        owner_name: &str,
-        bundle_id: Option<&str>,
-        x: f64,
-        y: f64,
-        width: f64,
-        height: f64,
-    ) -> WindowInfo {
-        WindowInfo {
-            pid,
-            window_id,
-            name: Some(format!("{} Window", owner_name)),
-            owner_name: owner_name.to_string(),
-            bundle_id: bundle_id.map(|s| s.to_string()),
             bounds: Bounds {
                 x,
                 y,
