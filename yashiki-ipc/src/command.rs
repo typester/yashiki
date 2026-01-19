@@ -143,10 +143,26 @@ impl GlobPattern {
         }
     }
 
+    /// Check if the pattern matches an optional string value.
+    /// Special case: pattern "none" matches when value is None.
+    pub fn matches_optional(&self, value: Option<&str>) -> bool {
+        if self.0.eq_ignore_ascii_case("none") {
+            value.is_none()
+        } else {
+            value.map(|v| self.matches(v)).unwrap_or(false)
+        }
+    }
+
     /// Get the specificity of this pattern. Higher is more specific.
     /// Exact match > prefix/suffix > contains > wildcard only
+    /// Special case: "none" has low specificity (1) since it's a broad match
     pub fn specificity(&self) -> u32 {
         let pattern = &self.0;
+
+        // Special case: "none" matches absence of value - low specificity
+        if pattern.eq_ignore_ascii_case("none") {
+            return 1;
+        }
 
         if !pattern.contains('*') {
             // Exact match - highest specificity (length * 4)
@@ -334,6 +350,7 @@ impl RuleMatcher {
 
     /// Check if this matcher matches the given window attributes including extended attrs.
     /// For subrole matching, the "AX" prefix is optional in both pattern and value.
+    /// For ax_id and subrole, "none" pattern matches when the attribute is absent.
     pub fn matches_extended(
         &self,
         app_name: &str,
@@ -359,17 +376,12 @@ impl RuleMatcher {
         let ax_id_matches = self
             .ax_id
             .as_ref()
-            .map(|p| ext.ax_id.as_ref().map(|id| p.matches(id)).unwrap_or(false))
+            .map(|p| p.matches_optional(ext.ax_id.as_deref()))
             .unwrap_or(true);
         let subrole_matches = self
             .subrole
             .as_ref()
-            .map(|p| {
-                ext.subrole
-                    .as_ref()
-                    .map(|sr| Self::subrole_matches(p, sr))
-                    .unwrap_or(false)
-            })
+            .map(|p| Self::subrole_matches_optional(p, ext.subrole.as_deref()))
             .unwrap_or(true);
 
         // Window level check
@@ -424,6 +436,16 @@ impl RuleMatcher {
         let normalized_pattern = Self::strip_ax_prefix(pattern.pattern());
         let normalized_value = Self::strip_ax_prefix(value);
         GlobPattern::new(normalized_pattern).matches(&normalized_value)
+    }
+
+    /// Match subrole with "AX" prefix normalization, supporting "none" for absent values.
+    fn subrole_matches_optional(pattern: &GlobPattern, value: Option<&str>) -> bool {
+        if pattern.0.eq_ignore_ascii_case("none") {
+            return value.is_none();
+        }
+        value
+            .map(|sr| Self::subrole_matches(pattern, sr))
+            .unwrap_or(false)
     }
 
     /// Strip "AX" prefix if present (case-insensitive)
@@ -1719,5 +1741,154 @@ mod tests {
             }
             _ => panic!("Wrong variant"),
         }
+    }
+
+    #[test]
+    fn test_glob_pattern_matches_optional_none() {
+        let pattern = GlobPattern::new("none");
+
+        // "none" pattern matches when value is None
+        assert!(pattern.matches_optional(None));
+        // "none" pattern does NOT match when value is Some
+        assert!(!pattern.matches_optional(Some("SomeValue")));
+        assert!(!pattern.matches_optional(Some("none"))); // literal "none" string
+        assert!(!pattern.matches_optional(Some("")));
+    }
+
+    #[test]
+    fn test_glob_pattern_matches_optional_none_case_insensitive() {
+        // "none" matching is case-insensitive
+        let pattern_lower = GlobPattern::new("none");
+        let pattern_upper = GlobPattern::new("NONE");
+        let pattern_mixed = GlobPattern::new("NoNe");
+
+        assert!(pattern_lower.matches_optional(None));
+        assert!(pattern_upper.matches_optional(None));
+        assert!(pattern_mixed.matches_optional(None));
+    }
+
+    #[test]
+    fn test_glob_pattern_matches_optional_regular_patterns() {
+        let exact = GlobPattern::new("Dialog");
+        let wildcard = GlobPattern::new("*Dialog*");
+
+        // Regular patterns match Some values normally
+        assert!(exact.matches_optional(Some("Dialog")));
+        assert!(exact.matches_optional(Some("dialog"))); // case insensitive
+        assert!(!exact.matches_optional(Some("AXDialog")));
+        assert!(!exact.matches_optional(None));
+
+        assert!(wildcard.matches_optional(Some("AXDialog")));
+        assert!(wildcard.matches_optional(Some("DialogBox")));
+        assert!(!wildcard.matches_optional(None));
+    }
+
+    #[test]
+    fn test_glob_pattern_none_specificity() {
+        let none_pattern = GlobPattern::new("none");
+        let wildcard = GlobPattern::new("*");
+        let exact = GlobPattern::new("Dialog");
+        let contains = GlobPattern::new("*Dialog*");
+
+        // "none" should have low specificity (1), higher than wildcard (0)
+        assert_eq!(none_pattern.specificity(), 1);
+        assert_eq!(wildcard.specificity(), 0);
+        assert!(none_pattern.specificity() > wildcard.specificity());
+        assert!(none_pattern.specificity() < exact.specificity());
+        assert!(none_pattern.specificity() < contains.specificity());
+    }
+
+    #[test]
+    fn test_rule_matcher_ax_id_none() {
+        let matcher = RuleMatcher::with_all(
+            Some(GlobPattern::new("Outlook")),
+            None,
+            None,
+            Some(GlobPattern::new("none")),
+            None,
+        );
+
+        // Matches when ax_id is None
+        assert!(matcher.matches("Outlook", None, "", None, None));
+        // Does NOT match when ax_id has a value
+        assert!(!matcher.matches("Outlook", None, "", Some("some.identifier"), None));
+    }
+
+    #[test]
+    fn test_rule_matcher_subrole_none() {
+        let matcher = RuleMatcher::with_all(
+            Some(GlobPattern::new("Outlook")),
+            None,
+            None,
+            None,
+            Some(GlobPattern::new("none")),
+        );
+
+        // Matches when subrole is None
+        assert!(matcher.matches("Outlook", None, "", None, None));
+        // Does NOT match when subrole has a value
+        assert!(!matcher.matches("Outlook", None, "", None, Some("AXDialog")));
+    }
+
+    #[test]
+    fn test_rule_matcher_ax_id_and_subrole_none() {
+        // Rule that matches windows with BOTH ax_id and subrole absent
+        let matcher = RuleMatcher::with_all(
+            Some(GlobPattern::new("Outlook")),
+            Some(GlobPattern::new("com.microsoft.Outlook")),
+            None,
+            Some(GlobPattern::new("none")),
+            Some(GlobPattern::new("none")),
+        );
+
+        // Matches when both are None
+        assert!(matcher.matches("Outlook", Some("com.microsoft.Outlook"), "", None, None));
+        // Does NOT match when ax_id has a value
+        assert!(!matcher.matches(
+            "Outlook",
+            Some("com.microsoft.Outlook"),
+            "",
+            Some("some.id"),
+            None
+        ));
+        // Does NOT match when subrole has a value
+        assert!(!matcher.matches(
+            "Outlook",
+            Some("com.microsoft.Outlook"),
+            "",
+            None,
+            Some("AXDialog")
+        ));
+        // Does NOT match when both have values
+        assert!(!matcher.matches(
+            "Outlook",
+            Some("com.microsoft.Outlook"),
+            "",
+            Some("some.id"),
+            Some("AXDialog")
+        ));
+    }
+
+    #[test]
+    fn test_rule_matcher_none_specificity() {
+        // Rule with "none" patterns should have lower specificity than exact patterns
+        let none_rule = RuleMatcher::with_all(
+            Some(GlobPattern::new("Outlook")),
+            None,
+            None,
+            Some(GlobPattern::new("none")),
+            Some(GlobPattern::new("none")),
+        );
+
+        let exact_rule = RuleMatcher::with_all(
+            Some(GlobPattern::new("Outlook")),
+            None,
+            None,
+            Some(GlobPattern::new("com.specific.identifier")),
+            Some(GlobPattern::new("AXDialog")),
+        );
+
+        // Exact patterns should be more specific
+        assert!(exact_rule.specificity() > none_rule.specificity());
     }
 }

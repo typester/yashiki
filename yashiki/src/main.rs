@@ -355,10 +355,10 @@ struct RuleAddCmd {
     /// window title pattern (glob)
     #[argh(option)]
     title: Option<String>,
-    /// AXIdentifier pattern (glob, e.g., "com.mitchellh.ghostty.quickTerminal")
+    /// AXIdentifier pattern (glob, "none" matches absent)
     #[argh(option)]
     ax_id: Option<String>,
-    /// AXSubrole pattern (glob, AX prefix optional, e.g., "Dialog", "FloatingWindow")
+    /// AXSubrole pattern (glob, AX prefix optional, "none" matches absent)
     #[argh(option)]
     subrole: Option<String>,
     /// window level (normal, floating, modal, utility, popup, other, or numeric)
@@ -394,10 +394,10 @@ struct RuleDelCmd {
     /// window title pattern (glob)
     #[argh(option)]
     title: Option<String>,
-    /// AXIdentifier pattern (glob)
+    /// AXIdentifier pattern (glob, "none" matches absent)
     #[argh(option)]
     ax_id: Option<String>,
-    /// AXSubrole pattern (glob, AX prefix optional)
+    /// AXSubrole pattern (glob, AX prefix optional, "none" matches absent)
     #[argh(option)]
     subrole: Option<String>,
     /// window level (normal, floating, modal, utility, popup, other, or numeric)

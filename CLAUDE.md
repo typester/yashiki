@@ -241,6 +241,7 @@ yashiki rule-add --window-level floating float    # Float utility panels (level 
 yashiki rule-add --fullscreen-button none float   # Float windows without fullscreen button
 yashiki rule-add --close-button none ignore       # Ignore windows without close button (popups)
 yashiki rule-add --app-id com.mitchellh.ghostty --fullscreen-button disabled ignore  # Ghostty Quick Terminal
+yashiki rule-add --app-id com.microsoft.Outlook --ax-id none --subrole none ignore  # Outlook invisible windows
 yashiki rule-del --app-name Finder float          # Remove a rule
 yashiki list-rules                # List all rules
 yashiki set-cursor-warp disabled          # Disable cursor warp (default)
@@ -589,7 +590,9 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
   - `--window-level` (CGWindowLevel: normal, floating, modal, utility, popup, other, or numeric)
   - `--close-button`, `--fullscreen-button`, `--minimize-button`, `--zoom-button` (button states: exists, none, enabled, disabled)
 - For subrole matching, "AX" prefix is optional: `--subrole Dialog` matches `AXDialog`
-- Specificity calculation: exact match > prefix/suffix > contains > wildcard; button matchers add fixed specificity
+- For `--ax-id` and `--subrole`, special pattern "none" matches windows where the attribute is absent (None)
+  - Example: `--ax-id none --subrole none` matches windows with no AXIdentifier and no AXSubrole
+- Specificity calculation: exact match > prefix/suffix > contains > "none" (1) > wildcard (0); button matchers add fixed specificity
 - Multiple rules can match; each action type uses "first match wins"
 - Floating windows excluded from tiling (`visible_windows_on_display()` filter)
 - Rules applied in `timer_callback` after `sync_pid()` returns new window IDs
@@ -655,6 +658,9 @@ yashiki rule-add --window-level floating float
 
   # Ignore only Firefox popup windows
   yashiki rule-add --app-id org.mozilla.firefox --subrole AXUnknown ignore
+
+  # Ignore Outlook invisible windows (no AXIdentifier, no AXSubrole)
+  yashiki rule-add --app-id com.microsoft.Outlook --ax-id none --subrole none ignore
   ```
 
 ## Testing

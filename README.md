@@ -305,6 +305,7 @@ yashiki rule-add --app-id com.mitchellh.ghostty --fullscreen-button disabled ign
 # Ignore windows completely (never manage - useful for popups/dropdowns)
 yashiki rule-add --subrole AXUnknown ignore  # Ignore all popup windows
 yashiki rule-add --app-id org.mozilla.firefox --subrole AXUnknown ignore  # Firefox popups only
+yashiki rule-add --app-id com.microsoft.Outlook --ax-id none --subrole none ignore  # Outlook invisible windows
 
 # Combined matching (more specific)
 yashiki rule-add --app-name Safari --title "*Preferences*" float

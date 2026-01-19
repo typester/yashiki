@@ -41,8 +41,8 @@ Window rules let you automatically configure window properties based on various 
 | `--app-name` | Application name | `Safari`, `*Chrome*` |
 | `--app-id` | Bundle identifier | `com.apple.Safari`, `com.google.*` |
 | `--title` | Window title | `*Preferences*`, `*Dialog*` |
-| `--ax-id` | AXIdentifier attribute | `com.mitchellh.ghostty.quickTerminal` |
-| `--subrole` | AXSubrole attribute | `Dialog`, `FloatingWindow` |
+| `--ax-id` | AXIdentifier attribute | `com.mitchellh.ghostty.quickTerminal`, `none` |
+| `--subrole` | AXSubrole attribute | `Dialog`, `FloatingWindow`, `none` |
 | `--window-level` | Window level | `normal`, `floating`, `other`, `8` |
 | `--close-button` | Close button state | `exists`, `none`, `enabled`, `disabled` |
 | `--fullscreen-button` | Fullscreen button state | `exists`, `none`, `enabled`, `disabled` |
@@ -50,6 +50,13 @@ Window rules let you automatically configure window properties based on various 
 | `--zoom-button` | Zoom button state | `exists`, `none`, `enabled`, `disabled` |
 
 Glob patterns (`*` for any characters) are supported for `--app-name`, `--app-id`, `--title`, `--ax-id`, and `--subrole`.
+
+For `--ax-id` and `--subrole`, the special pattern `none` matches windows where the attribute is absent (not set). This is useful for matching windows that lack these accessibility attributes:
+
+```sh
+# Match windows with no AXIdentifier and no AXSubrole (e.g., Outlook invisible windows)
+yashiki rule-add --app-id com.microsoft.Outlook --ax-id none --subrole none ignore
+```
 
 ### Window Level Matcher
 
@@ -345,6 +352,9 @@ yashiki rule-add --subrole AXUnknown ignore
 # Ignore only Firefox popup windows
 yashiki rule-add --app-id org.mozilla.firefox --subrole AXUnknown ignore
 
+# Ignore windows with no AX attributes (e.g., Outlook invisible windows)
+yashiki rule-add --app-id com.microsoft.Outlook --ax-id none --subrole none ignore
+
 # Find the AXIdentifier using Accessibility Inspector or the script above
 ```
 
@@ -409,6 +419,12 @@ yashiki rule-add --app-id "com.google.*" output 2
 
 Not all windows have an AXIdentifier. If Accessibility Inspector shows "(null)" or empty:
 
-1. Try using `--subrole` instead
-2. Use `--app-id` combined with `--title` for more specific matching
-3. Some windows may not be distinguishable by AX attributes
+1. Use `--ax-id none` to match windows without an AXIdentifier
+2. Try using `--subrole` instead (or `--subrole none` if subrole is also absent)
+3. Use `--app-id` combined with `--title` for more specific matching
+4. Some windows may not be distinguishable by AX attributes
+
+Example for windows with no AX attributes:
+```sh
+yashiki rule-add --app-id com.microsoft.Outlook --ax-id none --subrole none ignore
+```

@@ -8,6 +8,7 @@ This page documents known issues with specific applications and their workaround
 - [Contexts](#contexts)
 - [Bartender](#bartender)
 - [Firefox](#firefox)
+- [Microsoft Outlook](#microsoft-outlook)
 - [Ghostty](#ghostty)
 - [IINA](#iina)
 - [Generic Popup/Palette Windows](#generic-popuppalette-windows)
@@ -52,6 +53,22 @@ yashiki rule-add --app-id org.mozilla.firefox --window-level floating float
 ```
 
 Add these rules to your `~/.config/yashiki/init` file.
+
+## Microsoft Outlook
+
+Outlook creates various windows that can interfere with window management.
+
+**Recommended rules:**
+
+```sh
+# Ignore popup windows with AXUnknown subrole (dropdowns, menus, etc.)
+yashiki rule-add --app-id com.microsoft.Outlook --subrole AXUnknown ignore
+
+# Ignore invisible windows with no AX attributes
+yashiki rule-add --app-id com.microsoft.Outlook --ax-id none --subrole none ignore
+```
+
+The first rule is similar to Firefox - it ignores popup menus and dropdowns. The second rule ignores mysterious invisible windows that Outlook creates without any accessibility attributes.
 
 ## Ghostty
 
