@@ -41,15 +41,15 @@ The cask installs:
 brew install --cask --no-quarantine yashiki
 ```
 
-### From Source
+### Using Cargo
 
 ```sh
 # Core daemon and CLI
-cargo install --path yashiki
+cargo install yashiki
 
 # Install layout engines you want to use
-cargo install --path yashiki-layout-tatami   # Master-stack layout
-cargo install --path yashiki-layout-byobu    # Accordion layout
+cargo install yashiki-layout-tatami   # Master-stack layout
+cargo install yashiki-layout-byobu    # Accordion layout
 ```
 
 ### Grant Accessibility Permission
@@ -59,6 +59,8 @@ cargo install --path yashiki-layout-byobu    # Accordion layout
 3. Or add your terminal app if running `yashiki start` directly (Not recommended)
 
 ## Quick Start
+
+For a detailed walkthrough, see the **[Quick Start Guide](docs/quick-start.md)**.
 
 1. Launch Yashiki.app:
    - If installed via Homebrew: Open `/Applications/Yashiki.app`
