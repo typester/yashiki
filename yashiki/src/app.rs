@@ -1452,6 +1452,11 @@ fn execute_effects<M: WindowManipulator>(
             } => {
                 manipulator.focus_window(window_id, pid);
 
+                // Update state.focused immediately after focusing
+                // This ensures consecutive focus commands work correctly
+                // even if accessibility events are delayed or missing
+                state.borrow_mut().set_focused(Some(window_id));
+
                 // Warp cursor based on cursor_warp mode
                 let cursor_warp_mode = state.borrow().cursor_warp;
                 let should_warp = match cursor_warp_mode {
