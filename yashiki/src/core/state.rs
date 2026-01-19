@@ -152,6 +152,11 @@ impl State {
             .unwrap_or(Tag::new(1))
     }
 
+    /// Check if we have any managed windows for a given PID
+    pub fn has_windows_for_pid(&self, pid: i32) -> bool {
+        self.windows.values().any(|w| w.pid == pid)
+    }
+
     pub fn resolve_output(&self, spec: &OutputSpecifier) -> Option<DisplayId> {
         match spec {
             OutputSpecifier::Id(id) => {
