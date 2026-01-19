@@ -1529,7 +1529,7 @@ fn list_all_windows<S: WindowSystem>(
     debug: bool,
 ) -> Response {
     let state = state.borrow();
-    let system_windows = window_system.get_all_windows_unfiltered();
+    let system_windows = window_system.get_on_screen_windows();
 
     let mut windows: Vec<WindowInfo> = Vec::new();
 

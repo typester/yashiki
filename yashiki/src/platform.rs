@@ -12,9 +12,6 @@ pub struct FocusedWindowInfo {
 /// This abstraction allows mocking in tests.
 pub trait WindowSystem {
     fn get_on_screen_windows(&self) -> Vec<WindowInfo>;
-    /// Get all on-screen windows without layer filtering.
-    /// Used for --all option to include popup/utility windows.
-    fn get_all_windows_unfiltered(&self) -> Vec<WindowInfo>;
     fn get_all_displays(&self) -> Vec<DisplayInfo>;
     fn get_focused_window(&self) -> Option<FocusedWindowInfo>;
     /// Get extended window attributes including window_level and button info.
@@ -32,10 +29,6 @@ pub struct MacOSWindowSystem;
 impl WindowSystem for MacOSWindowSystem {
     fn get_on_screen_windows(&self) -> Vec<WindowInfo> {
         crate::macos::get_on_screen_windows()
-    }
-
-    fn get_all_windows_unfiltered(&self) -> Vec<WindowInfo> {
-        crate::macos::get_all_windows_unfiltered()
     }
 
     fn get_all_displays(&self) -> Vec<DisplayInfo> {
@@ -540,11 +533,6 @@ pub mod mock {
             self.windows.clone()
         }
 
-        fn get_all_windows_unfiltered(&self) -> Vec<WindowInfo> {
-            // In tests, return all windows (same as get_on_screen_windows for simplicity)
-            self.windows.clone()
-        }
-
         fn get_all_displays(&self) -> Vec<DisplayInfo> {
             self.displays.clone()
         }
@@ -601,6 +589,19 @@ pub mod mock {
         width: f64,
         height: f64,
     ) -> WindowInfo {
+        create_test_window_with_layer(window_id, pid, owner_name, x, y, width, height, 0)
+    }
+
+    pub fn create_test_window_with_layer(
+        window_id: u32,
+        pid: i32,
+        owner_name: &str,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        layer: i32,
+    ) -> WindowInfo {
         WindowInfo {
             pid,
             window_id,
@@ -613,7 +614,7 @@ pub mod mock {
                 width,
                 height,
             },
-            layer: 0,
+            layer,
         }
     }
 }

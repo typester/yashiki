@@ -565,6 +565,20 @@ impl State {
             ext.zoom_button
         );
 
+        // Default layer filtering: skip non-normal layer windows unless a non-ignore rule matches
+        if ext.window_level != 0
+            && !self.has_matching_non_ignore_rule(app_name, app_id, &title, &ext)
+        {
+            tracing::debug!(
+                "Window skipped (non-normal layer without matching rule): [{}] {} ({}) level={}",
+                info.window_id,
+                title,
+                app_name,
+                ext.window_level
+            );
+            return None;
+        }
+
         // Check ignore rules before creating window
         if self.should_ignore_window_extended(app_name, app_id, &title, &ext) {
             tracing::info!(
@@ -1331,6 +1345,21 @@ impl State {
         })
     }
 
+    /// Check if there's any non-ignore rule that matches this window.
+    /// Used to determine if a non-normal layer window should be managed.
+    fn has_matching_non_ignore_rule(
+        &self,
+        app_name: &str,
+        app_id: Option<&str>,
+        title: &str,
+        ext: &ExtendedWindowAttributes,
+    ) -> bool {
+        self.rules.iter().any(|rule| {
+            !matches!(rule.action, RuleAction::Ignore)
+                && rule.matcher.matches_extended(app_name, app_id, title, ext)
+        })
+    }
+
     /// Get all rules that match a window
     pub fn get_matching_rules_extended(
         &self,
@@ -1394,6 +1423,11 @@ impl State {
                     }
                 }
             }
+        }
+
+        // Default to float for non-normal layer windows if no explicit Float/NoFloat rule
+        if result.is_floating.is_none() && ext.window_level != 0 {
+            result.is_floating = Some(true);
         }
 
         result
@@ -1721,7 +1755,9 @@ impl Default for State {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::mock::{create_test_display, create_test_window, MockWindowSystem};
+    use crate::platform::mock::{
+        create_test_display, create_test_window, create_test_window_with_layer, MockWindowSystem,
+    };
 
     fn setup_mock_system() -> MockWindowSystem {
         MockWindowSystem::new()
@@ -2390,6 +2426,245 @@ mod tests {
         let result = state.apply_rules_to_window_extended("Safari", None, "Window", &ext);
 
         // No matching rules should return None
+        assert_eq!(result.is_floating, None);
+    }
+
+    // Layer filtering tests
+
+    #[test]
+    fn test_non_normal_layer_window_not_managed_by_default() {
+        // Windows with layer != 0 should not be managed unless a rule matches
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window_with_layer(100, 1000, "Raycast", 100.0, 100.0, 800.0, 600.0, 8), // modal layer
+            ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Window should not be managed (no matching rule)
+        assert!(state.windows.is_empty());
+    }
+
+    #[test]
+    fn test_non_normal_layer_window_managed_with_float_rule() {
+        use yashiki_ipc::GlobPattern;
+
+        // Windows with layer != 0 should be managed if a float rule matches
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window_with_layer(
+                100, 1000, "Raycast", 100.0, 100.0, 800.0, 600.0, 8,
+            )]);
+
+        let mut state = State::new();
+
+        // Add a float rule for Raycast
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Raycast")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Float,
+        });
+
+        state.sync_all(&ws);
+        // Apply rules to newly created windows (as done in app.rs timer_callback)
+        state.apply_rules_to_new_window(100);
+
+        // Window should be managed and floating
+        assert_eq!(state.windows.len(), 1);
+        let window = state.windows.get(&100).unwrap();
+        assert!(window.is_floating);
+    }
+
+    #[test]
+    fn test_non_normal_layer_window_managed_with_tags_rule() {
+        use yashiki_ipc::GlobPattern;
+
+        // Windows with layer != 0 should be managed if any non-ignore rule matches (e.g., tags)
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window_with_layer(
+                100, 1000, "Raycast", 100.0, 100.0, 800.0, 600.0, 8,
+            )]);
+
+        let mut state = State::new();
+
+        // Add a tags rule for Raycast
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Raycast")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Tags { tags: 2 },
+        });
+
+        state.sync_all(&ws);
+        // Apply rules to newly created windows (as done in app.rs timer_callback)
+        state.apply_rules_to_new_window(100);
+
+        // Window should be managed and floating by default (non-normal layer)
+        assert_eq!(state.windows.len(), 1);
+        let window = state.windows.get(&100).unwrap();
+        assert!(window.is_floating); // Default for non-normal layer
+        assert_eq!(window.tags.mask(), 2);
+    }
+
+    #[test]
+    fn test_non_normal_layer_window_can_be_tiled_with_no_float() {
+        use yashiki_ipc::GlobPattern;
+
+        // Windows with layer != 0 can be made tiled with explicit no-float rule
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window_with_layer(
+                100, 1000, "Raycast", 100.0, 100.0, 800.0, 600.0, 8,
+            )]);
+
+        let mut state = State::new();
+
+        // Add a no-float rule for Raycast
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Raycast")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::NoFloat,
+        });
+
+        state.sync_all(&ws);
+        // Apply rules to newly created windows (as done in app.rs timer_callback)
+        state.apply_rules_to_new_window(100);
+
+        // Window should be managed and NOT floating (no-float overrides layer default)
+        assert_eq!(state.windows.len(), 1);
+        let window = state.windows.get(&100).unwrap();
+        assert!(!window.is_floating);
+    }
+
+    #[test]
+    fn test_normal_layer_window_managed_as_usual() {
+        // Windows with layer == 0 should continue to work normally
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0), // layer 0
+            ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Window should be managed and NOT floating (normal layer, no rule)
+        assert_eq!(state.windows.len(), 1);
+        let window = state.windows.get(&100).unwrap();
+        assert!(!window.is_floating);
+    }
+
+    #[test]
+    fn test_non_normal_layer_window_ignored_with_ignore_rule() {
+        use yashiki_ipc::GlobPattern;
+
+        // Windows with layer != 0 should be ignored if an ignore rule matches
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window_with_layer(
+                100, 1000, "Raycast", 100.0, 100.0, 800.0, 600.0, 8,
+            )]);
+
+        let mut state = State::new();
+
+        // Add both a float rule and an ignore rule for Raycast
+        // Ignore rule should take precedence
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Raycast")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Float,
+        });
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Raycast")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Ignore,
+        });
+
+        state.sync_all(&ws);
+
+        // Window should not be managed (ignore rule)
+        assert!(state.windows.is_empty());
+    }
+
+    #[test]
+    fn test_apply_rules_defaults_to_float_for_non_normal_layer() {
+        let state = State::new();
+
+        // Test with non-normal layer (window_level != 0)
+        let ext = ExtendedWindowAttributes {
+            window_level: 8, // modal
+            ..Default::default()
+        };
+        let result = state.apply_rules_to_window_extended("Raycast", None, "Window", &ext);
+
+        // Should default to floating for non-normal layer
+        assert_eq!(result.is_floating, Some(true));
+    }
+
+    #[test]
+    fn test_apply_rules_normal_layer_no_default_float() {
+        let state = State::new();
+
+        // Test with normal layer (window_level == 0)
+        let ext = ExtendedWindowAttributes {
+            window_level: 0,
+            ..Default::default()
+        };
+        let result = state.apply_rules_to_window_extended("Safari", None, "Window", &ext);
+
+        // Should NOT default to floating for normal layer
         assert_eq!(result.is_floating, None);
     }
 }
