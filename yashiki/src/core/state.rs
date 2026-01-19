@@ -546,8 +546,8 @@ impl State {
             .clone()
             .unwrap_or_else(|| info.name.clone().unwrap_or_default());
 
-        // Log discovered window at debug level
-        tracing::debug!(
+        // Log discovered window at trace level (use `list-windows --all --debug` for easier inspection)
+        tracing::trace!(
             "Discovered window: [{}] pid={} app='{}' app_id={:?} title='{}' \
              ax_id={:?} subrole={:?} layer={} close={:?} fullscreen={:?} \
              minimize={:?} zoom={:?}",

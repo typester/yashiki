@@ -95,22 +95,3 @@ yashiki rule-add --fullscreen-button none float
 # Ignore windows without close button (likely popups/tooltips)
 yashiki rule-add --close-button none ignore
 ```
-
-## Debugging Window Issues
-
-If you encounter similar issues with other applications, use debug logging to identify problematic windows:
-
-```sh
-RUST_LOG=yashiki=debug yashiki start
-```
-
-Look for lines like:
-```
-Discovered window: [12345] pid=1234 app='AppName' app_id=Some("com.example.app") title='' ax_id=None subrole=Some("AXUnknown") layer=0 close=ButtonInfo{exists:true,enabled:Some(true)} fullscreen=ButtonInfo{...} minimize=ButtonInfo{...} zoom=ButtonInfo{...}
-```
-
-Then create appropriate rules using:
-- `--app-id`, `--app-name`, `--title` - Basic matching
-- `--ax-id`, `--subrole` - AX attribute matching
-- `--window-level` - Window level matching (normal, floating, other, etc.)
-- `--close-button`, `--fullscreen-button`, `--minimize-button`, `--zoom-button` - Button state matching (exists, none, enabled, disabled)

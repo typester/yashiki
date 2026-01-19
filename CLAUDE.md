@@ -485,6 +485,7 @@ Each group should be sorted alphabetically. Module declarations (`mod`, `pub mod
 - Update documentation when adding/changing features:
   - `README.md` - User-facing documentation (features, CLI usage, examples)
   - `CLAUDE.md` - Developer documentation (architecture, implementation details, test coverage)
+  - `docs/*.md` - User-facing detailed documentation (window rules, workarounds, etc.)
 
 ## Design Decisions
 
@@ -644,7 +645,7 @@ yashiki rule-add --window-level floating float
 - Problem: Some apps (Firefox, etc.) create temporary popup windows (dropdowns, tooltips) that trigger layout recalculation
 - Solution: Use `ignore` rule action to skip specific windows based on AX attributes
 - `try_create_window()` helper checks `should_ignore_window()` before creating Window objects (used by both `sync_pid` and `sync_all`)
-- Debug logging: `RUST_LOG=yashiki=debug` shows all discovered windows with their AX attributes
+- Use `list-windows --all --debug` to inspect all windows (including ignored ones) with their AX attributes
 - Example rules:
   ```sh
   # Ignore all AXUnknown windows (Firefox dropdowns, tooltips, etc.)

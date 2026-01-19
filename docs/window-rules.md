@@ -291,25 +291,6 @@ This shows output like:
 
 The `--all` flag is useful for finding ignored windows (like Firefox dropdowns) that you might want to create rules for.
 
-#### Using Debug Logging
-
-For more detailed logs during window discovery, run with debug logging:
-
-```sh
-RUST_LOG=yashiki=debug yashiki start
-```
-
-This will log each discovered window with all its attributes:
-```
-Discovered window: [12345] pid=1234 app='Firefox' app_id=Some("org.mozilla.firefox") title='Menu' ax_id=None subrole=Some("AXUnknown") layer=0 close=ButtonInfo{exists:true,enabled:Some(true)} fullscreen=ButtonInfo{exists:true,enabled:Some(true)} minimize=ButtonInfo{exists:true,enabled:Some(true)} zoom=ButtonInfo{exists:true,enabled:Some(true)}
-```
-
-The log includes:
-- `layer` - Window level (0=normal, 3=floating, etc.)
-- `close`, `fullscreen`, `minimize`, `zoom` - Button states with exists/enabled info
-
-Use this information to create appropriate rules.
-
 ### Subrole Reference
 
 The `--subrole` option accepts values with or without the "AX" prefix:
