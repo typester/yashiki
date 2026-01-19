@@ -5,8 +5,8 @@ use crate::macos::DisplayId;
 use crate::platform::WindowSystem;
 use std::collections::{HashMap, HashSet};
 use yashiki_ipc::{
-    CursorWarpMode, Direction, OuterGap, OutputDirection, OutputSpecifier, RuleAction, RuleMatcher,
-    WindowRule,
+    CursorWarpMode, Direction, ExtendedWindowAttributes, OuterGap, OutputDirection,
+    OutputSpecifier, RuleAction, RuleMatcher, WindowRule,
 };
 
 /// Result of applying rules to a window
@@ -435,25 +435,63 @@ impl State {
         // Add new windows
         for id in new_ids.difference(&current_ids) {
             if let Some(info) = pid_window_infos.iter().find(|w| w.window_id == *id) {
-                // Skip popup windows (Firefox dropdowns, tooltips, etc.)
-                if !ws.is_standard_window(info.window_id, info.pid) {
-                    tracing::debug!(
-                        "Skipping popup window: [{}] {} ({})",
+                let title = info.name.clone().unwrap_or_default();
+                let app_name = &info.owner_name;
+                let app_id = info.bundle_id.as_deref();
+
+                // Fetch extended attributes early for rule matching and debug logging
+                let ext = ws.get_extended_attributes(info.window_id, info.pid, info.layer);
+
+                // Log discovered window at debug level
+                tracing::debug!(
+                    "Discovered window: [{}] pid={} app='{}' app_id={:?} title='{}' ax_id={:?} subrole={:?} layer={} close={:?} fullscreen={:?} minimize={:?} zoom={:?}",
+                    info.window_id,
+                    info.pid,
+                    app_name,
+                    app_id,
+                    title,
+                    ext.ax_id,
+                    ext.subrole,
+                    ext.window_level,
+                    ext.close_button,
+                    ext.fullscreen_button,
+                    ext.minimize_button,
+                    ext.zoom_button
+                );
+
+                // Check ignore rules before creating window
+                if self.should_ignore_window_extended(app_name, app_id, &title, &ext) {
+                    tracing::info!(
+                        "Window ignored by rule: [{}] {} ({}) [ax_id={:?}, subrole={:?}, level={}]",
                         info.window_id,
-                        info.name.as_deref().unwrap_or(""),
-                        info.owner_name
+                        title,
+                        app_name,
+                        ext.ax_id,
+                        ext.subrole,
+                        ext.window_level
                     );
                     continue;
                 }
 
                 let display_id = self.find_display_for_bounds(&info.bounds);
-                let window = Window::from_window_info(info, self.default_tag, display_id);
+                let mut window = Window::from_window_info(info, self.default_tag, display_id);
+                window.ax_id = ext.ax_id;
+                window.subrole = ext.subrole;
+                window.window_level = ext.window_level;
+                window.close_button = ext.close_button;
+                window.fullscreen_button = ext.fullscreen_button;
+                window.minimize_button = ext.minimize_button;
+                window.zoom_button = ext.zoom_button;
+
                 tracing::info!(
-                    "Window added: [{}] {} ({}) on display {}",
+                    "Window added: [{}] {} ({}) on display {} [ax_id={:?}, subrole={:?}, level={}]",
                     window.id,
                     window.title,
                     window.app_name,
-                    display_id
+                    display_id,
+                    window.ax_id,
+                    window.subrole,
+                    window.window_level
                 );
                 self.windows.insert(window.id, window);
                 added_window_ids.push(*id);
@@ -535,8 +573,10 @@ impl State {
             | Event::WindowResized { pid }
             | Event::WindowMiniaturized { pid }
             | Event::WindowDeminiaturized { pid } => {
-                let (_, _) = self.sync_pid(ws, *pid);
-                (false, vec![])
+                // Propagate changed flag if window count changed (e.g., popup window disappeared)
+                // but don't return new_window_ids (we don't want to apply rules again)
+                let (changed, _) = self.sync_pid(ws, *pid);
+                (changed, vec![])
             }
             Event::FocusedWindowChanged => {
                 self.sync_focused_window(ws);
@@ -1066,32 +1106,72 @@ impl State {
         removed
     }
 
-    /// Get all rules that match a window
-    pub fn get_matching_rules(
+    /// Check if a window should be ignored based on ignore rules.
+    /// Returns true if any RuleAction::Ignore rule matches.
+    #[cfg(test)]
+    pub fn should_ignore_window(
         &self,
         app_name: &str,
         app_id: Option<&str>,
         title: &str,
+        ax_id: Option<&str>,
+        subrole: Option<&str>,
+    ) -> bool {
+        let ext = ExtendedWindowAttributes {
+            ax_id: ax_id.map(|s| s.to_string()),
+            subrole: subrole.map(|s| s.to_string()),
+            window_level: 0,
+            ..Default::default()
+        };
+        self.should_ignore_window_extended(app_name, app_id, title, &ext)
+    }
+
+    /// Check if a window should be ignored based on ignore rules (extended version).
+    /// Returns true if any RuleAction::Ignore rule matches.
+    pub fn should_ignore_window_extended(
+        &self,
+        app_name: &str,
+        app_id: Option<&str>,
+        title: &str,
+        ext: &ExtendedWindowAttributes,
+    ) -> bool {
+        self.rules.iter().any(|rule| {
+            matches!(rule.action, RuleAction::Ignore)
+                && rule.matcher.matches_extended(app_name, app_id, title, ext)
+        })
+    }
+
+    /// Get all rules that match a window
+    pub fn get_matching_rules_extended(
+        &self,
+        app_name: &str,
+        app_id: Option<&str>,
+        title: &str,
+        ext: &ExtendedWindowAttributes,
     ) -> Vec<&WindowRule> {
         self.rules
             .iter()
-            .filter(|rule| rule.matcher.matches(app_name, app_id, title))
+            .filter(|rule| rule.matcher.matches_extended(app_name, app_id, title, ext))
             .collect()
     }
 
     /// Apply matching rules to a window and return effects to execute.
-    pub fn apply_rules_to_window(
+    pub fn apply_rules_to_window_extended(
         &self,
         app_name: &str,
         app_id: Option<&str>,
         title: &str,
+        ext: &ExtendedWindowAttributes,
     ) -> RuleApplicationResult {
-        let matching_rules = self.get_matching_rules(app_name, app_id, title);
+        let matching_rules = self.get_matching_rules_extended(app_name, app_id, title, ext);
         let mut result = RuleApplicationResult::default();
 
         // Apply rules in order (most specific first due to sorting)
         for rule in matching_rules {
             match &rule.action {
+                RuleAction::Ignore => {
+                    // Ignore rules are handled separately in should_ignore_window()
+                }
                 RuleAction::Float => {
                     result.is_floating = true;
                 }
@@ -1129,8 +1209,8 @@ impl State {
     /// Modifies the window in place (tags, display_id, is_floating) and returns
     /// Vec<Effect> for position, dimensions, and window hiding to be executed.
     pub fn apply_rules_to_new_window(&mut self, window_id: WindowId) -> Vec<Effect> {
-        // Get app_name, app_id, title, and pid from the window
-        let (app_name, app_id, title, pid) = {
+        // Get app_name, app_id, title, extended attrs, and pid from the window
+        let (app_name, app_id, title, ext, pid) = {
             let Some(window) = self.windows.get(&window_id) else {
                 return vec![];
             };
@@ -1138,12 +1218,14 @@ impl State {
                 window.app_name.clone(),
                 window.app_id.clone(),
                 window.title.clone(),
+                window.extended_attributes(),
                 window.pid,
             )
         };
 
         // Apply rules
-        let rule_result = self.apply_rules_to_window(&app_name, app_id.as_deref(), &title);
+        let rule_result =
+            self.apply_rules_to_window_extended(&app_name, app_id.as_deref(), &title, &ext);
 
         // Modify the window
         if let Some(window) = self.windows.get_mut(&window_id) {
@@ -1289,7 +1371,7 @@ impl State {
 
         for window_id in window_ids {
             // Get window info for rule matching
-            let (app_name, app_id, title, pid, original_tags, original_display_id) = {
+            let (app_name, app_id, title, ext, pid, original_tags, original_display_id) = {
                 let Some(window) = self.windows.get(&window_id) else {
                     continue;
                 };
@@ -1297,6 +1379,7 @@ impl State {
                     window.app_name.clone(),
                     window.app_id.clone(),
                     window.title.clone(),
+                    window.extended_attributes(),
                     window.pid,
                     window.tags,
                     window.display_id,
@@ -1304,7 +1387,8 @@ impl State {
             };
 
             // Apply rules
-            let rule_result = self.apply_rules_to_window(&app_name, app_id.as_deref(), &title);
+            let rule_result =
+                self.apply_rules_to_window_extended(&app_name, app_id.as_deref(), &title, &ext);
 
             // Check if any rules matched that would change tags or display_id
             let new_tags = rule_result.tags.map(Tag::from_mask);
@@ -1732,5 +1816,104 @@ mod tests {
 
         // Check displays_to_retile includes the fallback display
         assert!(result.displays_to_retile.contains(&1));
+    }
+
+    #[test]
+    fn test_should_ignore_window_with_ignore_rule() {
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        let mut state = State::new();
+
+        // Add an ignore rule for AXUnknown subrole
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: None,
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: Some(GlobPattern::new("AXUnknown")),
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Ignore,
+        });
+
+        // Window with AXUnknown subrole should be ignored
+        assert!(state.should_ignore_window("Firefox", None, "Menu", None, Some("AXUnknown")));
+
+        // Window with AXStandardWindow subrole should NOT be ignored
+        assert!(!state.should_ignore_window(
+            "Firefox",
+            None,
+            "Window",
+            None,
+            Some("AXStandardWindow")
+        ));
+
+        // Window with no subrole should NOT be ignored
+        assert!(!state.should_ignore_window("Firefox", None, "Window", None, None));
+    }
+
+    #[test]
+    fn test_should_ignore_window_with_app_specific_rule() {
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        let mut state = State::new();
+
+        // Add an ignore rule for Firefox + AXUnknown only
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: None,
+                app_id: Some(GlobPattern::new("org.mozilla.firefox")),
+                title: None,
+                ax_id: None,
+                subrole: Some(GlobPattern::new("AXUnknown")),
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Ignore,
+        });
+
+        // Firefox window with AXUnknown should be ignored
+        assert!(state.should_ignore_window(
+            "Firefox",
+            Some("org.mozilla.firefox"),
+            "Menu",
+            None,
+            Some("AXUnknown")
+        ));
+
+        // Safari window with AXUnknown should NOT be ignored (different app_id)
+        assert!(!state.should_ignore_window(
+            "Safari",
+            Some("com.apple.Safari"),
+            "Menu",
+            None,
+            Some("AXUnknown")
+        ));
+
+        // Firefox window with AXStandardWindow should NOT be ignored
+        assert!(!state.should_ignore_window(
+            "Firefox",
+            Some("org.mozilla.firefox"),
+            "Window",
+            None,
+            Some("AXStandardWindow")
+        ));
+    }
+
+    #[test]
+    fn test_should_ignore_window_no_rules() {
+        let state = State::new();
+
+        // Without any rules, no windows should be ignored
+        assert!(!state.should_ignore_window("Firefox", None, "Window", None, Some("AXUnknown")));
+        assert!(!state.should_ignore_window("Safari", None, "Window", None, None));
     }
 }

@@ -23,8 +23,8 @@ use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use yashiki_ipc::{
-    BindingInfo, Command, CursorWarpMode, OuterGap, OutputInfo, Response, RuleInfo, StateEvent,
-    StateInfo, WindowInfo,
+    BindingInfo, ButtonState, Command, CursorWarpMode, OuterGap, OutputInfo, Response, RuleInfo,
+    StateEvent, StateInfo, WindowInfo, WindowLevel, WindowLevelName, WindowLevelOther,
 };
 
 type IpcCommandWithResponse = (Command, mpsc::Sender<Response>);
@@ -1122,6 +1122,7 @@ fn process_command(
                 .iter()
                 .map(|r| {
                     let action_str = match &r.action {
+                        yashiki_ipc::RuleAction::Ignore => "ignore".to_string(),
                         yashiki_ipc::RuleAction::Float => "float".to_string(),
                         yashiki_ipc::RuleAction::NoFloat => "no-float".to_string(),
                         yashiki_ipc::RuleAction::Tags { tags } => format!("tags {}", tags),
@@ -1142,6 +1143,13 @@ fn process_command(
                         app_name: r.matcher.app_name.as_ref().map(|p| p.pattern().to_string()),
                         app_id: r.matcher.app_id.as_ref().map(|p| p.pattern().to_string()),
                         title: r.matcher.title.as_ref().map(|p| p.pattern().to_string()),
+                        ax_id: r.matcher.ax_id.as_ref().map(|p| p.pattern().to_string()),
+                        subrole: r.matcher.subrole.as_ref().map(|p| p.pattern().to_string()),
+                        window_level: r.matcher.window_level.as_ref().map(format_window_level),
+                        close_button: r.matcher.close_button.map(format_button_state),
+                        fullscreen_button: r.matcher.fullscreen_button.map(format_button_state),
+                        minimize_button: r.matcher.minimize_button.map(format_button_state),
+                        zoom_button: r.matcher.zoom_button.map(format_button_state),
                         action: action_str,
                     }
                 })
@@ -1673,6 +1681,31 @@ fn emit_state_change_events(
                 event_emitter.emit_window_updated(window, state.focused);
             }
         }
+    }
+}
+
+/// Format window level for display
+fn format_window_level(level: &WindowLevel) -> String {
+    match level {
+        WindowLevel::Named(name) => match name {
+            WindowLevelName::Normal => "normal".to_string(),
+            WindowLevelName::Floating => "floating".to_string(),
+            WindowLevelName::Modal => "modal".to_string(),
+            WindowLevelName::Utility => "utility".to_string(),
+            WindowLevelName::Popup => "popup".to_string(),
+        },
+        WindowLevel::Other(WindowLevelOther::Other) => "other".to_string(),
+        WindowLevel::Numeric(n) => n.to_string(),
+    }
+}
+
+/// Format button state for display
+fn format_button_state(state: ButtonState) -> String {
+    match state {
+        ButtonState::Exists => "exists".to_string(),
+        ButtonState::None => "none".to_string(),
+        ButtonState::Enabled => "enabled".to_string(),
+        ButtonState::Disabled => "disabled".to_string(),
     }
 }
 

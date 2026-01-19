@@ -14,8 +14,9 @@ use argh::FromArgs;
 use ipc::IpcClient;
 use tracing_subscriber::EnvFilter;
 use yashiki_ipc::{
-    Command, CursorWarpMode, Direction, EventFilter, GlobPattern, OutputDirection, OutputSpecifier,
-    Response, RuleAction, RuleMatcher, WindowRule,
+    ButtonState, Command, CursorWarpMode, Direction, EventFilter, GlobPattern, OutputDirection,
+    OutputSpecifier, Response, RuleAction, RuleMatcher, WindowLevel, WindowLevelName,
+    WindowLevelOther, WindowRule,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -346,6 +347,27 @@ struct RuleAddCmd {
     /// window title pattern (glob)
     #[argh(option)]
     title: Option<String>,
+    /// AXIdentifier pattern (glob, e.g., "com.mitchellh.ghostty.quickTerminal")
+    #[argh(option)]
+    ax_id: Option<String>,
+    /// AXSubrole pattern (glob, AX prefix optional, e.g., "Dialog", "FloatingWindow")
+    #[argh(option)]
+    subrole: Option<String>,
+    /// window level (normal, floating, modal, utility, popup, other, or numeric)
+    #[argh(option)]
+    window_level: Option<String>,
+    /// close button state (exists, none, enabled, disabled)
+    #[argh(option)]
+    close_button: Option<String>,
+    /// fullscreen button state (exists, none, enabled, disabled)
+    #[argh(option)]
+    fullscreen_button: Option<String>,
+    /// minimize button state (exists, none, enabled, disabled)
+    #[argh(option)]
+    minimize_button: Option<String>,
+    /// zoom button state (exists, none, enabled, disabled)
+    #[argh(option)]
+    zoom_button: Option<String>,
     /// action and arguments (e.g., "float", "tags 2", "dimensions 800 600")
     #[argh(positional, greedy)]
     action: Vec<String>,
@@ -364,6 +386,27 @@ struct RuleDelCmd {
     /// window title pattern (glob)
     #[argh(option)]
     title: Option<String>,
+    /// AXIdentifier pattern (glob)
+    #[argh(option)]
+    ax_id: Option<String>,
+    /// AXSubrole pattern (glob, AX prefix optional)
+    #[argh(option)]
+    subrole: Option<String>,
+    /// window level (normal, floating, modal, utility, popup, other, or numeric)
+    #[argh(option)]
+    window_level: Option<String>,
+    /// close button state (exists, none, enabled, disabled)
+    #[argh(option)]
+    close_button: Option<String>,
+    /// fullscreen button state (exists, none, enabled, disabled)
+    #[argh(option)]
+    fullscreen_button: Option<String>,
+    /// minimize button state (exists, none, enabled, disabled)
+    #[argh(option)]
+    minimize_button: Option<String>,
+    /// zoom button state (exists, none, enabled, disabled)
+    #[argh(option)]
+    zoom_button: Option<String>,
     /// action to remove (e.g., "float", "tags")
     #[argh(positional, greedy)]
     action: Vec<String>,
@@ -552,6 +595,12 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
                 if let Some(title) = &r.title {
                     matchers.push(format!("--title {}", title));
                 }
+                if let Some(ax_id) = &r.ax_id {
+                    matchers.push(format!("--ax-id {}", ax_id));
+                }
+                if let Some(subrole) = &r.subrole {
+                    matchers.push(format!("--subrole {}", subrole));
+                }
                 if matchers.is_empty() {
                     matchers.push("*".to_string());
                 }
@@ -653,16 +702,53 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             append: cmd.append,
         }),
         SubCommand::RuleAdd(cmd) => {
-            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
-                bail!("rule-add requires --app-name, --app-id, or --title");
+            if cmd.app_name.is_none()
+                && cmd.app_id.is_none()
+                && cmd.title.is_none()
+                && cmd.ax_id.is_none()
+                && cmd.subrole.is_none()
+                && cmd.window_level.is_none()
+                && cmd.close_button.is_none()
+                && cmd.fullscreen_button.is_none()
+                && cmd.minimize_button.is_none()
+                && cmd.zoom_button.is_none()
+            {
+                bail!("rule-add requires at least one matcher (--app-name, --app-id, --title, --ax-id, --subrole, --window-level, or button options)");
             }
             if cmd.action.is_empty() {
                 bail!("rule-add requires an action");
             }
-            let matcher = RuleMatcher::with_app_id(
+            let window_level = cmd
+                .window_level
+                .map(|s| parse_window_level(&s))
+                .transpose()?;
+            let close_button = cmd
+                .close_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let fullscreen_button = cmd
+                .fullscreen_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let minimize_button = cmd
+                .minimize_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let zoom_button = cmd
+                .zoom_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let matcher = RuleMatcher::with_extended(
                 cmd.app_name.map(GlobPattern::new),
                 cmd.app_id.map(GlobPattern::new),
                 cmd.title.map(GlobPattern::new),
+                cmd.ax_id.map(GlobPattern::new),
+                cmd.subrole.map(GlobPattern::new),
+                window_level,
+                close_button,
+                fullscreen_button,
+                minimize_button,
+                zoom_button,
             );
             let action = parse_rule_action(&cmd.action)?;
             Ok(Command::RuleAdd {
@@ -670,16 +756,53 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             })
         }
         SubCommand::RuleDel(cmd) => {
-            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
-                bail!("rule-del requires --app-name, --app-id, or --title");
+            if cmd.app_name.is_none()
+                && cmd.app_id.is_none()
+                && cmd.title.is_none()
+                && cmd.ax_id.is_none()
+                && cmd.subrole.is_none()
+                && cmd.window_level.is_none()
+                && cmd.close_button.is_none()
+                && cmd.fullscreen_button.is_none()
+                && cmd.minimize_button.is_none()
+                && cmd.zoom_button.is_none()
+            {
+                bail!("rule-del requires at least one matcher (--app-name, --app-id, --title, --ax-id, --subrole, --window-level, or button options)");
             }
             if cmd.action.is_empty() {
                 bail!("rule-del requires an action");
             }
-            let matcher = RuleMatcher::with_app_id(
+            let window_level = cmd
+                .window_level
+                .map(|s| parse_window_level(&s))
+                .transpose()?;
+            let close_button = cmd
+                .close_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let fullscreen_button = cmd
+                .fullscreen_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let minimize_button = cmd
+                .minimize_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let zoom_button = cmd
+                .zoom_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let matcher = RuleMatcher::with_extended(
                 cmd.app_name.map(GlobPattern::new),
                 cmd.app_id.map(GlobPattern::new),
                 cmd.title.map(GlobPattern::new),
+                cmd.ax_id.map(GlobPattern::new),
+                cmd.subrole.map(GlobPattern::new),
+                window_level,
+                close_button,
+                fullscreen_button,
+                minimize_button,
+                zoom_button,
             );
             let action = parse_rule_action(&cmd.action)?;
             Ok(Command::RuleDel { matcher, action })
@@ -850,16 +973,53 @@ fn parse_command(args: &[String]) -> Result<Command> {
         }
         "rule-add" => {
             let cmd: RuleAddCmd = from_argh(cmd_name, &cmd_args)?;
-            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
-                bail!("rule-add requires --app-name, --app-id, or --title");
+            if cmd.app_name.is_none()
+                && cmd.app_id.is_none()
+                && cmd.title.is_none()
+                && cmd.ax_id.is_none()
+                && cmd.subrole.is_none()
+                && cmd.window_level.is_none()
+                && cmd.close_button.is_none()
+                && cmd.fullscreen_button.is_none()
+                && cmd.minimize_button.is_none()
+                && cmd.zoom_button.is_none()
+            {
+                bail!("rule-add requires at least one matcher (--app-name, --app-id, --title, --ax-id, --subrole, --window-level, or button options)");
             }
             if cmd.action.is_empty() {
                 bail!("rule-add requires an action");
             }
-            let matcher = RuleMatcher::with_app_id(
+            let window_level = cmd
+                .window_level
+                .map(|s| parse_window_level(&s))
+                .transpose()?;
+            let close_button = cmd
+                .close_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let fullscreen_button = cmd
+                .fullscreen_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let minimize_button = cmd
+                .minimize_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let zoom_button = cmd
+                .zoom_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let matcher = RuleMatcher::with_extended(
                 cmd.app_name.map(GlobPattern::new),
                 cmd.app_id.map(GlobPattern::new),
                 cmd.title.map(GlobPattern::new),
+                cmd.ax_id.map(GlobPattern::new),
+                cmd.subrole.map(GlobPattern::new),
+                window_level,
+                close_button,
+                fullscreen_button,
+                minimize_button,
+                zoom_button,
             );
             let action = parse_rule_action(&cmd.action)?;
             Ok(Command::RuleAdd {
@@ -868,16 +1028,53 @@ fn parse_command(args: &[String]) -> Result<Command> {
         }
         "rule-del" => {
             let cmd: RuleDelCmd = from_argh(cmd_name, &cmd_args)?;
-            if cmd.app_name.is_none() && cmd.app_id.is_none() && cmd.title.is_none() {
-                bail!("rule-del requires --app-name, --app-id, or --title");
+            if cmd.app_name.is_none()
+                && cmd.app_id.is_none()
+                && cmd.title.is_none()
+                && cmd.ax_id.is_none()
+                && cmd.subrole.is_none()
+                && cmd.window_level.is_none()
+                && cmd.close_button.is_none()
+                && cmd.fullscreen_button.is_none()
+                && cmd.minimize_button.is_none()
+                && cmd.zoom_button.is_none()
+            {
+                bail!("rule-del requires at least one matcher (--app-name, --app-id, --title, --ax-id, --subrole, --window-level, or button options)");
             }
             if cmd.action.is_empty() {
                 bail!("rule-del requires an action");
             }
-            let matcher = RuleMatcher::with_app_id(
+            let window_level = cmd
+                .window_level
+                .map(|s| parse_window_level(&s))
+                .transpose()?;
+            let close_button = cmd
+                .close_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let fullscreen_button = cmd
+                .fullscreen_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let minimize_button = cmd
+                .minimize_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let zoom_button = cmd
+                .zoom_button
+                .map(|s| parse_button_state(&s))
+                .transpose()?;
+            let matcher = RuleMatcher::with_extended(
                 cmd.app_name.map(GlobPattern::new),
                 cmd.app_id.map(GlobPattern::new),
                 cmd.title.map(GlobPattern::new),
+                cmd.ax_id.map(GlobPattern::new),
+                cmd.subrole.map(GlobPattern::new),
+                window_level,
+                close_button,
+                fullscreen_button,
+                minimize_button,
+                zoom_button,
             );
             let action = parse_rule_action(&cmd.action)?;
             Ok(Command::RuleDel { matcher, action })
@@ -943,6 +1140,41 @@ fn parse_cursor_warp_mode(s: &str) -> Result<CursorWarpMode> {
     }
 }
 
+fn parse_window_level(s: &str) -> Result<WindowLevel> {
+    match s.to_lowercase().as_str() {
+        "normal" => Ok(WindowLevel::Named(WindowLevelName::Normal)),
+        "floating" => Ok(WindowLevel::Named(WindowLevelName::Floating)),
+        "modal" => Ok(WindowLevel::Named(WindowLevelName::Modal)),
+        "utility" => Ok(WindowLevel::Named(WindowLevelName::Utility)),
+        "popup" => Ok(WindowLevel::Named(WindowLevelName::Popup)),
+        "other" => Ok(WindowLevel::Other(WindowLevelOther::Other)),
+        _ => {
+            // Try parsing as a number
+            if let Ok(n) = s.parse::<i32>() {
+                Ok(WindowLevel::Numeric(n))
+            } else {
+                bail!(
+                    "Unknown window level: {} (use normal, floating, modal, utility, popup, other, or a number)",
+                    s
+                )
+            }
+        }
+    }
+}
+
+fn parse_button_state(s: &str) -> Result<ButtonState> {
+    match s.to_lowercase().as_str() {
+        "exists" => Ok(ButtonState::Exists),
+        "none" => Ok(ButtonState::None),
+        "enabled" => Ok(ButtonState::Enabled),
+        "disabled" => Ok(ButtonState::Disabled),
+        _ => bail!(
+            "Unknown button state: {} (use exists, none, enabled, disabled)",
+            s
+        ),
+    }
+}
+
 fn parse_output_specifier(s: Option<String>) -> Option<OutputSpecifier> {
     s.map(|s| {
         if let Ok(id) = s.parse::<u32>() {
@@ -962,6 +1194,7 @@ fn parse_rule_action(args: &[String]) -> Result<RuleAction> {
     let action_args = &args[1..];
 
     match action_name.as_str() {
+        "ignore" => Ok(RuleAction::Ignore),
         "float" => Ok(RuleAction::Float),
         "no-float" => Ok(RuleAction::NoFloat),
         "tags" => {
@@ -1009,7 +1242,7 @@ fn parse_rule_action(args: &[String]) -> Result<RuleAction> {
             Ok(RuleAction::Dimensions { width, height })
         }
         _ => bail!(
-            "Unknown rule action: {} (use float, no-float, tags, output, position, dimensions)",
+            "Unknown rule action: {} (use ignore, float, no-float, tags, output, position, dimensions)",
             action_name
         ),
     }

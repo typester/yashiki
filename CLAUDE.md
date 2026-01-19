@@ -82,7 +82,7 @@ Like AeroSpace, uses virtual workspaces instead of macOS native Spaces:
 - **Window rules** (riverctl-style)
   - Automatically configure window properties based on app name, bundle identifier (app-id), or title
   - Glob pattern matching (`*Chrome*`, `Safari`, `*Dialog*`, `com.apple.*`)
-  - Actions: float, no-float, tags, output, position, dimensions
+  - Actions: ignore, float, no-float, tags, output, position, dimensions
   - Rules sorted by specificity (more specific rules take priority)
 - **Cursor warp** (mouse follows focus)
   - Similar to river's `set-cursor-warp`
@@ -220,6 +220,14 @@ yashiki rule-add --app-name Preview dimensions 800 600  # Set initial size
 yashiki rule-add --app-name "Google Chrome" output 2    # Chrome to display 2
 yashiki rule-add --app-id com.apple.finder float  # Match by bundle identifier
 yashiki rule-add --app-id "com.google.*" output 2 # Glob pattern for bundle ID
+yashiki rule-add --ax-id "com.mitchellh.ghostty.quickTerminal" float  # Match by AXIdentifier
+yashiki rule-add --subrole Dialog float           # Match by AXSubrole (AX prefix optional)
+yashiki rule-add --subrole AXUnknown ignore       # Ignore popup windows (never manage)
+yashiki rule-add --window-level other ignore      # Ignore non-normal windows (palettes, etc.)
+yashiki rule-add --window-level floating float    # Float utility panels (level 3)
+yashiki rule-add --fullscreen-button none float   # Float windows without fullscreen button
+yashiki rule-add --close-button none ignore       # Ignore windows without close button (popups)
+yashiki rule-add --app-id com.mitchellh.ghostty --fullscreen-button disabled ignore  # Ghostty Quick Terminal
 yashiki rule-del --app-name Finder float          # Remove a rule
 yashiki list-rules                # List all rules
 yashiki set-cursor-warp disabled          # Disable cursor warp (default)
@@ -305,7 +313,6 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
 ### Completed
 - **macos/accessibility.rs** - AXUIElement FFI bindings
   - Permission check, window manipulation (position, size), `raise()` for focus
-  - `is_standard_window()` - popup window detection (filters Firefox dropdowns, tooltips)
 - **macos/display.rs** - CGWindowList window enumeration, display info
   - `get_on_screen_windows()` (includes bundle_id), `get_all_displays()` (uses NSScreen visibleFrame)
 - **macos/observer.rs** - AXObserver for window events
@@ -321,8 +328,8 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
   - Output: `focus_output()`, `send_to_output()` - move focus/window between displays
   - Display targeting: `resolve_output()`, `get_target_display()` - resolve OutputSpecifier to DisplayId
   - Display change: `handle_display_change()` - handle monitor connect/disconnect
-  - Window rules: `add_rule()`, `remove_rule()`, `apply_rules_to_new_window()`
-- **core/window.rs** - Window struct with tags, display_id, app_id, saved_frame, is_floating, is_fullscreen
+  - Window rules: `add_rule()`, `remove_rule()`, `should_ignore_window()`, `apply_rules_to_new_window()`
+- **core/window.rs** - Window struct with tags, display_id, app_id, ax_id, subrole, window_level, button states (close, fullscreen, minimize, zoom), saved_frame, is_floating, is_fullscreen
 - **core/tag.rs** - Tag bitmask
 - **ipc/server.rs** - IPC server on `/tmp/yashiki.sock`
 - **ipc/client.rs** - IPC client for CLI and event subscription
@@ -341,12 +348,12 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
   - Effect pattern: `process_command()` (pure) + `execute_effects()` (side effects)
 - **effect.rs** - Effect enum and CommandResult for separating pure computation from side effects
 - **platform.rs** - Platform abstraction layer
-  - `WindowSystem` trait for querying window/display info
+  - `WindowSystem` trait for querying window/display info (`get_extended_attributes()` for window_level and button states)
   - `WindowManipulator` trait for window manipulation side effects
   - `MacOSWindowSystem` / `MacOSWindowManipulator` - Production implementations
   - `MockWindowSystem` / `MockWindowManipulator` - Test implementations
 - **main.rs** - Daemon + CLI mode
-- **yashiki-ipc/** - Command/Response/LayoutMessage enums, OutputSpecifier, OutputInfo, GlobPattern, RuleMatcher, RuleAction, WindowRule, StateEvent, SubscribeRequest, EventFilter
+- **yashiki-ipc/** - Command/Response/LayoutMessage enums, OutputSpecifier, OutputInfo, GlobPattern, RuleMatcher, RuleAction, WindowRule, StateEvent, SubscribeRequest, EventFilter, ButtonState, WindowLevel, ButtonInfo, ExtendedWindowAttributes
 
 ### yashiki-layout-tatami (layout engine)
 - Master-stack layout
@@ -541,14 +548,20 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
 ### Window Rules
 - Rules stored in `State.rules: Vec<WindowRule>`
 - Rules sorted by specificity (more specific rules first)
-- Matching: `--app-name` (app name), `--app-id` (bundle identifier), `--title` (window title)
-- Specificity calculation: exact match > prefix/suffix > contains > wildcard
+- Matching options:
+  - `--app-name` (app name), `--app-id` (bundle identifier), `--title` (window title)
+  - `--ax-id` (AXIdentifier), `--subrole` (AXSubrole)
+  - `--window-level` (CGWindowLevel: normal, floating, modal, utility, popup, other, or numeric)
+  - `--close-button`, `--fullscreen-button`, `--minimize-button`, `--zoom-button` (button states: exists, none, enabled, disabled)
+- For subrole matching, "AX" prefix is optional: `--subrole Dialog` matches `AXDialog`
+- Specificity calculation: exact match > prefix/suffix > contains > wildcard; button matchers add fixed specificity
 - Multiple rules can match; each action type uses "first match wins"
 - Floating windows excluded from tiling (`visible_windows_on_display()` filter)
 - Rules applied in `timer_callback` after `sync_pid()` returns new window IDs
 - Actions:
   | Action | Effect |
   |--------|--------|
+  | `ignore` | Skip window completely (never manage) - checked in `sync_pid()` before Window creation |
   | `float` | Set `window.is_floating = true`, excluded from tiling |
   | `no-float` | Set `window.is_floating = false` (override more general float rule) |
   | `tags N` | Set `window.tags = N` |
@@ -564,19 +577,19 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
 - Implementation: yashiki subtracts outer gap from dimensions before sending to layout engines, then adds offset when applying geometries
 - CSS-style syntax: `<all>` | `<v h>` | `<t r b l>`
 
-### Popup Window Filtering (Firefox, etc.)
-- Problem: Firefox creates temporary popup windows (dropdowns, tooltips) that trigger layout recalculation
-- Detection via Accessibility API attributes:
-  | Attribute | Standard Window | Popup Window |
-  |-----------|-----------------|--------------|
-  | AXSubrole | `AXStandardWindow` | `AXUnknown` |
-  | AXCloseButton | exists | null |
-  | AXFullScreenButton | exists | null |
-- A window is considered "standard" (managed) if:
-  - `AXSubrole == "AXStandardWindow"`, OR
-  - At least one window button exists (close, fullscreen, zoom, minimize)
-- `WindowSystem::is_standard_window()` checks this in `sync_pid()` before adding new windows
-- Popup windows are logged at debug level and skipped
+### Popup Window Filtering (Configurable via Rules)
+- Problem: Some apps (Firefox, etc.) create temporary popup windows (dropdowns, tooltips) that trigger layout recalculation
+- Solution: Use `ignore` rule action to skip specific windows based on AX attributes
+- `sync_pid()` checks `should_ignore_window()` before creating Window objects
+- Debug logging: `RUST_LOG=yashiki=debug` shows all discovered windows with their AX attributes
+- Example rules:
+  ```sh
+  # Ignore all AXUnknown windows (Firefox dropdowns, tooltips, etc.)
+  yashiki rule-add --subrole AXUnknown ignore
+
+  # Ignore only Firefox popup windows
+  yashiki rule-add --app-id org.mozilla.firefox --subrole AXUnknown ignore
+  ```
 
 ## Testing
 
@@ -603,7 +616,7 @@ pub trait WindowSystem {
     fn get_on_screen_windows(&self) -> Vec<WindowInfo>;
     fn get_all_displays(&self) -> Vec<DisplayInfo>;
     fn get_focused_window(&self) -> Option<FocusedWindowInfo>;
-    fn is_standard_window(&self, window_id: u32, pid: i32) -> bool;
+    fn get_ax_attributes(&self, window_id: u32, pid: i32) -> (Option<String>, Option<String>);
 }
 
 // For window manipulation side effects

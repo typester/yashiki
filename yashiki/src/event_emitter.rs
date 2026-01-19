@@ -158,6 +158,13 @@ mod tests {
             title: format!("{} Window", app_name),
             app_name: app_name.to_string(),
             app_id: Some(format!("com.test.{}", app_name.to_lowercase())),
+            ax_id: None,
+            subrole: None,
+            window_level: 0,
+            close_button: yashiki_ipc::ButtonInfo::default(),
+            fullscreen_button: yashiki_ipc::ButtonInfo::default(),
+            minimize_button: yashiki_ipc::ButtonInfo::default(),
+            zoom_button: yashiki_ipc::ButtonInfo::default(),
             frame: Rect {
                 x: 0,
                 y: 0,

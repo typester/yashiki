@@ -98,9 +98,11 @@ mod attr {
     pub const MINIMIZED: &str = "AXMinimized";
     pub const CLOSE_BUTTON: &str = "AXCloseButton";
     pub const SUBROLE: &str = "AXSubrole";
+    pub const IDENTIFIER: &str = "AXIdentifier";
     pub const FULLSCREEN_BUTTON: &str = "AXFullScreenButton";
     pub const MINIMIZE_BUTTON: &str = "AXMinimizeButton";
     pub const ZOOM_BUTTON: &str = "AXZoomButton";
+    pub const ENABLED: &str = "AXEnabled";
 }
 
 pub mod notification {
@@ -338,6 +340,12 @@ impl AXUIElement {
         Ok(cf.to_string())
     }
 
+    pub fn identifier(&self) -> Result<String, AXError> {
+        let value = self.get_attribute(attr::IDENTIFIER)?;
+        let cf = unsafe { CFString::wrap_under_create_rule(value as *const _) };
+        Ok(cf.to_string())
+    }
+
     pub fn has_close_button(&self) -> bool {
         match self.get_attribute(attr::CLOSE_BUTTON) {
             Ok(value) => {
@@ -376,6 +384,61 @@ impl AXUIElement {
                 true
             }
             Err(_) => false,
+        }
+    }
+
+    /// Check if this element is enabled (AXEnabled attribute)
+    pub fn is_enabled(&self) -> Result<bool, AXError> {
+        let value = self.get_attribute(attr::ENABLED)?;
+        let cf = unsafe { CFBoolean::wrap_under_create_rule(value as *const _) };
+        Ok(cf.into())
+    }
+
+    /// Get button info (exists + enabled) for close button
+    pub fn get_close_button_info(&self) -> (bool, Option<bool>) {
+        match self.get_attribute(attr::CLOSE_BUTTON) {
+            Ok(value) => {
+                let btn = unsafe { AXUIElement::wrap_under_create_rule(value as AXUIElementRef) };
+                let enabled = btn.is_enabled().ok();
+                (true, enabled)
+            }
+            Err(_) => (false, None),
+        }
+    }
+
+    /// Get button info (exists + enabled) for fullscreen button
+    pub fn get_fullscreen_button_info(&self) -> (bool, Option<bool>) {
+        match self.get_attribute(attr::FULLSCREEN_BUTTON) {
+            Ok(value) => {
+                let btn = unsafe { AXUIElement::wrap_under_create_rule(value as AXUIElementRef) };
+                let enabled = btn.is_enabled().ok();
+                (true, enabled)
+            }
+            Err(_) => (false, None),
+        }
+    }
+
+    /// Get button info (exists + enabled) for minimize button
+    pub fn get_minimize_button_info(&self) -> (bool, Option<bool>) {
+        match self.get_attribute(attr::MINIMIZE_BUTTON) {
+            Ok(value) => {
+                let btn = unsafe { AXUIElement::wrap_under_create_rule(value as AXUIElementRef) };
+                let enabled = btn.is_enabled().ok();
+                (true, enabled)
+            }
+            Err(_) => (false, None),
+        }
+    }
+
+    /// Get button info (exists + enabled) for zoom button
+    pub fn get_zoom_button_info(&self) -> (bool, Option<bool>) {
+        match self.get_attribute(attr::ZOOM_BUTTON) {
+            Ok(value) => {
+                let btn = unsafe { AXUIElement::wrap_under_create_rule(value as AXUIElementRef) };
+                let enabled = btn.is_enabled().ok();
+                (true, enabled)
+            }
+            Err(_) => (false, None),
         }
     }
 }
@@ -474,28 +537,4 @@ pub fn get_focused_window() -> Result<AXUIElement, AXError> {
             Err(e)
         }
     }
-}
-
-/// Checks if an AXUIElement window is a standard window (not a popup/tooltip/dropdown).
-///
-/// A window is considered standard if:
-/// - It has AXSubrole == "AXStandardWindow", OR
-/// - It has at least one window button (close, fullscreen, zoom, or minimize)
-///
-/// This is used to filter out Firefox popup windows (dropdowns, tooltips) which have:
-/// - AXSubrole == "AXUnknown"
-/// - No window buttons
-pub fn is_standard_window(ax_window: &AXUIElement) -> bool {
-    // Check if subrole is AXStandardWindow
-    if let Ok(subrole) = ax_window.subrole() {
-        if subrole == "AXStandardWindow" {
-            return true;
-        }
-    }
-
-    // Check if any window button exists
-    ax_window.has_close_button()
-        || ax_window.has_fullscreen_button()
-        || ax_window.has_zoom_button()
-        || ax_window.has_minimize_button()
 }

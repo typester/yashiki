@@ -11,6 +11,83 @@ pub enum CursorWarpMode {
     OnFocusChange,
 }
 
+/// Button state matcher for window rules
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ButtonState {
+    /// Button exists (enabled or disabled)
+    Exists,
+    /// Button doesn't exist
+    None,
+    /// Button exists and is enabled
+    Enabled,
+    /// Button exists but is disabled
+    Disabled,
+}
+
+/// Window level matcher - named value, numeric value, or "other"
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum WindowLevel {
+    Named(WindowLevelName),
+    Other(WindowLevelOther),
+    Numeric(i32),
+}
+
+/// Named window level values
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowLevelName {
+    Normal,   // 0
+    Floating, // 3
+    Modal,    // 8
+    Utility,  // 19
+    Popup,    // 101
+}
+
+impl WindowLevelName {
+    pub fn to_value(&self) -> i32 {
+        match self {
+            Self::Normal => 0,
+            Self::Floating => 3,
+            Self::Modal => 8,
+            Self::Utility => 19,
+            Self::Popup => 101,
+        }
+    }
+}
+
+/// Special value "other" matches any level != 0 (normal)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowLevelOther {
+    Other,
+}
+
+/// Button information for a window
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ButtonInfo {
+    pub exists: bool,
+    /// None if button doesn't exist, Some(true) if enabled, Some(false) if disabled
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
+impl ButtonInfo {
+    pub fn new(exists: bool, enabled: Option<bool>) -> Self {
+        Self { exists, enabled }
+    }
+
+    pub fn matches(&self, expected: ButtonState) -> bool {
+        match expected {
+            ButtonState::Exists => self.exists,
+            ButtonState::None => !self.exists,
+            ButtonState::Enabled => self.exists && self.enabled == Some(true),
+            ButtonState::Disabled => self.exists && self.enabled == Some(false),
+        }
+    }
+}
+
 /// Glob pattern for matching strings.
 /// Supports: exact match, prefix (*suffix), suffix (prefix*), contains (*middle*)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,7 +168,7 @@ impl GlobPattern {
     }
 }
 
-/// Matcher for window rules - matches on app_name, app_id, and/or title
+/// Matcher for window rules - matches on app_name, app_id, title, ax_id, subrole, window_level, and buttons
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuleMatcher {
     /// Pattern to match against app name (e.g., "Safari", "*Chrome*")
@@ -103,6 +180,39 @@ pub struct RuleMatcher {
     /// Pattern to match against window title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<GlobPattern>,
+    /// Pattern to match against AXIdentifier attribute
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ax_id: Option<GlobPattern>,
+    /// Pattern to match against AXSubrole attribute (AX prefix optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subrole: Option<GlobPattern>,
+    /// Match against window level (normal, floating, modal, utility, popup, or numeric)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_level: Option<WindowLevel>,
+    /// Match against close button state
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub close_button: Option<ButtonState>,
+    /// Match against fullscreen button state
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fullscreen_button: Option<ButtonState>,
+    /// Match against minimize button state
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimize_button: Option<ButtonState>,
+    /// Match against zoom button state
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_button: Option<ButtonState>,
+}
+
+/// Extended window attributes for rule matching
+#[derive(Debug, Clone, Default)]
+pub struct ExtendedWindowAttributes {
+    pub ax_id: Option<String>,
+    pub subrole: Option<String>,
+    pub window_level: i32,
+    pub close_button: ButtonInfo,
+    pub fullscreen_button: ButtonInfo,
+    pub minimize_button: ButtonInfo,
+    pub zoom_button: ButtonInfo,
 }
 
 impl RuleMatcher {
@@ -111,6 +221,13 @@ impl RuleMatcher {
             app_name,
             app_id: None,
             title,
+            ax_id: None,
+            subrole: None,
+            window_level: None,
+            close_button: None,
+            fullscreen_button: None,
+            minimize_button: None,
+            zoom_button: None,
         }
     }
 
@@ -123,11 +240,97 @@ impl RuleMatcher {
             app_name,
             app_id,
             title,
+            ax_id: None,
+            subrole: None,
+            window_level: None,
+            close_button: None,
+            fullscreen_button: None,
+            minimize_button: None,
+            zoom_button: None,
         }
     }
 
-    /// Check if this matcher matches the given app_name, app_id, and title
-    pub fn matches(&self, app_name: &str, app_id: Option<&str>, title: &str) -> bool {
+    pub fn with_all(
+        app_name: Option<GlobPattern>,
+        app_id: Option<GlobPattern>,
+        title: Option<GlobPattern>,
+        ax_id: Option<GlobPattern>,
+        subrole: Option<GlobPattern>,
+    ) -> Self {
+        Self {
+            app_name,
+            app_id,
+            title,
+            ax_id,
+            subrole,
+            window_level: None,
+            close_button: None,
+            fullscreen_button: None,
+            minimize_button: None,
+            zoom_button: None,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_extended(
+        app_name: Option<GlobPattern>,
+        app_id: Option<GlobPattern>,
+        title: Option<GlobPattern>,
+        ax_id: Option<GlobPattern>,
+        subrole: Option<GlobPattern>,
+        window_level: Option<WindowLevel>,
+        close_button: Option<ButtonState>,
+        fullscreen_button: Option<ButtonState>,
+        minimize_button: Option<ButtonState>,
+        zoom_button: Option<ButtonState>,
+    ) -> Self {
+        Self {
+            app_name,
+            app_id,
+            title,
+            ax_id,
+            subrole,
+            window_level,
+            close_button,
+            fullscreen_button,
+            minimize_button,
+            zoom_button,
+        }
+    }
+
+    /// Check if this matcher matches the given window attributes (basic version without extended attrs).
+    /// For subrole matching, the "AX" prefix is optional in both pattern and value.
+    pub fn matches(
+        &self,
+        app_name: &str,
+        app_id: Option<&str>,
+        title: &str,
+        ax_id: Option<&str>,
+        subrole: Option<&str>,
+    ) -> bool {
+        // Use matches_extended with default extended attributes
+        self.matches_extended(
+            app_name,
+            app_id,
+            title,
+            &ExtendedWindowAttributes {
+                ax_id: ax_id.map(|s| s.to_string()),
+                subrole: subrole.map(|s| s.to_string()),
+                window_level: 0, // Default to normal
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Check if this matcher matches the given window attributes including extended attrs.
+    /// For subrole matching, the "AX" prefix is optional in both pattern and value.
+    pub fn matches_extended(
+        &self,
+        app_name: &str,
+        app_id: Option<&str>,
+        title: &str,
+        ext: &ExtendedWindowAttributes,
+    ) -> bool {
         let app_matches = self
             .app_name
             .as_ref()
@@ -143,7 +346,83 @@ impl RuleMatcher {
             .as_ref()
             .map(|p| p.matches(title))
             .unwrap_or(true);
-        app_matches && app_id_matches && title_matches
+        let ax_id_matches = self
+            .ax_id
+            .as_ref()
+            .map(|p| ext.ax_id.as_ref().map(|id| p.matches(id)).unwrap_or(false))
+            .unwrap_or(true);
+        let subrole_matches = self
+            .subrole
+            .as_ref()
+            .map(|p| {
+                ext.subrole
+                    .as_ref()
+                    .map(|sr| Self::subrole_matches(p, sr))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(true);
+
+        // Window level check
+        let window_level_matches = self
+            .window_level
+            .as_ref()
+            .map(|expected| Self::window_level_matches(expected, ext.window_level))
+            .unwrap_or(true);
+
+        // Button checks
+        let close_button_matches = self
+            .close_button
+            .map(|expected| ext.close_button.matches(expected))
+            .unwrap_or(true);
+        let fullscreen_button_matches = self
+            .fullscreen_button
+            .map(|expected| ext.fullscreen_button.matches(expected))
+            .unwrap_or(true);
+        let minimize_button_matches = self
+            .minimize_button
+            .map(|expected| ext.minimize_button.matches(expected))
+            .unwrap_or(true);
+        let zoom_button_matches = self
+            .zoom_button
+            .map(|expected| ext.zoom_button.matches(expected))
+            .unwrap_or(true);
+
+        app_matches
+            && app_id_matches
+            && title_matches
+            && ax_id_matches
+            && subrole_matches
+            && window_level_matches
+            && close_button_matches
+            && fullscreen_button_matches
+            && minimize_button_matches
+            && zoom_button_matches
+    }
+
+    /// Check if window level matches the expected value
+    fn window_level_matches(expected: &WindowLevel, actual: i32) -> bool {
+        match expected {
+            WindowLevel::Named(name) => name.to_value() == actual,
+            WindowLevel::Numeric(n) => *n == actual,
+            WindowLevel::Other(WindowLevelOther::Other) => actual != 0, // Anything except normal
+        }
+    }
+
+    /// Match subrole with "AX" prefix normalization.
+    /// Both pattern and value have their "AX" prefix stripped before comparison.
+    fn subrole_matches(pattern: &GlobPattern, value: &str) -> bool {
+        let normalized_pattern = Self::strip_ax_prefix(pattern.pattern());
+        let normalized_value = Self::strip_ax_prefix(value);
+        GlobPattern::new(normalized_pattern).matches(&normalized_value)
+    }
+
+    /// Strip "AX" prefix if present (case-insensitive)
+    fn strip_ax_prefix(s: &str) -> String {
+        if s.len() >= 2 && s[..2].eq_ignore_ascii_case("ax") {
+            s[2..].to_string()
+        } else {
+            s.to_string()
+        }
     }
 
     /// Get the combined specificity of this matcher
@@ -151,7 +430,52 @@ impl RuleMatcher {
         let app_spec = self.app_name.as_ref().map(|p| p.specificity()).unwrap_or(0);
         let app_id_spec = self.app_id.as_ref().map(|p| p.specificity()).unwrap_or(0);
         let title_spec = self.title.as_ref().map(|p| p.specificity()).unwrap_or(0);
-        app_spec + app_id_spec + title_spec
+        let ax_id_spec = self.ax_id.as_ref().map(|p| p.specificity()).unwrap_or(0);
+        let subrole_spec = self.subrole.as_ref().map(|p| p.specificity()).unwrap_or(0);
+
+        // Window level specificity
+        let window_level_spec = self
+            .window_level
+            .as_ref()
+            .map(|level| {
+                match level {
+                    WindowLevel::Named(_) => 24,   // Exact match (6 chars * 4)
+                    WindowLevel::Numeric(_) => 24, // Also exact match
+                    WindowLevel::Other(_) => 4,    // Broad match (lower priority)
+                }
+            })
+            .unwrap_or(0);
+
+        // Button matchers: fixed specificity (20 each)
+        let button_spec = if self.close_button.is_some() { 20 } else { 0 }
+            + if self.fullscreen_button.is_some() {
+                20
+            } else {
+                0
+            }
+            + if self.minimize_button.is_some() {
+                20
+            } else {
+                0
+            }
+            + if self.zoom_button.is_some() { 20 } else { 0 };
+
+        app_spec
+            + app_id_spec
+            + title_spec
+            + ax_id_spec
+            + subrole_spec
+            + window_level_spec
+            + button_spec
+    }
+
+    /// Check if this matcher has any extended matchers (window_level or buttons)
+    pub fn has_extended_matchers(&self) -> bool {
+        self.window_level.is_some()
+            || self.close_button.is_some()
+            || self.fullscreen_button.is_some()
+            || self.minimize_button.is_some()
+            || self.zoom_button.is_some()
     }
 }
 
@@ -159,6 +483,8 @@ impl RuleMatcher {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum RuleAction {
+    /// Completely ignore window (never manage)
+    Ignore,
     /// Exclude from tiling (floating)
     Float,
     /// Include in tiling (default behavior)
@@ -199,6 +525,20 @@ pub struct RuleInfo {
     pub app_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ax_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subrole: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub close_button: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fullscreen_button: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimize_button: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_button: Option<String>,
     pub action: String,
 }
 
@@ -887,17 +1227,17 @@ mod tests {
     #[test]
     fn test_rule_matcher_app_name_only() {
         let matcher = RuleMatcher::new(Some(GlobPattern::new("Safari")), None);
-        assert!(matcher.matches("Safari", None, "Any Title"));
-        assert!(matcher.matches("Safari", None, ""));
-        assert!(!matcher.matches("Chrome", None, "Any Title"));
+        assert!(matcher.matches("Safari", None, "Any Title", None, None));
+        assert!(matcher.matches("Safari", None, "", None, None));
+        assert!(!matcher.matches("Chrome", None, "Any Title", None, None));
     }
 
     #[test]
     fn test_rule_matcher_title_only() {
         let matcher = RuleMatcher::new(None, Some(GlobPattern::new("*Preferences*")));
-        assert!(matcher.matches("Any App", None, "Preferences"));
-        assert!(matcher.matches("Safari", None, "Safari Preferences"));
-        assert!(!matcher.matches("Safari", None, "Settings"));
+        assert!(matcher.matches("Any App", None, "Preferences", None, None));
+        assert!(matcher.matches("Safari", None, "Safari Preferences", None, None));
+        assert!(!matcher.matches("Safari", None, "Settings", None, None));
     }
 
     #[test]
@@ -906,29 +1246,29 @@ mod tests {
             Some(GlobPattern::new("Safari")),
             Some(GlobPattern::new("*Preferences*")),
         );
-        assert!(matcher.matches("Safari", None, "Preferences"));
-        assert!(matcher.matches("Safari", None, "Safari Preferences"));
-        assert!(!matcher.matches("Safari", None, "Main Window"));
-        assert!(!matcher.matches("Chrome", None, "Preferences"));
+        assert!(matcher.matches("Safari", None, "Preferences", None, None));
+        assert!(matcher.matches("Safari", None, "Safari Preferences", None, None));
+        assert!(!matcher.matches("Safari", None, "Main Window", None, None));
+        assert!(!matcher.matches("Chrome", None, "Preferences", None, None));
     }
 
     #[test]
     fn test_rule_matcher_app_id_only() {
         let matcher =
             RuleMatcher::with_app_id(None, Some(GlobPattern::new("com.apple.Safari")), None);
-        assert!(matcher.matches("Safari", Some("com.apple.Safari"), "Any Title"));
-        assert!(matcher.matches("Any App", Some("com.apple.Safari"), ""));
-        assert!(!matcher.matches("Safari", Some("com.google.Chrome"), "Any Title"));
+        assert!(matcher.matches("Safari", Some("com.apple.Safari"), "Any Title", None, None));
+        assert!(matcher.matches("Any App", Some("com.apple.Safari"), "", None, None));
+        assert!(!matcher.matches("Safari", Some("com.google.Chrome"), "Any Title", None, None));
         // app_id pattern requires app_id to be present
-        assert!(!matcher.matches("Safari", None, "Any Title"));
+        assert!(!matcher.matches("Safari", None, "Any Title", None, None));
     }
 
     #[test]
     fn test_rule_matcher_app_id_with_wildcard() {
         let matcher = RuleMatcher::with_app_id(None, Some(GlobPattern::new("com.google.*")), None);
-        assert!(matcher.matches("Chrome", Some("com.google.Chrome"), "Any Title"));
-        assert!(matcher.matches("Meet", Some("com.google.meet"), "Any Title"));
-        assert!(!matcher.matches("Safari", Some("com.apple.Safari"), "Any Title"));
+        assert!(matcher.matches("Chrome", Some("com.google.Chrome"), "Any Title", None, None));
+        assert!(matcher.matches("Meet", Some("com.google.meet"), "Any Title", None, None));
+        assert!(!matcher.matches("Safari", Some("com.apple.Safari"), "Any Title", None, None));
     }
 
     #[test]
@@ -938,10 +1278,88 @@ mod tests {
             Some(GlobPattern::new("com.apple.Safari")),
             None,
         );
-        assert!(matcher.matches("Safari", Some("com.apple.Safari"), "Any Title"));
+        assert!(matcher.matches("Safari", Some("com.apple.Safari"), "Any Title", None, None));
         // Both must match
-        assert!(!matcher.matches("Safari", Some("com.other.Safari"), "Any Title"));
-        assert!(!matcher.matches("Chrome", Some("com.apple.Safari"), "Any Title"));
+        assert!(!matcher.matches("Safari", Some("com.other.Safari"), "Any Title", None, None));
+        assert!(!matcher.matches("Chrome", Some("com.apple.Safari"), "Any Title", None, None));
+    }
+
+    #[test]
+    fn test_rule_matcher_ax_id() {
+        let matcher = RuleMatcher::with_all(
+            None,
+            None,
+            None,
+            Some(GlobPattern::new("com.mitchellh.ghostty.quickTerminal")),
+            None,
+        );
+        assert!(matcher.matches(
+            "Ghostty",
+            None,
+            "",
+            Some("com.mitchellh.ghostty.quickTerminal"),
+            None
+        ));
+        assert!(!matcher.matches("Ghostty", None, "", Some("other-identifier"), None));
+        // ax_id pattern requires ax_id to be present
+        assert!(!matcher.matches("Ghostty", None, "", None, None));
+    }
+
+    #[test]
+    fn test_rule_matcher_subrole() {
+        let matcher =
+            RuleMatcher::with_all(None, None, None, None, Some(GlobPattern::new("Dialog")));
+        // Matches AXDialog (AX prefix stripped from value)
+        assert!(matcher.matches("Safari", None, "", None, Some("AXDialog")));
+        // Matches Dialog directly
+        assert!(matcher.matches("Safari", None, "", None, Some("Dialog")));
+        // Does not match different subrole
+        assert!(!matcher.matches("Safari", None, "", None, Some("AXStandardWindow")));
+        // subrole pattern requires subrole to be present
+        assert!(!matcher.matches("Safari", None, "", None, None));
+    }
+
+    #[test]
+    fn test_rule_matcher_subrole_with_ax_prefix() {
+        // Pattern with AX prefix should also work
+        let matcher =
+            RuleMatcher::with_all(None, None, None, None, Some(GlobPattern::new("AXDialog")));
+        assert!(matcher.matches("Safari", None, "", None, Some("AXDialog")));
+        assert!(matcher.matches("Safari", None, "", None, Some("Dialog")));
+        assert!(!matcher.matches("Safari", None, "", None, Some("AXStandardWindow")));
+    }
+
+    #[test]
+    fn test_rule_matcher_combined_ax_id_and_subrole() {
+        let matcher = RuleMatcher::with_all(
+            Some(GlobPattern::new("Ghostty")),
+            None,
+            None,
+            Some(GlobPattern::new("*quickTerminal*")),
+            Some(GlobPattern::new("FloatingWindow")),
+        );
+        assert!(matcher.matches(
+            "Ghostty",
+            None,
+            "",
+            Some("com.mitchellh.ghostty.quickTerminal"),
+            Some("AXFloatingWindow")
+        ));
+        // All conditions must match
+        assert!(!matcher.matches(
+            "Ghostty",
+            None,
+            "",
+            Some("com.mitchellh.ghostty.quickTerminal"),
+            Some("AXStandardWindow")
+        ));
+        assert!(!matcher.matches(
+            "Ghostty",
+            None,
+            "",
+            Some("other-identifier"),
+            Some("AXFloatingWindow")
+        ));
     }
 
     #[test]
@@ -963,6 +1381,7 @@ mod tests {
     #[test]
     fn test_rule_action_serialization() {
         let cases: Vec<(RuleAction, &str)> = vec![
+            (RuleAction::Ignore, "\"action\":\"ignore\""),
             (RuleAction::Float, "\"action\":\"float\""),
             (RuleAction::NoFloat, "\"action\":\"no_float\""),
             (RuleAction::Tags { tags: 2 }, "\"action\":\"tags\""),
@@ -1071,6 +1490,13 @@ mod tests {
                 app_name: Some("Safari".to_string()),
                 app_id: None,
                 title: None,
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
                 action: "float".to_string(),
             }],
         };
@@ -1094,6 +1520,13 @@ mod tests {
                 app_name: None,
                 app_id: Some("com.apple.Safari".to_string()),
                 title: None,
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
                 action: "float".to_string(),
             }],
         };
@@ -1105,6 +1538,41 @@ mod tests {
             Response::Rules { rules } => {
                 assert_eq!(rules.len(), 1);
                 assert_eq!(rules[0].app_id, Some("com.apple.Safari".to_string()));
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_response_rules_with_ax_id_and_subrole_serialization() {
+        let resp = Response::Rules {
+            rules: vec![RuleInfo {
+                app_name: None,
+                app_id: None,
+                title: None,
+                ax_id: Some("com.mitchellh.ghostty.quickTerminal".to_string()),
+                subrole: Some("Dialog".to_string()),
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+                action: "float".to_string(),
+            }],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"ax_id\":\"com.mitchellh.ghostty.quickTerminal\""));
+        assert!(json.contains("\"subrole\":\"Dialog\""));
+
+        let deserialized: Response = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Response::Rules { rules } => {
+                assert_eq!(rules.len(), 1);
+                assert_eq!(
+                    rules[0].ax_id,
+                    Some("com.mitchellh.ghostty.quickTerminal".to_string())
+                );
+                assert_eq!(rules[0].subrole, Some("Dialog".to_string()));
             }
             _ => panic!("Wrong variant"),
         }
