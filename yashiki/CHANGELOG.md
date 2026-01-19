@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/typester/yashiki/compare/yashiki-v0.5.0...yashiki-v0.5.1) - 2026-01-19
+
+### Added
+
+- more matchers! ([#36](https://github.com/typester/yashiki/pull/36))
+
+### Fixed
+
+- filter out non-normal windows ([#34](https://github.com/typester/yashiki/pull/34))
+
 ## [0.5.0](https://github.com/typester/yashiki/compare/yashiki-v0.4.1...yashiki-v0.5.0) - 2026-01-18
 
 ### Added
