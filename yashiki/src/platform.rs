@@ -1,6 +1,7 @@
+use core_graphics::geometry::{CGPoint, CGSize};
+
 use crate::core::{Rect, WindowMove};
 use crate::macos::{activate_application, AXUIElement, DisplayId, DisplayInfo, WindowInfo};
-use core_graphics::geometry::{CGPoint, CGSize};
 use yashiki_ipc::{ButtonInfo, ExtendedWindowAttributes, WindowGeometry};
 
 pub struct FocusedWindowInfo {

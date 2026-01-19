@@ -1,5 +1,6 @@
 use crate::core::WindowMove;
 use crate::macos::DisplayId;
+
 use yashiki_ipc::Response;
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1,3 +1,6 @@
+use std::ffi::c_void;
+use std::ptr;
+
 use core_foundation::{
     array::CFArray,
     base::{CFTypeID, TCFType},
@@ -7,8 +10,6 @@ use core_foundation::{
     string::{CFString, CFStringRef},
 };
 use core_graphics::geometry::{CGPoint, CGSize};
-use std::ffi::c_void;
-use std::ptr;
 
 pub type AXError = i32;
 pub const AX_ERROR_SUCCESS: AXError = 0;

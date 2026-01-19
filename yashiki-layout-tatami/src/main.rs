@@ -1,5 +1,7 @@
-use anyhow::Result;
 use std::io::{self, BufRead, Write};
+
+use anyhow::Result;
+
 use yashiki_ipc::layout::{LayoutMessage, LayoutResult, WindowGeometry};
 
 struct LayoutState {

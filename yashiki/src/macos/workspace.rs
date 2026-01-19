@@ -1,10 +1,11 @@
+use std::cell::RefCell;
+use std::sync::mpsc as std_mpsc;
+
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{define_class, msg_send, sel, DefinedClass};
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWorkspace};
 use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSString};
-use std::cell::RefCell;
-use std::sync::mpsc as std_mpsc;
 
 pub fn get_frontmost_app_pid() -> Option<i32> {
     let workspace = NSWorkspace::sharedWorkspace();

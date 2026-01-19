@@ -1,6 +1,8 @@
-use anyhow::{Context, Result};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
+
+use anyhow::{Context, Result};
+
 use yashiki_ipc::{Command, EventFilter, Response, StateEvent, SubscribeRequest};
 
 const SOCKET_PATH: &str = "/tmp/yashiki.sock";

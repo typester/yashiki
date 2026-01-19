@@ -1,10 +1,12 @@
+use std::collections::HashMap;
+use std::sync::mpsc;
+
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopSource};
 use core_graphics::event::{
     CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventType, CallbackResult, EventField,
 };
-use std::collections::HashMap;
-use std::sync::mpsc;
+
 use yashiki_ipc::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

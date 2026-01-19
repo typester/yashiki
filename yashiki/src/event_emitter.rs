@@ -1,5 +1,6 @@
-use crate::core::{Display, State, Window};
 use std::sync::mpsc as std_mpsc;
+
+use crate::core::{Display, State, Window};
 use yashiki_ipc::{OutputInfo, StateEvent, WindowInfo};
 
 /// Event emitter for sending state change events from the main thread to the tokio thread.

@@ -1,3 +1,19 @@
+use std::cell::RefCell;
+use std::ptr;
+use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::mpsc as std_mpsc;
+use std::sync::Arc;
+
+use anyhow::Result;
+use core_foundation::base::TCFType;
+use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop};
+use core_foundation_sys::runloop::{
+    CFRunLoopAddSource, CFRunLoopGetMain, CFRunLoopSourceContext, CFRunLoopSourceCreate,
+    CFRunLoopSourceRef, CFRunLoopSourceSignal, CFRunLoopWakeUp,
+};
+use objc2_foundation::MainThreadMarker;
+use tokio::sync::mpsc;
+
 use crate::core::{State, WindowMove};
 use crate::effect::{CommandResult, Effect};
 use crate::event::Event;
@@ -8,20 +24,6 @@ use crate::macos;
 use crate::macos::{HotkeyManager, ObserverManager, WorkspaceEvent, WorkspaceWatcher};
 use crate::pid;
 use crate::platform::{MacOSWindowManipulator, MacOSWindowSystem, WindowManipulator};
-use anyhow::Result;
-use core_foundation::base::TCFType;
-use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop};
-use core_foundation_sys::runloop::{
-    CFRunLoopAddSource, CFRunLoopGetMain, CFRunLoopSourceContext, CFRunLoopSourceCreate,
-    CFRunLoopSourceRef, CFRunLoopSourceSignal, CFRunLoopWakeUp,
-};
-use objc2_foundation::MainThreadMarker;
-use std::cell::RefCell;
-use std::ptr;
-use std::sync::atomic::{AtomicPtr, Ordering};
-use std::sync::mpsc as std_mpsc;
-use std::sync::Arc;
-use tokio::sync::mpsc;
 use yashiki_ipc::{
     BindingInfo, ButtonState, Command, CursorWarpMode, OuterGap, OutputInfo, Response, RuleInfo,
     StateEvent, StateInfo, WindowInfo, WindowLevel, WindowLevelName, WindowLevelOther,

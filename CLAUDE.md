@@ -454,6 +454,16 @@ Key crates:
 - When adding dependencies, always use the latest version
 - Prefer Actor model - keep data operations within single thread, avoid Mutex
 
+### Use Statement Ordering
+
+Use statements should be ordered in three groups with blank lines between them:
+
+1. **std crates** - Standard library (`std::`, `core::`, `alloc::`)
+2. **external crates** - Third-party crates (anyhow, tokio, core_foundation, etc.)
+3. **internal crates** - Project modules (`crate::`, `super::`, `self::`, `yashiki_ipc`)
+
+Each group should be sorted alphabetically. Module declarations (`mod`, `pub mod`) come before use statements.
+
 ## Workflow
 
 - When user asks to plan something, present the plan first and wait for approval before implementing
