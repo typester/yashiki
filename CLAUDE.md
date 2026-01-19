@@ -465,6 +465,7 @@ Key crates:
 - No unnecessary comments explaining what the next line does
 - When adding dependencies, always use the latest version
 - Prefer Actor model - keep data operations within single thread, avoid Mutex
+- Follow DRY (Don't Repeat Yourself) principle - extract helper functions for duplicated patterns (3+ occurrences)
 
 ### Use Statement Ordering
 
