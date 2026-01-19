@@ -272,6 +272,8 @@ Default exec path: `<yashiki_executable_dir>:<system_PATH>`
 
 Automatically configure window properties based on app name, bundle identifier, title, AXIdentifier, AXSubrole, window level, or button states.
 
+By default, new windows inherit the display's current visible tags. Use the `tags` action to override this.
+
 ```sh
 # Match by app name
 yashiki rule-add --app-name Finder float

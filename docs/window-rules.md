@@ -32,6 +32,8 @@ Window rules let you automatically configure window properties based on various 
 - Move windows to specific displays
 - Set initial position and dimensions
 
+**Note:** By default, new windows inherit the display's current visible tags. Use the `tags` action to assign windows to specific tags instead.
+
 ## Matching Options
 
 | Option | Description | Example |
