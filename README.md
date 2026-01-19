@@ -173,6 +173,12 @@ yashiki window-focus left        # Focus window to the left
 yashiki window-focus right       # Focus window to the right
 yashiki window-focus up          # Focus window above
 yashiki window-focus down        # Focus window below
+yashiki window-swap next         # Swap with next window
+yashiki window-swap prev         # Swap with previous window
+yashiki window-swap left         # Swap with window to the left
+yashiki window-swap right        # Swap with window to the right
+yashiki window-swap up           # Swap with window above
+yashiki window-swap down         # Swap with window below
 yashiki window-toggle-fullscreen # Toggle fullscreen (AeroSpace-style)
 yashiki window-toggle-float      # Toggle floating state
 yashiki window-close             # Close focused window

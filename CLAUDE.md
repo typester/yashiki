@@ -183,7 +183,12 @@ yashiki window-toggle-tag 2       # Toggle tag 2 on focused window
 yashiki window-focus next         # Focus next window
 yashiki window-focus prev         # Focus previous window
 yashiki window-focus left         # Focus window to the left
-yashiki window-swap next          # Swap with next window (not yet implemented)
+yashiki window-swap next          # Swap with next window
+yashiki window-swap prev          # Swap with previous window
+yashiki window-swap left          # Swap with window to the left
+yashiki window-swap right         # Swap with window to the right
+yashiki window-swap up            # Swap with window above
+yashiki window-swap down          # Swap with window below
 yashiki window-toggle-fullscreen  # Toggle fullscreen for focused window (AeroSpace-style)
 yashiki window-toggle-float       # Toggle floating state for focused window
 yashiki window-close              # Close the focused window
@@ -383,9 +388,6 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
   - `focus-changed <window_id>` - notification from yashiki (returns `NeedsRetile`)
   - `set-padding <px>`, `inc-padding [delta]`, `dec-padding [delta]` (default: 30px, delta: 5px)
   - `set-orientation <horizontal|h|vertical|v>`, `toggle-orientation`
-
-### Not Yet Implemented
-- `WindowSwap` command - CLI parsing done, but handler not implemented
 
 ## Development Notes
 
@@ -625,8 +627,8 @@ Run tests: `cargo test --all`
 - `core/tag.rs` - Tag bitmask operations (7 tests)
 - `macos/hotkey.rs` - `parse_hotkey()`, `format_hotkey()` (15 tests)
 - `yashiki-ipc` - Command/Response/LayoutMessage/WindowRule/StateEvent/OuterGap serialization
-- `core/state.rs` - State management with MockWindowSystem (13 tests)
-- `app.rs` - `process_command()` effect generation, `emit_state_change_events()` event detection (13 tests)
+- `core/state.rs` - State management with MockWindowSystem (19 tests)
+- `app.rs` - `process_command()` effect generation, `emit_state_change_events()` event detection (15 tests)
 - `event_emitter.rs` - `create_snapshot()`, `window_to_info()`, `display_to_info()` (3 tests)
 - `yashiki-layout-byobu` - Accordion layout and commands (9 tests)
 

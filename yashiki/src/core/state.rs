@@ -876,6 +876,141 @@ impl State {
         best.map(|(w, _)| (w.id, w.pid))
     }
 
+    /// Swap focused window with the window in the given direction.
+    /// Returns Some(display_id) if swap occurred, None otherwise.
+    pub fn swap_window(&mut self, direction: Direction) -> Option<DisplayId> {
+        let focused_id = self.focused?;
+        let focused_window = self.windows.get(&focused_id)?;
+
+        // Skip if floating or fullscreen
+        if !focused_window.is_tiled() {
+            return None;
+        }
+
+        let display_id = focused_window.display_id;
+        let target_id = self.find_swap_target(direction)?;
+
+        // Swap positions in window_order
+        if let Some(display) = self.displays.get_mut(&display_id) {
+            let focused_idx = display
+                .window_order
+                .iter()
+                .position(|&id| id == focused_id)?;
+            let target_idx = display
+                .window_order
+                .iter()
+                .position(|&id| id == target_id)?;
+            display.window_order.swap(focused_idx, target_idx);
+            tracing::info!(
+                "Swapped window {} with {} in direction {:?}",
+                focused_id,
+                target_id,
+                direction
+            );
+            Some(display_id)
+        } else {
+            None
+        }
+    }
+
+    fn find_swap_target(&self, direction: Direction) -> Option<WindowId> {
+        let visible_tags = self.visible_tags();
+        let visible: Vec<_> = self
+            .windows
+            .values()
+            .filter(|w| {
+                w.display_id == self.focused_display
+                    && w.tags.intersects(visible_tags)
+                    && !w.is_hidden()
+                    && w.is_tiled()
+            })
+            .collect();
+
+        if visible.len() <= 1 {
+            return None;
+        }
+
+        match direction {
+            Direction::Next | Direction::Prev => {
+                self.find_swap_target_stack(&visible, direction == Direction::Next)
+            }
+            Direction::Left | Direction::Right | Direction::Up | Direction::Down => {
+                self.find_swap_target_directional(&visible, direction)
+            }
+        }
+    }
+
+    fn find_swap_target_stack(&self, visible: &[&Window], forward: bool) -> Option<WindowId> {
+        let focused_id = self.focused?;
+        let display = self.displays.get(&self.focused_display)?;
+
+        // Sort windows by their position in window_order
+        let mut sorted: Vec<_> = visible.iter().map(|w| w.id).collect();
+        sorted.sort_by_key(|&id| {
+            display
+                .window_order
+                .iter()
+                .position(|&wid| wid == id)
+                .unwrap_or(usize::MAX)
+        });
+
+        let current_idx = sorted.iter().position(|&id| id == focused_id)?;
+
+        let next_idx = if forward {
+            (current_idx + 1) % sorted.len()
+        } else {
+            (current_idx + sorted.len() - 1) % sorted.len()
+        };
+
+        Some(sorted[next_idx])
+    }
+
+    fn find_swap_target_directional(
+        &self,
+        visible: &[&Window],
+        direction: Direction,
+    ) -> Option<WindowId> {
+        let focused_id = self.focused?;
+        let focused = visible.iter().find(|w| w.id == focused_id)?;
+
+        let (fx, fy) = focused.center();
+        let mut best: Option<(WindowId, i32)> = None;
+
+        for window in visible {
+            if window.id == focused_id {
+                continue;
+            }
+
+            let (wx, wy) = window.center();
+
+            let is_candidate = match direction {
+                Direction::Left => wx < fx,
+                Direction::Right => wx > fx,
+                Direction::Up => wy < fy,
+                Direction::Down => wy > fy,
+                _ => false,
+            };
+
+            if !is_candidate {
+                continue;
+            }
+
+            let distance = (wx - fx).abs() + (wy - fy).abs();
+
+            match &best {
+                Some((_, best_dist)) if distance < *best_dist => {
+                    best = Some((window.id, distance));
+                }
+                None => {
+                    best = Some((window.id, distance));
+                }
+                _ => {}
+            }
+        }
+
+        best.map(|(id, _)| id)
+    }
+
     /// Focus the next/prev output (display). Returns window to focus on target display.
     pub fn focus_output(&mut self, direction: OutputDirection) -> Option<(WindowId, i32)> {
         if self.displays.len() <= 1 {
@@ -1916,5 +2051,125 @@ mod tests {
         // Without any rules, no windows should be ignored
         assert!(!state.should_ignore_window("Firefox", None, "Window", None, Some("AXUnknown")));
         assert!(!state.should_ignore_window("Safari", None, "Window", None, None));
+    }
+
+    #[test]
+    fn test_swap_window_next() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Focus window 100
+        state.focused = Some(100);
+
+        // Get initial order
+        let display = state.displays.get(&1).unwrap();
+        let initial_order = display.window_order.clone();
+
+        // Swap with next
+        let result = state.swap_window(Direction::Next);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), 1); // display_id
+
+        // Check that window 100 moved in window_order
+        let display = state.displays.get(&1).unwrap();
+        let new_order = &display.window_order;
+
+        // The windows should be swapped in order
+        let old_100_idx = initial_order.iter().position(|&id| id == 100).unwrap();
+        let new_100_idx = new_order.iter().position(|&id| id == 100).unwrap();
+
+        // After swap with next, window 100 should be at a different position
+        assert_ne!(old_100_idx, new_100_idx);
+    }
+
+    #[test]
+    fn test_swap_window_prev() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Focus window 101 (in the middle)
+        state.focused = Some(101);
+
+        let result = state.swap_window(Direction::Prev);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), 1);
+    }
+
+    #[test]
+    fn test_swap_window_floating_does_nothing() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Make window 100 floating
+        state.windows.get_mut(&100).unwrap().is_floating = true;
+        state.focused = Some(100);
+
+        let result = state.swap_window(Direction::Next);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_swap_window_fullscreen_does_nothing() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Make window 100 fullscreen
+        state.windows.get_mut(&100).unwrap().is_fullscreen = true;
+        state.focused = Some(100);
+
+        let result = state.swap_window(Direction::Next);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_swap_window_single_visible_does_nothing() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 0.0, 0.0, 960.0, 1080.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Only one visible window
+        let result = state.swap_window(Direction::Next);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_swap_window_directional_right() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Focus window 100 (at 0,0)
+        state.focused = Some(100);
+
+        // Swap with window to the right (window 101 at 960,0)
+        let result = state.swap_window(Direction::Right);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), 1);
+
+        // Check that windows swapped in window_order
+        let display = state.displays.get(&1).unwrap();
+        let idx_100 = display
+            .window_order
+            .iter()
+            .position(|&id| id == 100)
+            .unwrap();
+        let idx_101 = display
+            .window_order
+            .iter()
+            .position(|&id| id == 101)
+            .unwrap();
+
+        // After swap, 101 should be before 100 in the order (they swapped places)
+        assert!(idx_101 < idx_100);
     }
 }

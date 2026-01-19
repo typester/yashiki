@@ -950,6 +950,13 @@ fn process_command(
                 CommandResult::ok()
             }
         }
+        Command::WindowSwap { direction } => {
+            if let Some(display_id) = state.swap_window(*direction) {
+                CommandResult::ok_with_effects(vec![Effect::RetileDisplays(vec![display_id])])
+            } else {
+                CommandResult::ok()
+            }
+        }
         Command::OutputFocus { direction } => {
             let result = state.focus_output(*direction);
             if let Some((window_id, pid)) = result {
@@ -2367,5 +2374,58 @@ mod tests {
             }
             _ => panic!("Expected LayoutChanged event, got {:?}", events[0]),
         }
+    }
+
+    #[test]
+    fn test_window_swap_produces_retile_effect() {
+        let (mut state, mut hotkey_manager) = setup_state();
+
+        let result = process_command(
+            &mut state,
+            &mut hotkey_manager,
+            &Command::WindowSwap {
+                direction: Direction::Next,
+            },
+        );
+
+        assert!(matches!(result.response, Response::Ok));
+        assert_eq!(result.effects.len(), 1);
+
+        match &result.effects[0] {
+            Effect::RetileDisplays(display_ids) => {
+                assert_eq!(display_ids.len(), 1);
+                assert_eq!(display_ids[0], 1);
+            }
+            _ => panic!("Expected RetileDisplays effect"),
+        }
+    }
+
+    #[test]
+    fn test_window_swap_no_target_has_no_effects() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 0.0, 0.0, 960.0, 1080.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        let (tx, _rx) = std_mpsc::channel();
+        let dummy_source = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
+        let mut hotkey_manager = HotkeyManager::new(tx, dummy_source);
+
+        // Only one window, so swap should do nothing
+        let result = process_command(
+            &mut state,
+            &mut hotkey_manager,
+            &Command::WindowSwap {
+                direction: Direction::Next,
+            },
+        );
+
+        assert!(matches!(result.response, Response::Ok));
+        assert!(result.effects.is_empty());
     }
 }
