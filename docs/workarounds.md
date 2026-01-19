@@ -9,6 +9,7 @@ This page documents known issues with specific applications and their workaround
 - [Bartender](#bartender)
 - [Firefox](#firefox)
 - [Ghostty](#ghostty)
+- [IINA](#iina)
 - [Generic Popup/Palette Windows](#generic-popuppalette-windows)
 - [Debugging Window Issues](#debugging-window-issues)
 
@@ -66,6 +67,14 @@ Alternatively, using `--ax-id`:
 
 ```sh
 yashiki rule-add --ax-id "com.mitchellh.ghostty.quickTerminal" ignore
+```
+
+## IINA
+
+IINA is a modern, open-source media player for macOS built on mpv. IINA doesn't allow free window resizing (maintains aspect ratio), so it should float.
+
+```sh
+yashiki rule-add --app-id com.colliderli.iina float
 ```
 
 ## Generic Popup/Palette Windows
