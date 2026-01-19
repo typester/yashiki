@@ -11,8 +11,9 @@ mod platform;
 
 use anyhow::{bail, Result};
 use argh::FromArgs;
-use ipc::IpcClient;
 use tracing_subscriber::EnvFilter;
+
+use ipc::IpcClient;
 use yashiki_ipc::{
     ButtonState, Command, CursorWarpMode, Direction, EventFilter, GlobPattern, OutputDirection,
     OutputSpecifier, Response, RuleAction, RuleMatcher, WindowLevel, WindowLevelName,

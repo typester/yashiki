@@ -1,4 +1,3 @@
-use super::get_bundle_id_for_pid;
 use core_foundation::{
     array::CFArray, base::TCFType, dictionary::CFDictionary, number::CFNumber, string::CFString,
 };
@@ -9,6 +8,8 @@ use core_graphics::window::{
 };
 use objc2::MainThreadMarker;
 use objc2_app_kit::NSScreen;
+
+use super::get_bundle_id_for_pid;
 
 pub type DisplayId = u32;
 

@@ -1,5 +1,6 @@
-use crate::OuterGap;
 use serde::{Deserialize, Serialize};
+
+use crate::OuterGap;
 
 /// Cursor warp mode - controls when the mouse cursor follows focus
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

@@ -1,9 +1,10 @@
+use std::collections::{HashMap, HashSet};
+
 use super::{Display, Rect, Tag, Window, WindowId};
 use crate::effect::Effect;
 use crate::event::Event;
 use crate::macos::DisplayId;
 use crate::platform::WindowSystem;
-use std::collections::{HashMap, HashSet};
 use yashiki_ipc::{
     CursorWarpMode, Direction, ExtendedWindowAttributes, OuterGap, OutputDirection,
     OutputSpecifier, RuleAction, RuleMatcher, WindowRule,

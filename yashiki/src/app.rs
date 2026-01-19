@@ -1,3 +1,19 @@
+use std::cell::RefCell;
+use std::ptr;
+use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::mpsc as std_mpsc;
+use std::sync::Arc;
+
+use anyhow::Result;
+use core_foundation::base::TCFType;
+use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop};
+use core_foundation_sys::runloop::{
+    CFRunLoopAddSource, CFRunLoopGetMain, CFRunLoopSourceContext, CFRunLoopSourceCreate,
+    CFRunLoopSourceRef, CFRunLoopSourceSignal, CFRunLoopWakeUp,
+};
+use objc2_foundation::MainThreadMarker;
+use tokio::sync::mpsc;
+
 use crate::core::{State, WindowMove};
 use crate::effect::{CommandResult, Effect};
 use crate::event::Event;
@@ -8,20 +24,6 @@ use crate::macos;
 use crate::macos::{HotkeyManager, ObserverManager, WorkspaceEvent, WorkspaceWatcher};
 use crate::pid;
 use crate::platform::{MacOSWindowManipulator, MacOSWindowSystem, WindowManipulator};
-use anyhow::Result;
-use core_foundation::base::TCFType;
-use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop};
-use core_foundation_sys::runloop::{
-    CFRunLoopAddSource, CFRunLoopGetMain, CFRunLoopSourceContext, CFRunLoopSourceCreate,
-    CFRunLoopSourceRef, CFRunLoopSourceSignal, CFRunLoopWakeUp,
-};
-use objc2_foundation::MainThreadMarker;
-use std::cell::RefCell;
-use std::ptr;
-use std::sync::atomic::{AtomicPtr, Ordering};
-use std::sync::mpsc as std_mpsc;
-use std::sync::Arc;
-use tokio::sync::mpsc;
 use yashiki_ipc::{
     BindingInfo, ButtonState, Command, CursorWarpMode, OuterGap, OutputInfo, Response, RuleInfo,
     StateEvent, StateInfo, WindowInfo, WindowLevel, WindowLevelName, WindowLevelOther,
@@ -315,9 +317,13 @@ impl App {
         // Initial retile
         do_retile(&state, &layout_engine_manager, &window_manipulator);
 
+        // Create shared pointer for hotkey CFRunLoopSource
+        let hotkey_source_ptr = Arc::new(AtomicPtr::new(ptr::null_mut()));
+        let hotkey_source_clone = Arc::clone(&hotkey_source_ptr);
+
         // Create hotkey manager
         let (hotkey_cmd_tx, hotkey_cmd_rx) = std_mpsc::channel::<Command>();
-        let mut hotkey_manager = HotkeyManager::new(hotkey_cmd_tx);
+        let mut hotkey_manager = HotkeyManager::new(hotkey_cmd_tx, hotkey_source_clone);
 
         // Start hotkey tap (initially with no bindings, will be updated via IPC)
         if let Err(e) = hotkey_manager.start() {
@@ -404,6 +410,62 @@ impl App {
             tracing::info!("IPC CFRunLoopSource created and registered");
         }
 
+        // Create CFRunLoopSource for hotkey commands (immediate processing)
+        extern "C" fn hotkey_source_callback(info: *const std::ffi::c_void) {
+            let ctx = unsafe { &*(info as *const RunLoopContext) };
+
+            // Process all pending hotkey commands
+            while let Ok(cmd) = ctx.hotkey_cmd_rx.try_recv() {
+                tracing::debug!("Received hotkey command: {:?}", cmd);
+
+                // Capture state before command for event emission
+                let pre_state = capture_event_state(&ctx.state);
+
+                let _ = handle_ipc_command(
+                    &ctx.state,
+                    &ctx.layout_engine_manager,
+                    &ctx.hotkey_manager,
+                    &ctx.window_manipulator,
+                    &cmd,
+                );
+
+                // Emit events based on state changes
+                emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
+            }
+        }
+
+        let mut hotkey_source_context = CFRunLoopSourceContext {
+            version: 0,
+            info: context_ptr,
+            retain: None,
+            release: None,
+            copyDescription: None,
+            equal: None,
+            hash: None,
+            schedule: None,
+            cancel: None,
+            perform: hotkey_source_callback,
+        };
+
+        let hotkey_source =
+            unsafe { CFRunLoopSourceCreate(ptr::null(), 0, &mut hotkey_source_context) };
+        if hotkey_source.is_null() {
+            tracing::error!("Failed to create CFRunLoopSource for hotkey");
+        } else {
+            // Register source with main RunLoop
+            let run_loop = CFRunLoop::get_current();
+            unsafe {
+                CFRunLoopAddSource(
+                    run_loop.as_concrete_TypeRef(),
+                    hotkey_source,
+                    kCFRunLoopDefaultMode,
+                );
+            }
+            // Store source pointer for hotkey tap to signal
+            hotkey_source_ptr.store(hotkey_source as *mut std::ffi::c_void, Ordering::Release);
+            tracing::info!("Hotkey CFRunLoopSource created and registered");
+        }
+
         let mut timer_context = core_foundation::runloop::CFRunLoopTimerContext {
             version: 0,
             info: context_ptr,
@@ -422,25 +484,6 @@ impl App {
             while let Ok(resp_tx) = ctx.snapshot_request_rx.try_recv() {
                 let snapshot = create_snapshot(&ctx.state.borrow());
                 let _ = resp_tx.send(snapshot);
-            }
-
-            // Process hotkey commands (no response needed)
-            while let Ok(cmd) = ctx.hotkey_cmd_rx.try_recv() {
-                tracing::debug!("Received hotkey command: {:?}", cmd);
-
-                // Capture state before command for event emission
-                let pre_state = capture_event_state(&ctx.state);
-
-                let _ = handle_ipc_command(
-                    &ctx.state,
-                    &ctx.layout_engine_manager,
-                    &ctx.hotkey_manager,
-                    &ctx.window_manipulator,
-                    &cmd,
-                );
-
-                // Emit events based on state changes
-                emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
             }
 
             // Process workspace events (app launch/terminate/display change)
@@ -1730,7 +1773,8 @@ mod tests {
         state.sync_all(&ws);
 
         let (tx, _rx) = std_mpsc::channel();
-        let hotkey_manager = HotkeyManager::new(tx);
+        let dummy_source = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
+        let hotkey_manager = HotkeyManager::new(tx, dummy_source);
 
         (state, hotkey_manager)
     }

@@ -1,8 +1,10 @@
-use anyhow::Result;
 use std::path::PathBuf;
+
+use anyhow::Result;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast;
+
 use yashiki_ipc::{StateEvent, SubscribeRequest};
 
 const EVENT_SOCKET_PATH: &str = "/tmp/yashiki-events.sock";

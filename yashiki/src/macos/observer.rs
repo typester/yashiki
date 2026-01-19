@@ -1,14 +1,16 @@
+use std::collections::HashMap;
+use std::ffi::c_void;
+use std::sync::mpsc as std_mpsc;
+
+use core_foundation::base::TCFType;
+use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop};
+use core_foundation::string::{CFString, CFStringRef};
+
 use crate::event::Event;
 use crate::macos::accessibility::{
     notification, AXObserver, AXObserverRef, AXUIElement, AXUIElementRef,
 };
 use crate::macos::display::get_on_screen_windows;
-use core_foundation::base::TCFType;
-use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop};
-use core_foundation::string::{CFString, CFStringRef};
-use std::collections::HashMap;
-use std::ffi::c_void;
-use std::sync::mpsc as std_mpsc;
 
 pub struct ObserverManager {
     observers: HashMap<i32, AXObserver>,

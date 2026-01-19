@@ -1,5 +1,6 @@
-use super::Tag;
 use crate::macos::{Bounds, DisplayId, WindowInfo};
+
+use super::Tag;
 use yashiki_ipc::ButtonInfo;
 
 pub type WindowId = u32;

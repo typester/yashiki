@@ -1,5 +1,6 @@
-use super::{Rect, Tag, WindowId};
 use crate::macos::DisplayId;
+
+use super::{Rect, Tag, WindowId};
 
 #[derive(Debug, Clone)]
 pub struct Display {
