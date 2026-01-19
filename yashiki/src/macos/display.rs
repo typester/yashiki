@@ -40,9 +40,6 @@ pub struct Bounds {
     pub height: f64,
 }
 
-// Apps that should not be managed (overlays, decorations, etc.)
-const EXCLUDED_APPS: &[&str] = &["borders", "Contexts", "Bartender 4"];
-
 pub fn get_on_screen_windows() -> Vec<WindowInfo> {
     let options = kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements;
     let window_list: CFArray = unsafe {
@@ -61,11 +58,6 @@ pub fn get_on_screen_windows() -> Vec<WindowInfo> {
 
         // Skip non-normal layer windows
         if info.layer != 0 {
-            continue;
-        }
-
-        // Skip excluded apps (overlays, decorations)
-        if EXCLUDED_APPS.iter().any(|&app| app == info.owner_name) {
             continue;
         }
 

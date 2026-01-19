@@ -221,6 +221,7 @@ Output:
 ```
 Application: Ghostty
 Bundle ID: com.mitchellh.ghostty
+Window Level: 0 (normal)
 AXIdentifier: TerminalWindowRestoration
 AXSubrole: AXStandardWindow
 AXTitle: tmux a -d

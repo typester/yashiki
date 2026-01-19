@@ -128,6 +128,18 @@ for windowDict in windowList {
     }
 }
 
+// Format window level with name
+func formatWindowLevel(_ level: Int) -> String {
+    switch level {
+    case 0: return "0 (normal)"
+    case 3: return "3 (floating)"
+    case 8: return "8 (modal)"
+    case 19: return "19 (utility)"
+    case 101: return "101 (popup)"
+    default: return "\(level)"
+    }
+}
+
 // Print results grouped by application
 let sortedApps = apps.values.sorted { $0.name.lowercased() < $1.name.lowercased() }
 
@@ -139,7 +151,7 @@ for app in sortedApps {
 
     for window in app.windows {
         print("  Window ID: \(window.windowId)")
-        print("    Layer: \(window.layer)")
+        print("    Window Level: \(formatWindowLevel(window.layer))")
         print("    Bounds: \(Int(window.bounds.origin.x)),\(Int(window.bounds.origin.y)) \(Int(window.bounds.width))x\(Int(window.bounds.height))")
         if let title = window.title ?? window.axTitle {
             print("    Title: \(title)")
