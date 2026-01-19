@@ -436,67 +436,23 @@ impl State {
         // Add new windows
         for id in new_ids.difference(&current_ids) {
             if let Some(info) = pid_window_infos.iter().find(|w| w.window_id == *id) {
-                let title = info.name.clone().unwrap_or_default();
-                let app_name = &info.owner_name;
-                let app_id = info.bundle_id.as_deref();
-
-                // Fetch extended attributes early for rule matching and debug logging
-                let ext = ws.get_extended_attributes(info.window_id, info.pid, info.layer);
-
-                // Log discovered window at debug level
-                tracing::debug!(
-                    "Discovered window: [{}] pid={} app='{}' app_id={:?} title='{}' ax_id={:?} subrole={:?} layer={} close={:?} fullscreen={:?} minimize={:?} zoom={:?}",
-                    info.window_id,
-                    info.pid,
-                    app_name,
-                    app_id,
-                    title,
-                    ext.ax_id,
-                    ext.subrole,
-                    ext.window_level,
-                    ext.close_button,
-                    ext.fullscreen_button,
-                    ext.minimize_button,
-                    ext.zoom_button
-                );
-
-                // Check ignore rules before creating window
-                if self.should_ignore_window_extended(app_name, app_id, &title, &ext) {
-                    tracing::info!(
-                        "Window ignored by rule: [{}] {} ({}) [ax_id={:?}, subrole={:?}, level={}]",
-                        info.window_id,
-                        title,
-                        app_name,
-                        ext.ax_id,
-                        ext.subrole,
-                        ext.window_level
-                    );
-                    continue;
-                }
-
                 let display_id = self.find_display_for_bounds(&info.bounds);
-                let mut window = Window::from_window_info(info, self.default_tag, display_id);
-                window.ax_id = ext.ax_id;
-                window.subrole = ext.subrole;
-                window.window_level = ext.window_level;
-                window.close_button = ext.close_button;
-                window.fullscreen_button = ext.fullscreen_button;
-                window.minimize_button = ext.minimize_button;
-                window.zoom_button = ext.zoom_button;
 
-                tracing::info!(
-                    "Window added: [{}] {} ({}) on display {} [ax_id={:?}, subrole={:?}, level={}]",
-                    window.id,
-                    window.title,
-                    window.app_name,
-                    display_id,
-                    window.ax_id,
-                    window.subrole,
-                    window.window_level
-                );
-                self.windows.insert(window.id, window);
-                added_window_ids.push(*id);
-                changed = true;
+                if let Some(window) = self.try_create_window(ws, info, display_id) {
+                    tracing::info!(
+                        "Window added: [{}] {} ({}) on display {} [ax_id={:?}, subrole={:?}, level={}]",
+                        window.id,
+                        window.title,
+                        window.app_name,
+                        display_id,
+                        window.ax_id,
+                        window.subrole,
+                        window.window_level
+                    );
+                    self.windows.insert(window.id, window);
+                    added_window_ids.push(*id);
+                    changed = true;
+                }
             }
         }
 
@@ -559,6 +515,68 @@ impl State {
         }
     }
 
+    /// Create a Window from WindowInfo.
+    /// Returns None if the window should be ignored based on rules.
+    /// Also fetches extended attributes and logs debug info.
+    fn try_create_window<W: WindowSystem>(
+        &self,
+        ws: &W,
+        info: &crate::macos::WindowInfo,
+        display_id: DisplayId,
+    ) -> Option<Window> {
+        let title = info.name.clone().unwrap_or_default();
+        let app_name = &info.owner_name;
+        let app_id = info.bundle_id.as_deref();
+
+        // Fetch extended attributes early for rule matching and debug logging
+        let ext = ws.get_extended_attributes(info.window_id, info.pid, info.layer);
+
+        // Log discovered window at debug level
+        tracing::debug!(
+            "Discovered window: [{}] pid={} app='{}' app_id={:?} title='{}' \
+             ax_id={:?} subrole={:?} layer={} close={:?} fullscreen={:?} \
+             minimize={:?} zoom={:?}",
+            info.window_id,
+            info.pid,
+            app_name,
+            app_id,
+            title,
+            ext.ax_id,
+            ext.subrole,
+            ext.window_level,
+            ext.close_button,
+            ext.fullscreen_button,
+            ext.minimize_button,
+            ext.zoom_button
+        );
+
+        // Check ignore rules before creating window
+        if self.should_ignore_window_extended(app_name, app_id, &title, &ext) {
+            tracing::info!(
+                "Window ignored by rule: [{}] {} ({}) [ax_id={:?}, subrole={:?}, level={}]",
+                info.window_id,
+                title,
+                app_name,
+                ext.ax_id,
+                ext.subrole,
+                ext.window_level
+            );
+            return None;
+        }
+
+        // Create Window and set extended attributes
+        let mut window = Window::from_window_info(info, self.default_tag, display_id);
+        window.ax_id = ext.ax_id;
+        window.subrole = ext.subrole;
+        window.window_level = ext.window_level;
+        window.close_button = ext.close_button;
+        window.fullscreen_button = ext.fullscreen_button;
+        window.minimize_button = ext.minimize_button;
+        window.zoom_button = ext.zoom_button;
+
+        Some(window)
+    }
+
     /// Handle an event.
     /// Returns (needs_retile, new_window_ids) where needs_retile is true if window count changed.
     pub fn handle_event<W: WindowSystem>(
@@ -618,20 +636,11 @@ impl State {
         for info in window_infos {
             if !self.windows.contains_key(&info.window_id) {
                 let display_id = self.find_display_for_bounds(&info.bounds);
-                let mut window = Window::from_window_info(info, self.default_tag, display_id);
 
-                // Fetch extended attributes (like sync_pid does)
-                let ext = ws.get_extended_attributes(info.window_id, info.pid, info.layer);
-                window.ax_id = ext.ax_id;
-                window.subrole = ext.subrole;
-                window.window_level = ext.window_level;
-                window.close_button = ext.close_button;
-                window.fullscreen_button = ext.fullscreen_button;
-                window.minimize_button = ext.minimize_button;
-                window.zoom_button = ext.zoom_button;
-
-                self.add_to_window_order(window.id, display_id);
-                self.windows.insert(window.id, window);
+                if let Some(window) = self.try_create_window(ws, info, display_id) {
+                    self.add_to_window_order(window.id, display_id);
+                    self.windows.insert(window.id, window);
+                }
             }
         }
 
