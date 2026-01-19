@@ -587,7 +587,7 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
 - Actions:
   | Action | Effect |
   |--------|--------|
-  | `ignore` | Skip window completely (never manage) - checked in `sync_pid()` before Window creation |
+  | `ignore` | Skip window completely (never manage) - checked in `try_create_window()` before Window creation |
   | `float` | Set `window.is_floating = true`, excluded from tiling |
   | `no-float` | Set `window.is_floating = false` (override more general float rule) |
   | `tags N` | Set `window.tags = N` |
@@ -606,7 +606,7 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
 ### Popup Window Filtering (Configurable via Rules)
 - Problem: Some apps (Firefox, etc.) create temporary popup windows (dropdowns, tooltips) that trigger layout recalculation
 - Solution: Use `ignore` rule action to skip specific windows based on AX attributes
-- `sync_pid()` checks `should_ignore_window()` before creating Window objects
+- `try_create_window()` helper checks `should_ignore_window()` before creating Window objects (used by both `sync_pid` and `sync_all`)
 - Debug logging: `RUST_LOG=yashiki=debug` shows all discovered windows with their AX attributes
 - Example rules:
   ```sh

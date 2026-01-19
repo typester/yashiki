@@ -322,7 +322,7 @@ impl State {
 
         // Sync windows
         let window_infos = ws.get_on_screen_windows();
-        self.sync_with_window_infos(&window_infos);
+        self.sync_with_window_infos(ws, &window_infos);
         self.sync_focused_window(ws);
 
         tracing::info!(
@@ -436,67 +436,23 @@ impl State {
         // Add new windows
         for id in new_ids.difference(&current_ids) {
             if let Some(info) = pid_window_infos.iter().find(|w| w.window_id == *id) {
-                let title = info.name.clone().unwrap_or_default();
-                let app_name = &info.owner_name;
-                let app_id = info.bundle_id.as_deref();
-
-                // Fetch extended attributes early for rule matching and debug logging
-                let ext = ws.get_extended_attributes(info.window_id, info.pid, info.layer);
-
-                // Log discovered window at debug level
-                tracing::debug!(
-                    "Discovered window: [{}] pid={} app='{}' app_id={:?} title='{}' ax_id={:?} subrole={:?} layer={} close={:?} fullscreen={:?} minimize={:?} zoom={:?}",
-                    info.window_id,
-                    info.pid,
-                    app_name,
-                    app_id,
-                    title,
-                    ext.ax_id,
-                    ext.subrole,
-                    ext.window_level,
-                    ext.close_button,
-                    ext.fullscreen_button,
-                    ext.minimize_button,
-                    ext.zoom_button
-                );
-
-                // Check ignore rules before creating window
-                if self.should_ignore_window_extended(app_name, app_id, &title, &ext) {
-                    tracing::info!(
-                        "Window ignored by rule: [{}] {} ({}) [ax_id={:?}, subrole={:?}, level={}]",
-                        info.window_id,
-                        title,
-                        app_name,
-                        ext.ax_id,
-                        ext.subrole,
-                        ext.window_level
-                    );
-                    continue;
-                }
-
                 let display_id = self.find_display_for_bounds(&info.bounds);
-                let mut window = Window::from_window_info(info, self.default_tag, display_id);
-                window.ax_id = ext.ax_id;
-                window.subrole = ext.subrole;
-                window.window_level = ext.window_level;
-                window.close_button = ext.close_button;
-                window.fullscreen_button = ext.fullscreen_button;
-                window.minimize_button = ext.minimize_button;
-                window.zoom_button = ext.zoom_button;
 
-                tracing::info!(
-                    "Window added: [{}] {} ({}) on display {} [ax_id={:?}, subrole={:?}, level={}]",
-                    window.id,
-                    window.title,
-                    window.app_name,
-                    display_id,
-                    window.ax_id,
-                    window.subrole,
-                    window.window_level
-                );
-                self.windows.insert(window.id, window);
-                added_window_ids.push(*id);
-                changed = true;
+                if let Some(window) = self.try_create_window(ws, info, display_id) {
+                    tracing::info!(
+                        "Window added: [{}] {} ({}) on display {} [ax_id={:?}, subrole={:?}, level={}]",
+                        window.id,
+                        window.title,
+                        window.app_name,
+                        display_id,
+                        window.ax_id,
+                        window.subrole,
+                        window.window_level
+                    );
+                    self.windows.insert(window.id, window);
+                    added_window_ids.push(*id);
+                    changed = true;
+                }
             }
         }
 
@@ -559,6 +515,68 @@ impl State {
         }
     }
 
+    /// Create a Window from WindowInfo.
+    /// Returns None if the window should be ignored based on rules.
+    /// Also fetches extended attributes and logs debug info.
+    fn try_create_window<W: WindowSystem>(
+        &self,
+        ws: &W,
+        info: &crate::macos::WindowInfo,
+        display_id: DisplayId,
+    ) -> Option<Window> {
+        let title = info.name.clone().unwrap_or_default();
+        let app_name = &info.owner_name;
+        let app_id = info.bundle_id.as_deref();
+
+        // Fetch extended attributes early for rule matching and debug logging
+        let ext = ws.get_extended_attributes(info.window_id, info.pid, info.layer);
+
+        // Log discovered window at debug level
+        tracing::debug!(
+            "Discovered window: [{}] pid={} app='{}' app_id={:?} title='{}' \
+             ax_id={:?} subrole={:?} layer={} close={:?} fullscreen={:?} \
+             minimize={:?} zoom={:?}",
+            info.window_id,
+            info.pid,
+            app_name,
+            app_id,
+            title,
+            ext.ax_id,
+            ext.subrole,
+            ext.window_level,
+            ext.close_button,
+            ext.fullscreen_button,
+            ext.minimize_button,
+            ext.zoom_button
+        );
+
+        // Check ignore rules before creating window
+        if self.should_ignore_window_extended(app_name, app_id, &title, &ext) {
+            tracing::info!(
+                "Window ignored by rule: [{}] {} ({}) [ax_id={:?}, subrole={:?}, level={}]",
+                info.window_id,
+                title,
+                app_name,
+                ext.ax_id,
+                ext.subrole,
+                ext.window_level
+            );
+            return None;
+        }
+
+        // Create Window and set extended attributes
+        let mut window = Window::from_window_info(info, self.default_tag, display_id);
+        window.ax_id = ext.ax_id;
+        window.subrole = ext.subrole;
+        window.window_level = ext.window_level;
+        window.close_button = ext.close_button;
+        window.fullscreen_button = ext.fullscreen_button;
+        window.minimize_button = ext.minimize_button;
+        window.zoom_button = ext.zoom_button;
+
+        Some(window)
+    }
+
     /// Handle an event.
     /// Returns (needs_retile, new_window_ids) where needs_retile is true if window count changed.
     pub fn handle_event<W: WindowSystem>(
@@ -600,7 +618,11 @@ impl State {
         }
     }
 
-    fn sync_with_window_infos(&mut self, window_infos: &[crate::macos::WindowInfo]) {
+    fn sync_with_window_infos<W: WindowSystem>(
+        &mut self,
+        ws: &W,
+        window_infos: &[crate::macos::WindowInfo],
+    ) {
         let current_ids: HashSet<WindowId> = self.windows.keys().copied().collect();
         let new_ids: HashSet<WindowId> = window_infos.iter().map(|w| w.window_id).collect();
 
@@ -614,9 +636,11 @@ impl State {
         for info in window_infos {
             if !self.windows.contains_key(&info.window_id) {
                 let display_id = self.find_display_for_bounds(&info.bounds);
-                let window = Window::from_window_info(info, self.default_tag, display_id);
-                self.add_to_window_order(window.id, display_id);
-                self.windows.insert(window.id, window);
+
+                if let Some(window) = self.try_create_window(ws, info, display_id) {
+                    self.add_to_window_order(window.id, display_id);
+                    self.windows.insert(window.id, window);
+                }
             }
         }
 
@@ -1499,19 +1523,64 @@ impl State {
     }
 
     /// Apply rules to all existing windows.
-    /// Returns (affected_display_ids, effects) where:
+    /// Returns (affected_display_ids, effects, removed_window_ids) where:
     /// - affected_display_ids: displays that need retiling due to tag/display changes
     /// - effects: position and dimension effects to execute
-    pub fn apply_rules_to_all_windows(&mut self) -> (Vec<DisplayId>, Vec<Effect>) {
+    /// - removed_window_ids: windows removed due to ignore rules
+    pub fn apply_rules_to_all_windows(&mut self) -> (Vec<DisplayId>, Vec<Effect>, Vec<WindowId>) {
         if self.rules.is_empty() {
-            return (vec![], vec![]);
+            return (vec![], vec![], vec![]);
         }
 
         let mut affected_displays = HashSet::new();
         let mut effects = Vec::new();
+        let mut removed_window_ids = Vec::new();
 
         // Collect window IDs first to avoid borrow issues
         let window_ids: Vec<WindowId> = self.windows.keys().copied().collect();
+
+        // First pass: find windows to remove due to ignore rules
+        let windows_to_remove: Vec<(WindowId, DisplayId)> = window_ids
+            .iter()
+            .filter_map(|&id| {
+                let window = self.windows.get(&id)?;
+                let ext = window.extended_attributes();
+                if self.should_ignore_window_extended(
+                    &window.app_name,
+                    window.app_id.as_deref(),
+                    &window.title,
+                    &ext,
+                ) {
+                    Some((id, window.display_id))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Remove ignored windows and track affected displays
+        for (window_id, display_id) in &windows_to_remove {
+            if let Some(window) = self.windows.remove(window_id) {
+                tracing::info!(
+                    "Removed window {} ({}) due to ignore rule",
+                    window_id,
+                    window.app_name
+                );
+                affected_displays.insert(*display_id);
+                removed_window_ids.push(*window_id);
+
+                // Clear focused if it was pointing to the removed window
+                if self.focused == Some(*window_id) {
+                    self.focused = None;
+                }
+            }
+        }
+
+        // Remove from window_ids to avoid processing removed windows
+        let window_ids: Vec<WindowId> = window_ids
+            .into_iter()
+            .filter(|id| !windows_to_remove.iter().any(|(rid, _)| rid == id))
+            .collect();
 
         for window_id in window_ids {
             // Get window info for rule matching
@@ -1602,7 +1671,7 @@ impl State {
         }
 
         let display_ids: Vec<_> = affected_displays.into_iter().collect();
-        (display_ids, effects)
+        (display_ids, effects, removed_window_ids)
     }
 
     /// Compute window moves (hide/show) for a display and return the moves.

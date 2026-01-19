@@ -1265,7 +1265,8 @@ fn process_command(
         }
         Command::ApplyRules => {
             // Apply rules to all existing windows
-            let (affected_displays, mut effects) = state.apply_rules_to_all_windows();
+            let (affected_displays, mut effects, _removed_window_ids) =
+                state.apply_rules_to_all_windows();
 
             // For each affected display, compute window hide/show moves
             let mut all_moves = Vec::new();
@@ -1764,6 +1765,13 @@ fn emit_state_change_events(
                     event_emitter.emit_layout_changed(*display_id, layout);
                 }
             }
+        }
+    }
+
+    // Check for removed windows
+    for window_id in pre.windows.keys() {
+        if !state.windows.contains_key(window_id) {
+            event_emitter.emit_window_destroyed(*window_id);
         }
     }
 
