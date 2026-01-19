@@ -15,9 +15,9 @@ use tracing_subscriber::EnvFilter;
 
 use ipc::IpcClient;
 use yashiki_ipc::{
-    ButtonState, Command, CursorWarpMode, Direction, EventFilter, GlobPattern, OutputDirection,
-    OutputSpecifier, Response, RuleAction, RuleMatcher, WindowLevel, WindowLevelName,
-    WindowLevelOther, WindowRule,
+    ButtonInfo, ButtonState, Command, CursorWarpMode, Direction, EventFilter, GlobPattern,
+    OutputDirection, OutputSpecifier, Response, RuleAction, RuleMatcher, WindowLevel,
+    WindowLevelName, WindowLevelOther, WindowRule, WindowStatus,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -271,7 +271,14 @@ struct LayoutCmdCmd {
 /// List all managed windows
 #[derive(FromArgs)]
 #[argh(subcommand, name = "list-windows")]
-struct ListWindowsCmd {}
+struct ListWindowsCmd {
+    /// include ignored windows (popups, tooltips, etc.)
+    #[argh(switch)]
+    all: bool,
+    /// show debug info (ax_id, subrole, window_level, buttons)
+    #[argh(switch)]
+    debug: bool,
+}
 
 /// List all displays/outputs
 #[derive(FromArgs)]
@@ -514,14 +521,21 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
         Response::Windows { windows } => {
             for w in windows {
                 let mut flags = Vec::new();
+                // Status (ignored/managed) if present
+                if let Some(status) = &w.status {
+                    match status {
+                        WindowStatus::Ignored => flags.push("ignored".to_string()),
+                        WindowStatus::Managed => {}
+                    }
+                }
                 if w.is_focused {
-                    flags.push("*");
+                    flags.push("*".to_string());
                 }
                 if w.is_floating {
-                    flags.push("float");
+                    flags.push("float".to_string());
                 }
                 if w.is_fullscreen {
-                    flags.push("full");
+                    flags.push("full".to_string());
                 }
                 let flag_str = if flags.is_empty() {
                     String::new()
@@ -529,11 +543,10 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
                     format!(" [{}]", flags.join(","))
                 };
                 println!(
-                    "{}: {} ({}) - {} [tags={}, {}x{} @ ({},{})]{}",
+                    "{}: {} ({}) [tags={}, {}x{} @ ({},{})]{}",
                     w.id,
                     w.app_name,
                     w.app_id.as_deref().unwrap_or("-"),
-                    w.title,
                     w.tags,
                     w.width,
                     w.height,
@@ -541,6 +554,49 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
                     w.y,
                     flag_str
                 );
+                // Debug info if present
+                if w.ax_id.is_some()
+                    || w.subrole.is_some()
+                    || w.window_level.is_some()
+                    || w.close_button.is_some()
+                {
+                    let mut debug_parts = Vec::new();
+                    debug_parts.push(format!("title={:?}", w.title));
+                    if let Some(ax_id) = &w.ax_id {
+                        debug_parts.push(format!("ax_id={}", ax_id));
+                    }
+                    if let Some(subrole) = &w.subrole {
+                        debug_parts.push(format!("subrole={}", subrole));
+                    }
+                    if let Some(level) = &w.window_level {
+                        let level_name = match *level {
+                            0 => "normal".to_string(),
+                            3 => "floating".to_string(),
+                            8 => "modal".to_string(),
+                            19 => "utility".to_string(),
+                            101 => "popup".to_string(),
+                            n => n.to_string(),
+                        };
+                        debug_parts.push(format!("level={}", level_name));
+                    }
+                    if let Some(btn) = &w.close_button {
+                        let state = format_button_state(btn);
+                        debug_parts.push(format!("close={}", state));
+                    }
+                    if let Some(btn) = &w.fullscreen_button {
+                        let state = format_button_state(btn);
+                        debug_parts.push(format!("fullscreen={}", state));
+                    }
+                    if let Some(btn) = &w.minimize_button {
+                        let state = format_button_state(btn);
+                        debug_parts.push(format!("minimize={}", state));
+                    }
+                    if let Some(btn) = &w.zoom_button {
+                        let state = format_button_state(btn);
+                        debug_parts.push(format!("zoom={}", state));
+                    }
+                    println!("  {}", debug_parts.join(", "));
+                }
             }
         }
         Response::Outputs { outputs } => {
@@ -685,7 +741,10 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             cmd: cmd.cmd,
             args: cmd.args,
         }),
-        SubCommand::ListWindows(_) => Ok(Command::ListWindows),
+        SubCommand::ListWindows(cmd) => Ok(Command::ListWindows {
+            all: cmd.all,
+            debug: cmd.debug,
+        }),
         SubCommand::ListOutputs(_) => Ok(Command::ListOutputs),
         SubCommand::GetState(_) => Ok(Command::GetState),
         SubCommand::FocusedWindow(_) => Ok(Command::FocusedWindow),
@@ -943,7 +1002,13 @@ fn parse_command(args: &[String]) -> Result<Command> {
                 args: cmd.args,
             })
         }
-        "list-windows" => Ok(Command::ListWindows),
+        "list-windows" => {
+            let cmd: ListWindowsCmd = from_argh(cmd_name, &cmd_args)?;
+            Ok(Command::ListWindows {
+                all: cmd.all,
+                debug: cmd.debug,
+            })
+        }
         "list-outputs" => Ok(Command::ListOutputs),
         "get-state" => Ok(Command::GetState),
         "focused-window" => Ok(Command::FocusedWindow),
@@ -1262,4 +1327,16 @@ fn parse_event_filter(s: &str) -> EventFilter {
         }
     }
     filter
+}
+
+fn format_button_state(btn: &ButtonInfo) -> &'static str {
+    if !btn.exists {
+        "none"
+    } else if btn.enabled == Some(true) {
+        "enabled"
+    } else if btn.enabled == Some(false) {
+        "disabled"
+    } else {
+        "exists"
+    }
 }

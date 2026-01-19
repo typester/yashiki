@@ -38,19 +38,16 @@ yashiki rule-add --app-name "Bartender 4" ignore
 
 ## Firefox
 
-Firefox creates temporary popup windows (dropdowns, autocomplete, etc.) that can cause flickering during window tiling. These popups have inconsistent `AXSubrole` values that sometimes bypass ignore rules.
+Firefox creates temporary popup windows (dropdowns, autocomplete, etc.) that can cause flickering during window tiling.
 
-**Workaround:**
+**Recommended rules:**
 
 ```sh
-# Ignore popup windows with AXUnknown subrole
+# Ignore popup windows with AXUnknown subrole (dropdowns, autocomplete, etc.)
 yashiki rule-add --app-id org.mozilla.firefox --subrole AXUnknown ignore
 
-# Float windows with empty titles (PiP, etc.)
-yashiki rule-add --app-id org.mozilla.firefox --title "" float
-
-# But keep normal windows with empty titles in tiling
-yashiki rule-add --app-id org.mozilla.firefox --title "" --subrole AXStandardWindow no-float
+# Float PiP (Picture-in-Picture) and other floating-level windows
+yashiki rule-add --app-id org.mozilla.firefox --window-level floating float
 ```
 
 Add these rules to your `~/.config/yashiki/init` file.

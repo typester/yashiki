@@ -12,6 +12,14 @@ pub enum CursorWarpMode {
     OnFocusChange,
 }
 
+/// Window status - indicates whether a window is managed or ignored
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowStatus {
+    Managed,
+    Ignored,
+}
+
 /// Button state matcher for window rules
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -209,6 +217,7 @@ pub struct RuleMatcher {
 pub struct ExtendedWindowAttributes {
     pub ax_id: Option<String>,
     pub subrole: Option<String>,
+    pub title: Option<String>,
     pub window_level: i32,
     pub close_button: ButtonInfo,
     pub fullscreen_button: ButtonInfo,
@@ -615,7 +624,12 @@ pub enum Command {
     ListBindings,
 
     // Queries
-    ListWindows,
+    ListWindows {
+        #[serde(default)]
+        all: bool,
+        #[serde(default)]
+        debug: bool,
+    },
     ListOutputs,
     GetState,
     FocusedWindow,
@@ -743,6 +757,24 @@ pub struct WindowInfo {
     pub is_focused: bool,
     pub is_floating: bool,
     pub is_fullscreen: bool,
+    // Optional status field (present when --all is used)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<WindowStatus>,
+    // Debug fields (present when --debug is used)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ax_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subrole: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_level: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub close_button: Option<ButtonInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fullscreen_button: Option<ButtonInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimize_button: Option<ButtonInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_button: Option<ButtonInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -918,6 +950,14 @@ mod tests {
                 is_focused: true,
                 is_floating: false,
                 is_fullscreen: false,
+                status: None,
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
             }],
         };
         let json = serde_json::to_string(&resp).unwrap();
@@ -1596,6 +1636,14 @@ mod tests {
                 is_focused: true,
                 is_floating: false,
                 is_fullscreen: false,
+                status: None,
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
             }],
         };
         let json = serde_json::to_string(&resp).unwrap();

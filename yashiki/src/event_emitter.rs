@@ -127,6 +127,15 @@ pub fn window_to_info(window: &Window, focused: Option<u32>) -> WindowInfo {
         is_focused: focused == Some(window.id),
         is_floating: window.is_floating,
         is_fullscreen: window.is_fullscreen,
+        // Debug fields not included in event streaming
+        status: None,
+        ax_id: None,
+        subrole: None,
+        window_level: None,
+        close_button: None,
+        fullscreen_button: None,
+        minimize_button: None,
+        zoom_button: None,
     }
 }
 

@@ -7,7 +7,7 @@ pub use command::{
     BindingInfo, ButtonInfo, ButtonState, Command, CursorWarpMode, Direction,
     ExtendedWindowAttributes, GlobPattern, OutputDirection, OutputInfo, OutputSpecifier, Response,
     RuleAction, RuleInfo, RuleMatcher, StateInfo, WindowInfo, WindowLevel, WindowLevelName,
-    WindowLevelOther, WindowRule,
+    WindowLevelOther, WindowRule, WindowStatus,
 };
 pub use event::{EventFilter, StateEvent, SubscribeRequest};
 pub use layout::{LayoutMessage, LayoutResult, WindowGeometry};

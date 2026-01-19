@@ -211,7 +211,10 @@ yashiki layout-cmd --layout tatami set-inner-gap 10  # Send command to specific 
 yashiki layout-cmd inc-main-count       # Increase main window count
 yashiki layout-cmd zoom                 # Move focused window to main area (tatami)
 yashiki layout-cmd zoom 123             # Move specific window to main area (tatami)
-yashiki list-windows              # List all windows
+yashiki list-windows              # List managed windows
+yashiki list-windows --all        # Include ignored windows (popups, tooltips)
+yashiki list-windows --debug      # Show debug info (ax_id, subrole, window_level, buttons)
+yashiki list-windows --all --debug  # Both options
 yashiki list-outputs              # List all displays/outputs
 yashiki get-state                 # Get current state
 yashiki exec "open -a Safari"     # Execute shell command

@@ -72,6 +72,7 @@ impl Window {
         yashiki_ipc::ExtendedWindowAttributes {
             ax_id: self.ax_id.clone(),
             subrole: self.subrole.clone(),
+            title: Some(self.title.clone()),
             window_level: self.window_level,
             close_button: self.close_button.clone(),
             fullscreen_button: self.fullscreen_button.clone(),
