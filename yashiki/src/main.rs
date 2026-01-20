@@ -498,7 +498,7 @@ fn main() -> Result<()> {
             app::App::run()
         }
         Some(SubCommand::Version(_)) => {
-            println!("yashiki {}", VERSION);
+            println!("v{}", VERSION);
             Ok(())
         }
         Some(SubCommand::Subscribe(cmd)) => {
