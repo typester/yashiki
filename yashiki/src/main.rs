@@ -299,6 +299,9 @@ struct FocusedWindowCmd {}
 #[derive(FromArgs)]
 #[argh(subcommand, name = "exec")]
 struct ExecCmd {
+    /// track process and terminate on yashiki quit
+    #[argh(switch, long = "track")]
+    track: bool,
     /// shell command to execute
     #[argh(positional)]
     command: String,
@@ -750,6 +753,7 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
         SubCommand::FocusedWindow(_) => Ok(Command::FocusedWindow),
         SubCommand::Exec(cmd) => Ok(Command::Exec {
             command: cmd.command,
+            track: cmd.track,
         }),
         SubCommand::ExecOrFocus(cmd) => Ok(Command::ExecOrFocus {
             app_name: cmd.app_name,
@@ -1016,6 +1020,7 @@ fn parse_command(args: &[String]) -> Result<Command> {
             let cmd: ExecCmd = from_argh(cmd_name, &cmd_args)?;
             Ok(Command::Exec {
                 command: cmd.command,
+                track: cmd.track,
             })
         }
         "exec-or-focus" => {

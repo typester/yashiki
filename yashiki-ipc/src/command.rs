@@ -659,6 +659,8 @@ pub enum Command {
     // Exec
     Exec {
         command: String,
+        #[serde(default)]
+        track: bool,
     },
     ExecOrFocus {
         app_name: String,
@@ -1890,5 +1892,60 @@ mod tests {
 
         // Exact patterns should be more specific
         assert!(exact_rule.specificity() > none_rule.specificity());
+    }
+
+    #[test]
+    fn test_command_exec_backward_compatibility() {
+        // Test backward compatibility: old JSON without "track" field
+        let old_json = r#"{"type":"exec","command":"echo hello"}"#;
+        let cmd: Command = serde_json::from_str(old_json).unwrap();
+        match cmd {
+            Command::Exec { command, track } => {
+                assert_eq!(command, "echo hello");
+                assert!(
+                    !track,
+                    "track should default to false for backward compatibility"
+                );
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_command_exec_with_track_serialization() {
+        // Test with track=true
+        let cmd = Command::Exec {
+            command: "sleep 1000".to_string(),
+            track: true,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"exec\""));
+        assert!(json.contains("\"command\":\"sleep 1000\""));
+        assert!(json.contains("\"track\":true"));
+
+        let deserialized: Command = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Command::Exec { command, track } => {
+                assert_eq!(command, "sleep 1000");
+                assert!(track);
+            }
+            _ => panic!("Wrong variant"),
+        }
+
+        // Test with track=false
+        let cmd = Command::Exec {
+            command: "echo hello".to_string(),
+            track: false,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+
+        let deserialized: Command = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Command::Exec { command, track } => {
+                assert_eq!(command, "echo hello");
+                assert!(!track);
+            }
+            _ => panic!("Wrong variant"),
+        }
     }
 }

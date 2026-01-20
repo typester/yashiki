@@ -60,6 +60,43 @@ pub fn exec_command(command: &str, path: &str) -> Result<(), String> {
     }
 }
 
+pub fn exec_command_tracked(command: &str, path: &str) -> Result<u32, String> {
+    let mut cmd = std::process::Command::new("/bin/bash");
+    cmd.arg("-c").arg(command);
+
+    if !path.is_empty() {
+        cmd.env("PATH", path);
+    }
+
+    match cmd.spawn() {
+        Ok(child) => {
+            let pid = child.id();
+            tracing::info!("Executed tracked command: {} (pid={})", command, pid);
+            Ok(pid)
+        }
+        Err(e) => {
+            let msg = format!("Failed to execute command '{}': {}", command, e);
+            tracing::error!("{}", msg);
+            Err(msg)
+        }
+    }
+}
+
+pub fn terminate_process(pid: u32) {
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::Pid;
+
+    let nix_pid = Pid::from_raw(pid as i32);
+    match kill(nix_pid, Signal::SIGTERM) {
+        Ok(()) => {
+            tracing::info!("Sent SIGTERM to process {}", pid);
+        }
+        Err(e) => {
+            tracing::warn!("Failed to terminate process {}: {}", pid, e);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum WorkspaceEvent {
     AppLaunched { pid: i32 },

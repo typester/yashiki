@@ -109,6 +109,8 @@ pub trait WindowManipulator {
     fn set_window_frame(&self, window_id: u32, pid: i32, x: i32, y: i32, width: u32, height: u32);
     fn close_window(&self, window_id: u32, pid: i32);
     fn exec_command(&self, command: &str, path: &str) -> Result<(), String>;
+    fn exec_command_tracked(&self, command: &str, path: &str) -> Result<u32, String>;
+    fn terminate_process(&self, pid: u32);
     fn warp_cursor(&self, x: i32, y: i32);
 }
 
@@ -466,6 +468,14 @@ impl WindowManipulator for MacOSWindowManipulator {
 
     fn exec_command(&self, command: &str, path: &str) -> Result<(), String> {
         crate::macos::exec_command(command, path)
+    }
+
+    fn exec_command_tracked(&self, command: &str, path: &str) -> Result<u32, String> {
+        crate::macos::exec_command_tracked(command, path)
+    }
+
+    fn terminate_process(&self, pid: u32) {
+        crate::macos::terminate_process(pid)
     }
 
     fn warp_cursor(&self, x: i32, y: i32) {

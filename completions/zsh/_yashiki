@@ -238,7 +238,9 @@ _yashiki() {
                         '--debug[Show debug info]'
                     ;;
                 exec)
-                    _arguments '1:shell command:'
+                    _arguments \
+                        '--track[Track process and terminate on yashiki quit]' \
+                        '1:shell command:'
                     ;;
                 exec-or-focus)
                     _arguments \

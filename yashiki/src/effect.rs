@@ -43,6 +43,10 @@ pub enum Effect {
         command: String,
         path: String,
     },
+    ExecCommandTracked {
+        command: String,
+        path: String,
+    },
     UpdateLayoutExecPath {
         path: String,
     },

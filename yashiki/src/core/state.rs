@@ -46,6 +46,12 @@ pub struct WindowMove {
     pub new_y: i32,
 }
 
+#[derive(Debug, Clone)]
+pub struct TrackedProcess {
+    pub pid: u32,
+    pub _command: String,
+}
+
 pub struct State {
     pub windows: HashMap<WindowId, Window>,
     pub displays: HashMap<DisplayId, Display>,
@@ -59,6 +65,7 @@ pub struct State {
     pub cursor_warp: CursorWarpMode,
     pub outer_gap: OuterGap,
     pub init_completed: bool,
+    pub tracked_processes: Vec<TrackedProcess>,
 }
 
 impl State {
@@ -76,6 +83,7 @@ impl State {
             cursor_warp: CursorWarpMode::default(),
             outer_gap: OuterGap::default(),
             init_completed: false,
+            tracked_processes: Vec::new(),
         }
     }
 

@@ -380,6 +380,10 @@ impl App {
 
                 // Handle Quit command after sending response
                 if matches!(cmd, Command::Quit) {
+                    // Terminate all tracked processes
+                    for process in ctx.state.borrow().tracked_processes.iter() {
+                        ctx.window_manipulator.terminate_process(process.pid);
+                    }
                     CFRunLoop::get_current().stop();
                 }
             }
@@ -1353,10 +1357,19 @@ fn process_command(
         }
 
         // Exec commands
-        Command::Exec { command } => CommandResult::ok_with_effects(vec![Effect::ExecCommand {
-            command: command.clone(),
-            path: state.exec_path.clone(),
-        }]),
+        Command::Exec { command, track } => {
+            if *track {
+                CommandResult::ok_with_effects(vec![Effect::ExecCommandTracked {
+                    command: command.clone(),
+                    path: state.exec_path.clone(),
+                }])
+            } else {
+                CommandResult::ok_with_effects(vec![Effect::ExecCommand {
+                    command: command.clone(),
+                    path: state.exec_path.clone(),
+                }])
+            }
+        }
         Command::ExecOrFocus { app_name, command } => {
             // Check if a window with the given app_name exists
             let existing_window = state
@@ -1620,6 +1633,21 @@ fn execute_effects<M: WindowManipulator>(
             }
             Effect::ExecCommand { command, path } => {
                 manipulator.exec_command(&command, &path)?;
+            }
+            Effect::ExecCommandTracked { command, path } => {
+                match manipulator.exec_command_tracked(&command, &path) {
+                    Ok(pid) => {
+                        state
+                            .borrow_mut()
+                            .tracked_processes
+                            .push(crate::core::TrackedProcess {
+                                pid,
+                                _command: command.clone(),
+                            });
+                        tracing::info!("Tracked process started: {} (pid={})", command, pid);
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             Effect::UpdateLayoutExecPath { path } => {
                 layout_engine_manager.borrow_mut().set_exec_path(&path);
@@ -2339,6 +2367,7 @@ mod tests {
             &mut hotkey_manager,
             &Command::Exec {
                 command: "open -a Safari".to_string(),
+                track: false,
             },
         );
 
@@ -2350,6 +2379,30 @@ mod tests {
                 assert_eq!(command, "open -a Safari");
             }
             _ => panic!("Expected ExecCommand effect"),
+        }
+    }
+
+    #[test]
+    fn test_exec_tracked_produces_exec_tracked_effect() {
+        let (mut state, mut hotkey_manager) = setup_state();
+
+        let result = process_command(
+            &mut state,
+            &mut hotkey_manager,
+            &Command::Exec {
+                command: "sleep 1000".to_string(),
+                track: true,
+            },
+        );
+
+        assert!(matches!(result.response, Response::Ok));
+        assert_eq!(result.effects.len(), 1);
+
+        match &result.effects[0] {
+            Effect::ExecCommandTracked { command, .. } => {
+                assert_eq!(command, "sleep 1000");
+            }
+            _ => panic!("Expected ExecCommandTracked effect"),
         }
     }
 
