@@ -1186,16 +1186,31 @@ impl State {
         Some((source_display_id, target_display_id))
     }
 
+    /// Compute the global hide position (bottom-right corner of all monitors combined).
+    /// This ensures hidden windows are placed outside the bounding box of all displays.
+    fn compute_global_hide_position(&self) -> (i32, i32) {
+        let mut max_x = 0i32;
+        let mut max_y = 0i32;
+
+        for display in self.displays.values() {
+            let right = display.frame.x + display.frame.width as i32;
+            let bottom = display.frame.y + display.frame.height as i32;
+            max_x = max_x.max(right);
+            max_y = max_y.max(bottom);
+        }
+
+        // Position window's top-left at the bottom-right corner of all monitors
+        // Subtract 1 pixel like before (AeroSpace-style)
+        (max_x - 1, max_y - 1)
+    }
+
     fn compute_layout_changes_for_display(&mut self, display_id: DisplayId) -> Vec<WindowMove> {
         let Some(display) = self.displays.get(&display_id) else {
             return vec![];
         };
         let visible_tags = display.visible_tags;
-        // Hide windows to bottom-right corner (AeroSpace-style)
-        // Position window's top-left at screen's bottom-right, so entire window is off-screen
-        // Subtract 1 pixel offset like AeroSpace does
-        let hide_x = display.frame.x + display.frame.width as i32 - 1;
-        let hide_y = display.frame.y + display.frame.height as i32 - 1;
+        // Hide windows to bottom-right corner of ALL monitors combined (AeroSpace-style)
+        let (hide_x, hide_y) = self.compute_global_hide_position();
 
         let mut moves = Vec::new();
 
@@ -1576,12 +1591,8 @@ impl State {
             return None;
         }
 
-        let (visible_tags, hide_x, hide_y) = {
-            let display = self.displays.get(&display_id)?;
-            let hide_x = display.frame.x + display.frame.width as i32 - 1;
-            let hide_y = display.frame.y + display.frame.height as i32 - 1;
-            (display.visible_tags, hide_x, hide_y)
-        };
+        let visible_tags = self.displays.get(&display_id)?.visible_tags;
+        let (hide_x, hide_y) = self.compute_global_hide_position();
 
         // Check if window should be visible
         let should_be_visible = window_tags.intersects(visible_tags);
