@@ -631,6 +631,14 @@ impl App {
                                 &ctx.window_manipulator,
                             );
                         }
+
+                        // Sync focused window in case we missed the ApplicationActivated event
+                        // (can happen if the app was activated before the observer was ready)
+                        ctx.state
+                            .borrow_mut()
+                            .sync_focused_window_with_hint(&ctx.window_system, Some(pid));
+                        ctx.event_emitter
+                            .emit_window_focused(ctx.state.borrow().focused);
                     }
                     WorkspaceEvent::AppTerminated { pid } => {
                         tracing::info!("App terminated, removing observer for pid {}", pid);
