@@ -135,7 +135,7 @@ pub fn get_all_displays() -> Vec<DisplayInfo> {
 
     display_ids
         .iter()
-        .filter_map(|&display_id| {
+        .map(|&display_id| {
             let bounds = get_display_bounds(display_id);
             let menu_bar_height = menu_bar_heights.get(&display_id).copied().unwrap_or(0.0);
 
@@ -148,7 +148,7 @@ pub fn get_all_displays() -> Vec<DisplayInfo> {
                 .cloned()
                 .unwrap_or_else(|| format!("Display {}", display_id));
 
-            Some(DisplayInfo {
+            DisplayInfo {
                 id: display_id,
                 name,
                 frame: Bounds {
@@ -158,7 +158,7 @@ pub fn get_all_displays() -> Vec<DisplayInfo> {
                     height: visible_height,
                 },
                 is_main: display_id == main_display_id,
-            })
+            }
         })
         .collect()
 }
