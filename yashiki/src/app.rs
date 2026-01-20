@@ -84,7 +84,7 @@ struct RunLoopContext {
     hotkey_manager: RefCell<HotkeyManager>,
     window_system: MacOSWindowSystem,
     window_manipulator: MacOSWindowManipulator,
-    previous_display_ids: RefCell<Vec<u32>>,
+    previous_display_infos: RefCell<Vec<macos::DisplayInfo>>,
 }
 
 pub struct App {}
@@ -332,8 +332,8 @@ impl App {
             tracing::warn!("Failed to start hotkey tap: {}", e);
         }
 
-        // Get initial display IDs for polling-based display change detection
-        let initial_display_ids = macos::get_active_display_ids();
+        // Get initial display infos for polling-based display change detection
+        let initial_display_infos = macos::get_all_displays();
 
         // Create shared context for timer and IPC source
         let context = Box::new(RunLoopContext {
@@ -350,7 +350,7 @@ impl App {
             hotkey_manager: RefCell::new(hotkey_manager),
             window_system,
             window_manipulator,
-            previous_display_ids: RefCell::new(initial_display_ids),
+            previous_display_infos: RefCell::new(initial_display_infos),
         });
         let context_ptr = Box::into_raw(context) as *mut std::ffi::c_void;
 
@@ -494,20 +494,34 @@ impl App {
                 let _ = resp_tx.send(snapshot);
             }
 
-            // Poll for display changes using CGGetActiveDisplayList
+            // Poll for display changes using Core Graphics API
             // NSApplicationDidChangeScreenParametersNotification doesn't work without NSApplication's event loop
             {
-                let current_ids = macos::get_active_display_ids();
-                let mut prev_ids = ctx.previous_display_ids.borrow_mut();
+                use std::collections::HashSet;
 
-                let mut current_sorted = current_ids.clone();
-                let mut prev_sorted = prev_ids.clone();
-                current_sorted.sort();
-                prev_sorted.sort();
+                let current_infos = macos::get_all_displays();
+                let mut prev_infos = ctx.previous_display_infos.borrow_mut();
 
-                if current_sorted != prev_sorted {
-                    tracing::info!("Display configuration changed (polling)");
-                    *prev_ids = current_ids;
+                let current_ids: HashSet<_> = current_infos.iter().map(|d| d.id).collect();
+                let prev_ids: HashSet<_> = prev_infos.iter().map(|d| d.id).collect();
+                let ids_changed = current_ids != prev_ids;
+
+                let frames_changed = if !ids_changed {
+                    current_infos.iter().any(|curr| {
+                        prev_infos
+                            .iter()
+                            .find(|p| p.id == curr.id)
+                            .is_some_and(|p| curr.frame != p.frame)
+                    })
+                } else {
+                    false
+                };
+
+                if ids_changed {
+                    // Connection/disconnection - use handle_display_change
+                    tracing::info!("Display configuration changed (connection/disconnection)");
+                    *prev_infos = current_infos.clone();
+                    drop(prev_infos);
 
                     let result = ctx
                         .state
@@ -547,6 +561,40 @@ impl App {
                             &ctx.window_manipulator,
                         );
                     }
+                } else if frames_changed {
+                    // Resolution change only - update frames directly (avoid NSScreen re-fetch in handle_display_change)
+                    tracing::info!("Display configuration changed (resolution/position)");
+                    *prev_infos = current_infos.clone();
+                    drop(prev_infos);
+
+                    // Update display frames directly using Core Graphics data
+                    {
+                        let mut state = ctx.state.borrow_mut();
+                        for info in &current_infos {
+                            if let Some(disp) = state.displays.get_mut(&info.id) {
+                                disp.frame = crate::core::Rect::from_bounds(&info.frame);
+                            }
+                        }
+                    }
+
+                    // Emit DisplayUpdated events
+                    {
+                        let state = ctx.state.borrow();
+                        let focused_display = state.focused_display;
+                        for info in &current_infos {
+                            if let Some(disp) = state.displays.get(&info.id) {
+                                ctx.event_emitter
+                                    .emit_display_updated(disp, focused_display);
+                            }
+                        }
+                    }
+
+                    // Retile all displays
+                    do_retile(
+                        &ctx.state,
+                        &ctx.layout_engine_manager,
+                        &ctx.window_manipulator,
+                    );
                 }
             }
 
