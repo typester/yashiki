@@ -1,10 +1,16 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::sync::OnceLock;
 
+use core_foundation::base::TCFType;
+use core_foundation::runloop::{
+    CFRunLoopGetMain, CFRunLoopSourceRef, CFRunLoopSourceSignal, CFRunLoopWakeUp,
+};
 use core_foundation::{
-    array::CFArray, base::TCFType, dictionary::CFDictionary, number::CFNumber, string::CFString,
+    array::CFArray, dictionary::CFDictionary, number::CFNumber, string::CFString,
 };
 use core_graphics::display::{CGDirectDisplayID, CGDisplayBounds, CGMainDisplayID};
 use core_graphics::window::{
@@ -30,21 +36,38 @@ pub struct DisplayReconfigEvent {
     pub flags: u32,
 }
 
-static DISPLAY_RECONFIG_TX: OnceLock<Sender<DisplayReconfigEvent>> = OnceLock::new();
+struct DisplayCallbackState {
+    tx: Sender<DisplayReconfigEvent>,
+    source_ptr: Arc<AtomicPtr<c_void>>,
+}
+
+static DISPLAY_CALLBACK_STATE: OnceLock<DisplayCallbackState> = OnceLock::new();
 
 extern "C" fn display_reconfig_callback(
     display_id: CGDirectDisplayID,
     flags: u32,
     _user_info: *mut c_void,
 ) {
-    if let Some(tx) = DISPLAY_RECONFIG_TX.get() {
-        let _ = tx.send(DisplayReconfigEvent { display_id, flags });
+    if let Some(state) = DISPLAY_CALLBACK_STATE.get() {
+        let _ = state.tx.send(DisplayReconfigEvent { display_id, flags });
+
+        // Signal the CFRunLoopSource to wake up the main thread
+        let source = state.source_ptr.load(Ordering::Acquire);
+        if !source.is_null() {
+            unsafe {
+                CFRunLoopSourceSignal(source as CFRunLoopSourceRef);
+                CFRunLoopWakeUp(CFRunLoopGetMain());
+            }
+        }
     }
 }
 
-pub fn register_display_callback(tx: Sender<DisplayReconfigEvent>) -> anyhow::Result<()> {
-    DISPLAY_RECONFIG_TX
-        .set(tx)
+pub fn register_display_callback(
+    tx: Sender<DisplayReconfigEvent>,
+    source_ptr: Arc<AtomicPtr<c_void>>,
+) -> anyhow::Result<()> {
+    DISPLAY_CALLBACK_STATE
+        .set(DisplayCallbackState { tx, source_ptr })
         .map_err(|_| anyhow::anyhow!("Display callback already registered"))?;
 
     let result = unsafe {

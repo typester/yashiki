@@ -71,6 +71,7 @@ struct MainChannels {
     event_tx: mpsc::Sender<Event>,
     state_event_tx: std_mpsc::Sender<StateEvent>,
     snapshot_request_rx: std_mpsc::Receiver<SnapshotRequest>,
+    display_reconfig_tx: std_mpsc::Sender<DisplayReconfigEvent>,
     display_reconfig_rx: std_mpsc::Receiver<DisplayReconfigEvent>,
     ipc_source: Arc<AtomicPtr<std::ffi::c_void>>,
 }
@@ -161,10 +162,7 @@ impl App {
         let (display_reconfig_tx, display_reconfig_rx) =
             std_mpsc::channel::<DisplayReconfigEvent>();
 
-        // Register display callback
-        if let Err(e) = macos::register_display_callback(display_reconfig_tx) {
-            tracing::warn!("Failed to register display callback: {}", e);
-        }
+        // Note: register_display_callback is called in run_main_loop after source creation
 
         // Shared pointer to CFRunLoopSource (will be set by main thread)
         let ipc_source = Arc::new(AtomicPtr::new(ptr::null_mut()));
@@ -197,6 +195,7 @@ impl App {
             event_tx,
             state_event_tx,
             snapshot_request_rx: snapshot_request_main_rx,
+            display_reconfig_tx,
             display_reconfig_rx,
             ipc_source,
         };
@@ -297,6 +296,7 @@ impl App {
             event_tx,
             state_event_tx,
             snapshot_request_rx,
+            display_reconfig_tx,
             display_reconfig_rx,
             ipc_source: ipc_source_ptr,
         } = channels;
@@ -310,13 +310,20 @@ impl App {
         let ns_app = NSApplication::sharedApplication(mtm);
         ns_app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
-        // Start observer manager
-        let mut observer_manager = ObserverManager::new(observer_event_tx);
+        // Create source pointers early (will be set after CFRunLoopSource creation)
+        let observer_source_ptr = Arc::new(AtomicPtr::new(ptr::null_mut()));
+        let workspace_source_ptr = Arc::new(AtomicPtr::new(ptr::null_mut()));
+        let display_source_ptr = Arc::new(AtomicPtr::new(ptr::null_mut()));
+
+        // Start observer manager (with source_ptr for event-driven signaling)
+        let mut observer_manager =
+            ObserverManager::new(observer_event_tx, observer_source_ptr.clone());
         observer_manager.start();
 
         // Start workspace watcher for app launch/terminate notifications
         let (workspace_event_tx, workspace_event_rx) = std_mpsc::channel::<WorkspaceEvent>();
-        let _workspace_watcher = WorkspaceWatcher::new(workspace_event_tx, mtm);
+        let _workspace_watcher =
+            WorkspaceWatcher::new(workspace_event_tx, workspace_source_ptr.clone(), mtm);
 
         // Initialize state with current windows
         let window_system = MacOSWindowSystem;
@@ -352,9 +359,6 @@ impl App {
         if let Err(e) = hotkey_manager.start() {
             tracing::warn!("Failed to start hotkey tap: {}", e);
         }
-
-        // Create shared pointer for display CFRunLoopSource
-        let display_source_ptr = Arc::new(AtomicPtr::new(ptr::null_mut()));
 
         // Create shared context for IPC/hotkey/display sources
         let context = Box::new(RunLoopContext {
@@ -619,10 +623,14 @@ impl App {
             }
             display_source_ptr.store(display_source as *mut std::ffi::c_void, Ordering::Release);
             tracing::info!("Display CFRunLoopSource created and registered");
-        }
 
-        // Create shared pointer for workspace CFRunLoopSource
-        let workspace_source_ptr = Arc::new(AtomicPtr::new(ptr::null_mut()));
+            // Register display callback (now that source_ptr is set)
+            if let Err(e) =
+                macos::register_display_callback(display_reconfig_tx, display_source_ptr.clone())
+            {
+                tracing::warn!("Failed to register display callback: {}", e);
+            }
+        }
 
         // Create CFRunLoopSource for workspace events (app launch/terminate)
         extern "C" fn workspace_source_callback(info: *const std::ffi::c_void) {
@@ -732,9 +740,6 @@ impl App {
                 .store(workspace_source as *mut std::ffi::c_void, Ordering::Release);
             tracing::info!("Workspace CFRunLoopSource created and registered");
         }
-
-        // Create shared pointer for observer CFRunLoopSource
-        let observer_source_ptr = Arc::new(AtomicPtr::new(ptr::null_mut()));
 
         // Create CFRunLoopSource for observer events
         extern "C" fn observer_source_callback(info: *const std::ffi::c_void) {
@@ -878,57 +883,6 @@ impl App {
             }
             observer_source_ptr.store(observer_source as *mut std::ffi::c_void, Ordering::Release);
             tracing::info!("Observer CFRunLoopSource created and registered");
-        }
-
-        // Spawn thread to signal display source when events arrive
-        {
-            let display_source = display_source_ptr.clone();
-            std::thread::spawn(move || {
-                // The display_reconfig_rx is owned by ctx, so we just wait for the callback to signal
-                // The CGDisplayRegisterReconfigurationCallback already sends to our channel
-                // We just need to signal the source when we know there's data
-                loop {
-                    // Sleep briefly to allow batching of rapid display changes
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    let source = display_source.load(Ordering::Acquire);
-                    if !source.is_null() {
-                        unsafe {
-                            CFRunLoopSourceSignal(source as CFRunLoopSourceRef);
-                            CFRunLoopWakeUp(CFRunLoopGetMain());
-                        }
-                    }
-                }
-            });
-        }
-
-        // Spawn thread to signal workspace source when events arrive
-        {
-            let workspace_source = workspace_source_ptr;
-            std::thread::spawn(move || loop {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                let source = workspace_source.load(Ordering::Acquire);
-                if !source.is_null() {
-                    unsafe {
-                        CFRunLoopSourceSignal(source as CFRunLoopSourceRef);
-                        CFRunLoopWakeUp(CFRunLoopGetMain());
-                    }
-                }
-            });
-        }
-
-        // Spawn thread to signal observer source when events arrive
-        {
-            let observer_source = observer_source_ptr;
-            std::thread::spawn(move || loop {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                let source = observer_source.load(Ordering::Acquire);
-                if !source.is_null() {
-                    unsafe {
-                        CFRunLoopSourceSignal(source as CFRunLoopSourceRef);
-                        CFRunLoopWakeUp(CFRunLoopGetMain());
-                    }
-                }
-            });
         }
 
         // Run init script in background thread

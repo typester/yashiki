@@ -1,9 +1,14 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc as std_mpsc;
+use std::sync::Arc;
 
 use core_foundation::base::TCFType;
-use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop};
+use core_foundation::runloop::{
+    kCFRunLoopDefaultMode, CFRunLoop, CFRunLoopGetMain, CFRunLoopSourceRef, CFRunLoopSourceSignal,
+    CFRunLoopWakeUp,
+};
 use core_foundation::string::{CFString, CFStringRef};
 
 use crate::event::Event;
@@ -15,18 +20,21 @@ use crate::macos::display::get_on_screen_windows;
 pub struct ObserverManager {
     observers: HashMap<i32, AXObserver>,
     event_tx: std_mpsc::Sender<Event>,
+    source_ptr: Arc<AtomicPtr<c_void>>,
 }
 
 struct CallbackContext {
     pid: i32,
     event_tx: std_mpsc::Sender<Event>,
+    source_ptr: Arc<AtomicPtr<c_void>>,
 }
 
 impl ObserverManager {
-    pub fn new(event_tx: std_mpsc::Sender<Event>) -> Self {
+    pub fn new(event_tx: std_mpsc::Sender<Event>, source_ptr: Arc<AtomicPtr<c_void>>) -> Self {
         Self {
             observers: HashMap::new(),
             event_tx,
+            source_ptr,
         }
     }
 
@@ -56,6 +64,7 @@ impl ObserverManager {
         let context = Box::new(CallbackContext {
             pid,
             event_tx: self.event_tx.clone(),
+            source_ptr: self.source_ptr.clone(),
         });
         let refcon = Box::into_raw(context) as *mut c_void;
 
@@ -145,6 +154,15 @@ extern "C" fn observer_callback(
         tracing::debug!("Observer event: {:?}", event);
         if let Err(e) = context.event_tx.send(event) {
             tracing::error!("Failed to send event: {}", e);
+        }
+
+        // Signal the CFRunLoopSource to wake up the main thread
+        let source = context.source_ptr.load(Ordering::Acquire);
+        if !source.is_null() {
+            unsafe {
+                CFRunLoopSourceSignal(source as CFRunLoopSourceRef);
+                CFRunLoopWakeUp(CFRunLoopGetMain());
+            }
         }
     }
 }
