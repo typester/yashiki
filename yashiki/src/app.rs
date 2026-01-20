@@ -779,10 +779,14 @@ impl App {
                         }
                     }
 
-                    // Only switch tag if focus actually changed (prevents unwanted tag switch
-                    // when accessory apps like Raycast are activated)
-                    let focus_changed =
-                        prev_focused.map(|prev| prev != focused_id).unwrap_or(false);
+                    // Only switch tag if focus changed from one window to another.
+                    // This prevents unwanted tag switch when:
+                    // 1. Accessory apps like Raycast are activated (prev_focused is None)
+                    // 2. App terminates and macOS auto-activates another app (prev was None)
+                    let focus_changed = match prev_focused {
+                        Some(Some(prev_id)) => Some(prev_id) != focused_id,
+                        _ => false,
+                    };
                     if focus_changed {
                         let moves = switch_tag_for_focused_window(&ctx.state);
                         if let Some(moves) = moves {

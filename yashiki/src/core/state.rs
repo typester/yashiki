@@ -451,6 +451,9 @@ impl State {
                     window.title,
                     window.app_name
                 );
+                if self.focused == Some(*id) {
+                    self.focused = None;
+                }
                 changed = true;
             }
         }
@@ -2032,6 +2035,27 @@ mod tests {
         assert_eq!(state.windows.len(), 1);
         assert!(state.windows.contains_key(&100));
         assert!(!state.windows.contains_key(&101));
+    }
+
+    #[test]
+    fn test_sync_pid_clears_focused_when_focused_window_removed() {
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 0.0, 0.0, 800.0, 600.0),
+                create_test_window(101, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+            ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        state.focused = Some(101); // Focus on window 101
+
+        // Remove the focused window
+        ws.remove_window(101);
+        let (changed, _) = state.sync_pid(&ws, 1000);
+
+        assert!(changed);
+        assert_eq!(state.focused, None); // focused should be cleared
     }
 
     #[test]
