@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4](https://github.com/typester/yashiki/compare/yashiki-v0.7.3...yashiki-v0.7.4) - 2026-01-20
+
+### Added
+
+- auto-recover event tap when disabled by macOS ([#63](https://github.com/typester/yashiki/pull/63))
+
 ## [0.7.3](https://github.com/typester/yashiki/compare/yashiki-v0.7.2...yashiki-v0.7.3) - 2026-01-20
 
 ### Fixed
