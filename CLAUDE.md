@@ -540,6 +540,15 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
   - Affected displays are automatically retiled
 - `handle_display_change()` in State handles the logic
 
+### NSScreen to Core Graphics Coordinate Conversion
+- **NSScreen**: origin at main screen's bottom-left, y-axis points up
+- **Core Graphics**: origin at main screen's top-left, y-axis points down
+- Conversion formula: `cg_y = main_screen_height - ns_y - height`
+- **IMPORTANT**: In multi-monitor setups, always use **main screen's height** for conversion
+  - Using each screen's own height is WRONG and causes windows to appear on wrong displays
+  - This is because NSScreen coordinates are relative to main screen's bottom, not each screen's bottom
+- Implementation in `macos/display.rs`: `get_all_displays()` gets main screen height first, then uses it for all screens
+
 ### Window Hiding (AeroSpace-style)
 - Hidden windows are moved to screen's bottom-right corner (top-left of window at bottom-right of screen)
 - Window size is preserved (no resize to 1x1)

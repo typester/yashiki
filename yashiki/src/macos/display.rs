@@ -128,6 +128,15 @@ pub fn get_all_displays() -> Vec<DisplayInfo> {
     // Use NSScreen to get visible frames (excluding menu bar and dock)
     let screens = NSScreen::screens(mtm);
 
+    // Get main screen height for coordinate conversion
+    // NSScreen uses bottom-left origin (main screen's bottom-left is (0,0))
+    // Core Graphics uses top-left origin (main screen's top-left is (0,0))
+    let main_screen_height = screens
+        .iter()
+        .find(|s| get_display_id_for_screen(s) == Some(main_display_id))
+        .map(|s| s.frame().size.height)
+        .unwrap_or(0.0);
+
     screens
         .iter()
         .filter_map(|screen| {
@@ -138,11 +147,11 @@ pub fn get_all_displays() -> Vec<DisplayInfo> {
             // Get display name via localizedName (macOS 10.15+)
             let name = screen.localizedName().to_string();
 
-            // NSScreen uses bottom-left origin, convert to top-left
-            // visibleFrame.origin.y is distance from bottom of screen
-            let full_frame = screen.frame();
+            // Convert NSScreen coordinates to Core Graphics coordinates
+            // NSScreen: origin.y is distance from main screen's bottom
+            // Core Graphics: origin.y is distance from main screen's top
             let top_left_y =
-                full_frame.size.height - visible_frame.origin.y - visible_frame.size.height;
+                main_screen_height - visible_frame.origin.y - visible_frame.size.height;
 
             Some(DisplayInfo {
                 id: display_id,
