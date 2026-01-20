@@ -330,6 +330,7 @@ yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
 - **macos/display.rs** - CGWindowList window enumeration, display info
   - `get_on_screen_windows()` (includes bundle_id), `get_all_displays()` (uses NSScreen visibleFrame)
   - `get_active_display_ids()` - uses CGGetActiveDisplayList for polling-based display change detection
+  - `detect_menu_bar_heights()` - workaround for NSScreen.visibleFrame bug on external monitors
 - **macos/observer.rs** - AXObserver for window events
   - `ObserverManager` with `add_observer()`, `remove_observer()`, `has_observer()`
 - **macos/workspace.rs** - NSWorkspace app launch/terminate notifications, `activate_application()`, `get_frontmost_app_pid()`, `get_bundle_id_for_pid()`, `exec_command()`
@@ -548,6 +549,52 @@ Focus involves: `activate_application(pid)` then `AXUIElement.raise()`
   - Using each screen's own height is WRONG and causes windows to appear on wrong displays
   - This is because NSScreen coordinates are relative to main screen's bottom, not each screen's bottom
 - Implementation in `macos/display.rs`: `get_all_displays()` gets main screen height first, then uses it for all screens
+
+### External Monitor Menu Bar Detection (macOS Bug Workaround)
+
+**Problem**: `NSScreen.visibleFrame` does not correctly report the menu bar area on some external monitors. It returns the same value as `frame`, causing windows to be positioned behind the menu bar.
+
+**Observed on**:
+- macOS 15.2 (Sequoia) with EIZO EV2785 external monitor
+- May be a macOS bug or monitor-specific issue
+- Needs verification on other macOS versions and monitor models
+
+**Evidence** (from investigation):
+```
+# External monitor (EV2785):
+CGDisplayBounds: (-2560, 89, 2560, 1440)
+NSScreen.frame == NSScreen.visibleFrame  # Bug: no menu bar reported
+
+# Window Server menu bar window on EV2785:
+Position: (-2560, 89), Size: 2560x30, Layer: 24
+
+# Symptom: Setting window y=99 results in y=119 (macOS clamps to below menu bar)
+```
+
+**Workaround** (implemented in `macos/display.rs`):
+1. `detect_menu_bar_heights()` scans CGWindowList for Window Server windows at layer 24
+2. Menu bars are identified by: owner="Window Server", layer=24, height<50, width>500
+3. Matched to displays by comparing (x, y, width) with `CGDisplayBounds`
+4. `get_all_displays()` checks if `visibleFrame.height == frame.height`
+5. If equal (menu bar not reported), applies detected menu bar height adjustment:
+   - `effective_height = height - menu_bar_height`
+   - CG y coordinate adjusted accordingly via conversion formula
+
+**Coordinate adjustment logic**:
+```rust
+// When visibleFrame == frame (bug case):
+effective_height = visible_frame.size.height - menu_bar_height;
+// effective_y unchanged (menu bar is at TOP, NSScreen origin is at BOTTOM)
+
+// Conversion to CG coordinates:
+top_left_y = main_screen_height - effective_y - effective_height;
+// Result: top_left_y increases by menu_bar_height (correct: usable area starts below menu bar)
+```
+
+**Future considerations**:
+- Monitor if Apple fixes this in future macOS versions
+- Test on other external monitors to determine if this is monitor-specific
+- The workaround is safe: only applies when `visibleFrame == frame`
 
 ### Window Hiding (AeroSpace-style)
 - Hidden windows are moved to screen's bottom-right corner (top-left of window at bottom-right of screen)
