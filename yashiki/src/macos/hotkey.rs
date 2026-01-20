@@ -1,9 +1,13 @@
 use std::collections::HashMap;
+use std::ffi::c_void;
+use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 
+use core_foundation::base::TCFType;
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopSource};
+use core_foundation_sys::mach_port::CFMachPortRef;
 use core_foundation_sys::runloop::{CFRunLoopSourceRef, CFRunLoopSourceSignal};
 use core_graphics::event::{
     CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
@@ -11,6 +15,10 @@ use core_graphics::event::{
 };
 
 use yashiki_ipc::Command;
+
+extern "C" {
+    fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Hotkey {
@@ -139,12 +147,34 @@ impl HotkeyManager {
         let tx = self.command_tx.clone();
         let source = Arc::clone(&self.runloop_source);
 
+        let mach_port_ptr: Arc<AtomicPtr<c_void>> = Arc::new(AtomicPtr::new(ptr::null_mut()));
+        let mach_port_for_callback = Arc::clone(&mach_port_ptr);
+
         let tap = CGEventTap::new(
             CGEventTapLocation::Session,
             CGEventTapPlacement::HeadInsertEventTap,
             CGEventTapOptions::Default,
             vec![CGEventType::KeyDown],
-            move |_proxy, _event_type, event| {
+            move |_proxy, event_type, event| {
+                match event_type {
+                    CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
+                        let reason = if matches!(event_type, CGEventType::TapDisabledByTimeout) {
+                            "timeout"
+                        } else {
+                            "user input"
+                        };
+                        tracing::warn!("Event tap disabled by {}, re-enabling...", reason);
+                        let ptr = mach_port_for_callback.load(Ordering::Acquire);
+                        if !ptr.is_null() {
+                            unsafe {
+                                CGEventTapEnable(ptr as CFMachPortRef, true);
+                            }
+                        }
+                        return CallbackResult::Keep;
+                    }
+                    _ => {}
+                }
+
                 let key_code =
                     event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
                 let flags = event.get_flags();
@@ -182,6 +212,11 @@ impl HotkeyManager {
         .map_err(|_| {
             "Failed to create event tap. Make sure Accessibility permission is granted."
         })?;
+
+        mach_port_ptr.store(
+            tap.mach_port().as_concrete_TypeRef() as *mut c_void,
+            Ordering::Release,
+        );
 
         tap.enable();
 
