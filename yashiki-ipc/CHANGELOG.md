@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.5](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.7.4...yashiki-ipc-v0.7.5) - 2026-01-20
+
+### Added
+
+- add --track option to exec command for process lifecycle management ([#66](https://github.com/typester/yashiki/pull/66))
+
 ## [0.7.0](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.6.0...yashiki-ipc-v0.7.0) - 2026-01-19
 
 ### Added
