@@ -657,6 +657,13 @@ impl App {
                     Event::FocusedWindowChanged | Event::ApplicationActivated { .. }
                 );
 
+                // Capture previous focused window before handle_event updates it
+                let prev_focused = if is_focus_event {
+                    Some(ctx.state.borrow().focused)
+                } else {
+                    None
+                };
+
                 // For ApplicationActivated, sync windows if none exist for this pid.
                 // This handles cases where AppLaunched event was missed.
                 if let Event::ApplicationActivated { pid } = &event {
@@ -719,10 +726,17 @@ impl App {
                             needs_retile = true;
                         }
                     }
-                    let moves = switch_tag_for_focused_window(&ctx.state);
-                    if let Some(moves) = moves {
-                        ctx.window_manipulator.apply_window_moves(&moves);
-                        needs_retile = true;
+
+                    // Only switch tag if focus actually changed (prevents unwanted tag switch
+                    // when accessory apps like Raycast are activated)
+                    let focus_changed =
+                        prev_focused.map(|prev| prev != focused_id).unwrap_or(false);
+                    if focus_changed {
+                        let moves = switch_tag_for_focused_window(&ctx.state);
+                        if let Some(moves) = moves {
+                            ctx.window_manipulator.apply_window_moves(&moves);
+                            needs_retile = true;
+                        }
                     }
                 }
 
