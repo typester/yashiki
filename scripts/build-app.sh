@@ -141,10 +141,18 @@ echo "Created: ${APP_DIR}"
 
 # Create zip for release
 if [[ "$RELEASE" == true ]]; then
+    # Copy shell completions
+    echo "Copying shell completions..."
+    mkdir -p "${OUTPUT_DIR}/completions/zsh"
+    cp "${PROJECT_ROOT}/completions/zsh/_yashiki" "${OUTPUT_DIR}/completions/zsh/"
+
     ZIP_NAME="Yashiki${ARCH_SUFFIX}-${VERSION}.zip"
     echo "Creating ${ZIP_NAME}..."
-    (cd "${OUTPUT_DIR}" && zip -r "${ZIP_NAME}" "${APP_NAME}")
+    (cd "${OUTPUT_DIR}" && zip -r "${ZIP_NAME}" "${APP_NAME}" completions/)
     echo "Created: ${OUTPUT_DIR}/${ZIP_NAME}"
+
+    # Cleanup completions directory after zip creation
+    rm -rf "${OUTPUT_DIR}/completions"
 fi
 
 echo "Done!"
