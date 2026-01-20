@@ -216,7 +216,15 @@ yashiki list-windows --debug     # Show debug info (ax_id, subrole, window_level
 yashiki list-outputs             # List all displays
 yashiki get-state                # Get current state
 yashiki exec "open -a Safari"    # Execute command
+yashiki exec --track "borders"   # Execute and terminate on yashiki quit
 yashiki exec-or-focus --app-name Safari "open -a Safari"  # Focus or launch
+```
+
+The `--track` option is useful for launching companion tools like [JankyBorders](https://github.com/FelixKratz/JankyBorders) that should run alongside yashiki:
+
+```sh
+# In ~/.config/yashiki/init
+yashiki exec --track "borders active_color=0xffe1e3e4"
 ```
 
 ### Cursor Warp

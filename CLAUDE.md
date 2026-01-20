@@ -109,6 +109,7 @@ yashiki list-windows [--all] [--debug]
 yashiki list-outputs
 yashiki get-state
 yashiki exec "command"
+yashiki exec --track "borders"  # Track process, terminate on quit
 yashiki exec-or-focus --app-name Safari "open -a Safari"
 yashiki set-exec-path|add-exec-path|exec-path
 yashiki rule-add --app-name|--app-id|--title|--ax-id|--subrole|--window-level|--*-button <pattern> <action>
@@ -129,6 +130,9 @@ yashiki add-exec-path /opt/homebrew/bin
 yashiki set-cursor-warp on-focus-change
 yashiki layout-set-default tatami
 yashiki layout-set --tags 4 byobu
+
+# Start companion tools (terminated on yashiki quit)
+yashiki exec --track "borders active_color=0xffe1e3e4"
 
 # Tag bindings
 yashiki bind alt-1 tag-view 1

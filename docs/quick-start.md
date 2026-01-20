@@ -448,6 +448,9 @@ yashiki bind alt-shift-return exec "open -n /Applications/Ghostty.app"
 yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
 yashiki bind alt-c exec-or-focus --app-name "Google Chrome" "open -a 'Google Chrome'"
 
+# Companion tools (terminated on yashiki quit)
+yashiki exec --track "borders active_color=0xffe1e3e4"
+
 # Window rules - Float dialogs and utilities
 yashiki rule-add --app-name Finder float
 yashiki rule-add --app-name "System Settings" float
@@ -561,6 +564,7 @@ Run `yashiki` without arguments to see all available commands, or check the [REA
 - Use `yashiki get-state` to see the current state of all windows and displays
 - Use `RUST_LOG=yashiki=debug yashiki start` to debug issues
 - Check `yashiki list-windows` to see which windows are managed and their tags
+- Use `yashiki exec --track` to launch companion tools like [JankyBorders](https://github.com/FelixKratz/JankyBorders) - they'll be terminated automatically when yashiki quits
 
 ### Getting Help
 
