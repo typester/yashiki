@@ -1,9 +1,12 @@
 use std::collections::HashMap;
+use std::ffi::c_void;
+use std::sync::mpsc::Sender;
+use std::sync::OnceLock;
 
 use core_foundation::{
     array::CFArray, base::TCFType, dictionary::CFDictionary, number::CFNumber, string::CFString,
 };
-use core_graphics::display::{CGDisplayBounds, CGMainDisplayID};
+use core_graphics::display::{CGDirectDisplayID, CGDisplayBounds, CGMainDisplayID};
 use core_graphics::window::{
     kCGNullWindowID, kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly,
     CGWindowListCopyWindowInfo,
@@ -12,6 +15,49 @@ use objc2::MainThreadMarker;
 use objc2_app_kit::NSScreen;
 
 use super::get_bundle_id_for_pid;
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGDisplayRegisterReconfigurationCallback(
+        callback: unsafe extern "C" fn(CGDirectDisplayID, u32, *mut c_void),
+        user_info: *mut c_void,
+    ) -> i32;
+}
+
+#[derive(Debug, Clone)]
+pub struct DisplayReconfigEvent {
+    pub display_id: DisplayId,
+    pub flags: u32,
+}
+
+static DISPLAY_RECONFIG_TX: OnceLock<Sender<DisplayReconfigEvent>> = OnceLock::new();
+
+extern "C" fn display_reconfig_callback(
+    display_id: CGDirectDisplayID,
+    flags: u32,
+    _user_info: *mut c_void,
+) {
+    if let Some(tx) = DISPLAY_RECONFIG_TX.get() {
+        let _ = tx.send(DisplayReconfigEvent { display_id, flags });
+    }
+}
+
+pub fn register_display_callback(tx: Sender<DisplayReconfigEvent>) -> anyhow::Result<()> {
+    DISPLAY_RECONFIG_TX
+        .set(tx)
+        .map_err(|_| anyhow::anyhow!("Display callback already registered"))?;
+
+    let result = unsafe {
+        CGDisplayRegisterReconfigurationCallback(display_reconfig_callback, std::ptr::null_mut())
+    };
+
+    if result != 0 {
+        anyhow::bail!("Failed to register display callback: {}", result);
+    }
+
+    tracing::info!("Display reconfiguration callback registered");
+    Ok(())
+}
 
 pub type DisplayId = u32;
 

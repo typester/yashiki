@@ -11,8 +11,12 @@ use core_foundation_sys::runloop::{
     CFRunLoopAddSource, CFRunLoopGetMain, CFRunLoopSourceContext, CFRunLoopSourceCreate,
     CFRunLoopSourceRef, CFRunLoopSourceSignal, CFRunLoopWakeUp,
 };
+use objc2::rc::Retained;
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSEvent, NSEventType};
 use objc2_foundation::MainThreadMarker;
 use tokio::sync::mpsc;
+
+use crate::macos::DisplayReconfigEvent;
 
 use crate::core::{FocusOutputResult, State, WindowMove};
 use crate::effect::{CommandResult, Effect};
@@ -67,6 +71,7 @@ struct MainChannels {
     event_tx: mpsc::Sender<Event>,
     state_event_tx: std_mpsc::Sender<StateEvent>,
     snapshot_request_rx: std_mpsc::Receiver<SnapshotRequest>,
+    display_reconfig_rx: std_mpsc::Receiver<DisplayReconfigEvent>,
     ipc_source: Arc<AtomicPtr<std::ffi::c_void>>,
 }
 
@@ -76,6 +81,7 @@ struct RunLoopContext {
     observer_event_rx: std_mpsc::Receiver<Event>,
     workspace_event_rx: std_mpsc::Receiver<WorkspaceEvent>,
     snapshot_request_rx: std_mpsc::Receiver<SnapshotRequest>,
+    display_reconfig_rx: std_mpsc::Receiver<DisplayReconfigEvent>,
     event_tx: mpsc::Sender<Event>,
     event_emitter: EventEmitter,
     observer_manager: RefCell<ObserverManager>,
@@ -84,7 +90,7 @@ struct RunLoopContext {
     hotkey_manager: RefCell<HotkeyManager>,
     window_system: MacOSWindowSystem,
     window_manipulator: MacOSWindowManipulator,
-    previous_display_infos: RefCell<Vec<macos::DisplayInfo>>,
+    ns_app: Retained<NSApplication>,
 }
 
 pub struct App {}
@@ -151,6 +157,15 @@ impl App {
         let (snapshot_request_main_tx, snapshot_request_main_rx) =
             std_mpsc::channel::<SnapshotRequest>();
 
+        // Channel: display reconfiguration events (callback -> main thread)
+        let (display_reconfig_tx, display_reconfig_rx) =
+            std_mpsc::channel::<DisplayReconfigEvent>();
+
+        // Register display callback
+        if let Err(e) = macos::register_display_callback(display_reconfig_tx) {
+            tracing::warn!("Failed to register display callback: {}", e);
+        }
+
         // Shared pointer to CFRunLoopSource (will be set by main thread)
         let ipc_source = Arc::new(AtomicPtr::new(ptr::null_mut()));
         let ipc_source_clone = Arc::clone(&ipc_source);
@@ -182,6 +197,7 @@ impl App {
             event_tx,
             state_event_tx,
             snapshot_request_rx: snapshot_request_main_rx,
+            display_reconfig_rx,
             ipc_source,
         };
 
@@ -281,6 +297,7 @@ impl App {
             event_tx,
             state_event_tx,
             snapshot_request_rx,
+            display_reconfig_rx,
             ipc_source: ipc_source_ptr,
         } = channels;
 
@@ -288,6 +305,10 @@ impl App {
 
         // Get MainThreadMarker - we're on the main thread
         let mtm = MainThreadMarker::new().expect("Must be called from main thread");
+
+        // Initialize NSApplication (required for CGDisplayRegisterReconfigurationCallback)
+        let ns_app = NSApplication::sharedApplication(mtm);
+        ns_app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
         // Start observer manager
         let mut observer_manager = ObserverManager::new(observer_event_tx);
@@ -332,16 +353,17 @@ impl App {
             tracing::warn!("Failed to start hotkey tap: {}", e);
         }
 
-        // Get initial display infos for polling-based display change detection
-        let initial_display_infos = macos::get_all_displays();
+        // Create shared pointer for display CFRunLoopSource
+        let display_source_ptr = Arc::new(AtomicPtr::new(ptr::null_mut()));
 
-        // Create shared context for timer and IPC source
+        // Create shared context for IPC/hotkey/display sources
         let context = Box::new(RunLoopContext {
             ipc_cmd_rx,
             hotkey_cmd_rx,
             observer_event_rx,
             workspace_event_rx,
             snapshot_request_rx,
+            display_reconfig_rx,
             event_tx,
             event_emitter,
             observer_manager: RefCell::new(observer_manager),
@@ -350,13 +372,19 @@ impl App {
             hotkey_manager: RefCell::new(hotkey_manager),
             window_system,
             window_manipulator,
-            previous_display_infos: RefCell::new(initial_display_infos),
+            ns_app: ns_app.clone(),
         });
         let context_ptr = Box::into_raw(context) as *mut std::ffi::c_void;
 
         // Create CFRunLoopSource for IPC commands (immediate processing)
         extern "C" fn ipc_source_callback(info: *const std::ffi::c_void) {
             let ctx = unsafe { &*(info as *const RunLoopContext) };
+
+            // Process snapshot requests
+            while let Ok(resp_tx) = ctx.snapshot_request_rx.try_recv() {
+                let snapshot = create_snapshot(&ctx.state.borrow());
+                let _ = resp_tx.send(snapshot);
+            }
 
             // Process all pending IPC commands
             while let Ok((cmd, resp_tx)) = ctx.ipc_cmd_rx.try_recv() {
@@ -384,10 +412,29 @@ impl App {
                     for process in ctx.state.borrow().tracked_processes.iter() {
                         ctx.window_manipulator.terminate_process(process.pid);
                     }
-                    CFRunLoop::get_current().stop();
+                    // Stop NSApplication and post a dummy event to exit run() immediately
+                    ctx.ns_app.stop(None);
+                    // Post dummy event to wake up NSApp.run()
+                    if let Some(event) = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
+                        NSEventType::ApplicationDefined,
+                        objc2_foundation::NSPoint::new(0.0, 0.0),
+                        objc2_app_kit::NSEventModifierFlags::empty(),
+                        0.0,
+                        0,
+                        None,
+                        0,
+                        0,
+                        0,
+                    ) {
+                        ctx.ns_app.postEvent_atStart(&event, true);
+                    }
                 }
             }
-            // Note: ensure_tap is called in timer_callback to batch hotkey binding changes
+
+            // Apply pending hotkey binding changes
+            if let Err(e) = ctx.hotkey_manager.borrow_mut().ensure_tap() {
+                tracing::error!("Failed to update hotkey tap: {}", e);
+            }
         }
 
         let mut source_context = CFRunLoopSourceContext {
@@ -478,122 +525,60 @@ impl App {
             tracing::info!("Hotkey CFRunLoopSource created and registered");
         }
 
-        let mut timer_context = core_foundation::runloop::CFRunLoopTimerContext {
-            version: 0,
-            info: context_ptr,
-            retain: None,
-            release: None,
-            copyDescription: None,
-        };
-
-        extern "C" fn timer_callback(
-            _timer: core_foundation::runloop::CFRunLoopTimerRef,
-            info: *mut std::ffi::c_void,
-        ) {
+        // Create CFRunLoopSource for display reconfiguration events
+        extern "C" fn display_source_callback(info: *const std::ffi::c_void) {
             let ctx = unsafe { &*(info as *const RunLoopContext) };
 
-            // Process snapshot requests
-            while let Ok(resp_tx) = ctx.snapshot_request_rx.try_recv() {
-                let snapshot = create_snapshot(&ctx.state.borrow());
-                let _ = resp_tx.send(snapshot);
-            }
+            // Process all pending display reconfig events
+            while let Ok(event) = ctx.display_reconfig_rx.try_recv() {
+                tracing::info!(
+                    "Display reconfiguration: display_id={}, flags={:#x}",
+                    event.display_id,
+                    event.flags
+                );
 
-            // Poll for display changes using Core Graphics API
-            // NSApplicationDidChangeScreenParametersNotification doesn't work without NSApplication's event loop
-            {
-                use std::collections::HashSet;
+                // Handle display change
+                let result = ctx
+                    .state
+                    .borrow_mut()
+                    .handle_display_change(&ctx.window_system);
 
-                let current_infos = macos::get_all_displays();
-                let mut prev_infos = ctx.previous_display_infos.borrow_mut();
+                // Emit display events
+                let focused_display = ctx.state.borrow().focused_display;
+                for display in &result.added {
+                    ctx.event_emitter
+                        .emit_display_added(display, focused_display);
+                }
+                for display_id in &result.removed {
+                    ctx.event_emitter.emit_display_removed(*display_id);
+                }
 
-                let current_ids: HashSet<_> = current_infos.iter().map(|d| d.id).collect();
-                let prev_ids: HashSet<_> = prev_infos.iter().map(|d| d.id).collect();
-                let ids_changed = current_ids != prev_ids;
-
-                let frames_changed = if !ids_changed {
-                    current_infos.iter().any(|curr| {
-                        prev_infos
-                            .iter()
-                            .find(|p| p.id == curr.id)
-                            .is_some_and(|p| curr.frame != p.frame)
-                    })
-                } else {
-                    false
-                };
-
-                if ids_changed {
-                    // Connection/disconnection - use handle_display_change
-                    tracing::info!("Display configuration changed (connection/disconnection)");
-                    *prev_infos = current_infos.clone();
-                    drop(prev_infos);
-
-                    let result = ctx
-                        .state
-                        .borrow_mut()
-                        .handle_display_change(&ctx.window_system);
-
-                    // Emit display events
-                    let focused_display = ctx.state.borrow().focused_display;
-                    for display in &result.added {
+                // Emit DisplayUpdated events for frame changes
+                {
+                    let state = ctx.state.borrow();
+                    for disp in state.displays.values() {
                         ctx.event_emitter
-                            .emit_display_added(display, focused_display);
+                            .emit_display_updated(disp, focused_display);
                     }
-                    for display_id in &result.removed {
-                        ctx.event_emitter.emit_display_removed(*display_id);
-                    }
+                }
 
-                    // Apply window moves for orphaned windows
-                    if !result.window_moves.is_empty() {
-                        ctx.window_manipulator
-                            .apply_window_moves(&result.window_moves);
-                    }
+                // Apply window moves for orphaned windows
+                if !result.window_moves.is_empty() {
+                    ctx.window_manipulator
+                        .apply_window_moves(&result.window_moves);
+                }
 
-                    // Retile affected displays
-                    if !result.displays_to_retile.is_empty() {
-                        for display_id in result.displays_to_retile {
-                            do_retile_display(
-                                &ctx.state,
-                                &ctx.layout_engine_manager,
-                                &ctx.window_manipulator,
-                                display_id,
-                            );
-                        }
-                    } else {
-                        do_retile(
+                // Retile affected displays
+                if !result.displays_to_retile.is_empty() {
+                    for display_id in result.displays_to_retile {
+                        do_retile_display(
                             &ctx.state,
                             &ctx.layout_engine_manager,
                             &ctx.window_manipulator,
+                            display_id,
                         );
                     }
-                } else if frames_changed {
-                    // Resolution change only - update frames directly (avoid NSScreen re-fetch in handle_display_change)
-                    tracing::info!("Display configuration changed (resolution/position)");
-                    *prev_infos = current_infos.clone();
-                    drop(prev_infos);
-
-                    // Update display frames directly using Core Graphics data
-                    {
-                        let mut state = ctx.state.borrow_mut();
-                        for info in &current_infos {
-                            if let Some(disp) = state.displays.get_mut(&info.id) {
-                                disp.frame = crate::core::Rect::from_bounds(&info.frame);
-                            }
-                        }
-                    }
-
-                    // Emit DisplayUpdated events
-                    {
-                        let state = ctx.state.borrow();
-                        let focused_display = state.focused_display;
-                        for info in &current_infos {
-                            if let Some(disp) = state.displays.get(&info.id) {
-                                ctx.event_emitter
-                                    .emit_display_updated(disp, focused_display);
-                            }
-                        }
-                    }
-
-                    // Retile all displays
+                } else {
                     do_retile(
                         &ctx.state,
                         &ctx.layout_engine_manager,
@@ -601,8 +586,49 @@ impl App {
                     );
                 }
             }
+        }
 
-            // Process workspace events (app launch/terminate/display change)
+        let mut display_source_context = CFRunLoopSourceContext {
+            version: 0,
+            info: context_ptr,
+            retain: None,
+            release: None,
+            copyDescription: None,
+            equal: None,
+            hash: None,
+            schedule: None,
+            cancel: None,
+            perform: display_source_callback,
+        };
+
+        let display_source =
+            unsafe { CFRunLoopSourceCreate(ptr::null(), 0, &mut display_source_context) };
+        if display_source.is_null() {
+            tracing::error!("Failed to create CFRunLoopSource for display");
+        } else {
+            // Register source with main RunLoop
+            let run_loop = unsafe {
+                core_foundation::runloop::CFRunLoop::wrap_under_get_rule(CFRunLoopGetMain())
+            };
+            unsafe {
+                CFRunLoopAddSource(
+                    run_loop.as_concrete_TypeRef(),
+                    display_source,
+                    kCFRunLoopDefaultMode,
+                );
+            }
+            display_source_ptr.store(display_source as *mut std::ffi::c_void, Ordering::Release);
+            tracing::info!("Display CFRunLoopSource created and registered");
+        }
+
+        // Create shared pointer for workspace CFRunLoopSource
+        let workspace_source_ptr = Arc::new(AtomicPtr::new(ptr::null_mut()));
+
+        // Create CFRunLoopSource for workspace events (app launch/terminate)
+        extern "C" fn workspace_source_callback(info: *const std::ffi::c_void) {
+            let ctx = unsafe { &*(info as *const RunLoopContext) };
+
+            // Process workspace events (app launch/terminate)
             while let Ok(event) = ctx.workspace_event_rx.try_recv() {
                 match event {
                     WorkspaceEvent::AppLaunched { pid } => {
@@ -665,49 +691,54 @@ impl App {
                         }
                     }
                     WorkspaceEvent::DisplaysChanged => {
-                        tracing::info!("Display configuration changed");
-                        let result = ctx
-                            .state
-                            .borrow_mut()
-                            .handle_display_change(&ctx.window_system);
-
-                        // Emit display events
-                        let focused_display = ctx.state.borrow().focused_display;
-                        for display in &result.added {
-                            ctx.event_emitter
-                                .emit_display_added(display, focused_display);
-                        }
-                        for display_id in &result.removed {
-                            ctx.event_emitter.emit_display_removed(*display_id);
-                        }
-
-                        // Apply window moves for orphaned windows
-                        if !result.window_moves.is_empty() {
-                            ctx.window_manipulator
-                                .apply_window_moves(&result.window_moves);
-                        }
-
-                        // Retile affected displays
-                        if !result.displays_to_retile.is_empty() {
-                            for display_id in result.displays_to_retile {
-                                do_retile_display(
-                                    &ctx.state,
-                                    &ctx.layout_engine_manager,
-                                    &ctx.window_manipulator,
-                                    display_id,
-                                );
-                            }
-                        } else {
-                            // If no specific displays, retile all
-                            do_retile(
-                                &ctx.state,
-                                &ctx.layout_engine_manager,
-                                &ctx.window_manipulator,
-                            );
-                        }
+                        // Handled by display_source_callback via CGDisplayRegisterReconfigurationCallback
+                        tracing::debug!(
+                            "DisplaysChanged event received (handled by display callback)"
+                        );
                     }
                 }
             }
+        }
+
+        let mut workspace_source_context = CFRunLoopSourceContext {
+            version: 0,
+            info: context_ptr,
+            retain: None,
+            release: None,
+            copyDescription: None,
+            equal: None,
+            hash: None,
+            schedule: None,
+            cancel: None,
+            perform: workspace_source_callback,
+        };
+
+        let workspace_source =
+            unsafe { CFRunLoopSourceCreate(ptr::null(), 0, &mut workspace_source_context) };
+        if workspace_source.is_null() {
+            tracing::error!("Failed to create CFRunLoopSource for workspace");
+        } else {
+            let run_loop = unsafe {
+                core_foundation::runloop::CFRunLoop::wrap_under_get_rule(CFRunLoopGetMain())
+            };
+            unsafe {
+                CFRunLoopAddSource(
+                    run_loop.as_concrete_TypeRef(),
+                    workspace_source,
+                    kCFRunLoopDefaultMode,
+                );
+            }
+            workspace_source_ptr
+                .store(workspace_source as *mut std::ffi::c_void, Ordering::Release);
+            tracing::info!("Workspace CFRunLoopSource created and registered");
+        }
+
+        // Create shared pointer for observer CFRunLoopSource
+        let observer_source_ptr = Arc::new(AtomicPtr::new(ptr::null_mut()));
+
+        // Create CFRunLoopSource for observer events
+        extern "C" fn observer_source_callback(info: *const std::ffi::c_void) {
+            let ctx = unsafe { &*(info as *const RunLoopContext) };
 
             // Process observer events and forward to tokio
             let mut needs_retile = false;
@@ -815,80 +846,99 @@ impl App {
                     &ctx.window_manipulator,
                 );
             }
-
-            // Apply pending hotkey binding changes (deferred tap recreation)
-            if let Err(e) = ctx.hotkey_manager.borrow_mut().ensure_tap() {
-                tracing::error!("Failed to update hotkey tap: {}", e);
-            }
-
-            // Scan for new windows from apps without observers
-            // This handles apps like Finder that may be running without windows at startup
-            let on_screen_windows = ctx.window_system.get_on_screen_windows();
-            let mut pids_without_observers: Vec<i32> = on_screen_windows
-                .iter()
-                .map(|w| w.pid)
-                .filter(|pid| !ctx.observer_manager.borrow().has_observer(*pid))
-                .collect();
-            pids_without_observers.sort();
-            pids_without_observers.dedup();
-
-            let mut scan_needs_retile = false;
-            for pid in pids_without_observers {
-                tracing::info!(
-                    "Discovered windows from app without observer, adding observer for pid {}",
-                    pid
-                );
-                if let Err(e) = ctx.observer_manager.borrow_mut().add_observer(pid) {
-                    tracing::warn!("Failed to add observer for pid {}: {}", pid, e);
-                }
-
-                let (changed, new_window_ids) =
-                    ctx.state.borrow_mut().sync_pid(&ctx.window_system, pid);
-                if changed {
-                    scan_needs_retile = true;
-                }
-
-                // Apply rules to newly discovered windows and emit events
-                process_new_windows(
-                    new_window_ids,
-                    &ctx.state,
-                    &ctx.layout_engine_manager,
-                    &ctx.window_manipulator,
-                    &ctx.event_emitter,
-                );
-            }
-
-            if scan_needs_retile {
-                do_retile(
-                    &ctx.state,
-                    &ctx.layout_engine_manager,
-                    &ctx.window_manipulator,
-                );
-            }
         }
 
-        let timer = unsafe {
-            core_foundation::runloop::CFRunLoopTimer::new(
-                core_foundation::date::CFAbsoluteTimeGetCurrent(),
-                0.5, // 500ms interval
-                0,
-                0,
-                timer_callback,
-                &mut timer_context,
-            )
+        let mut observer_source_context = CFRunLoopSourceContext {
+            version: 0,
+            info: context_ptr,
+            retain: None,
+            release: None,
+            copyDescription: None,
+            equal: None,
+            hash: None,
+            schedule: None,
+            cancel: None,
+            perform: observer_source_callback,
         };
 
-        let run_loop = CFRunLoop::get_current();
-        run_loop.add_timer(&timer, unsafe { kCFRunLoopDefaultMode });
+        let observer_source =
+            unsafe { CFRunLoopSourceCreate(ptr::null(), 0, &mut observer_source_context) };
+        if observer_source.is_null() {
+            tracing::error!("Failed to create CFRunLoopSource for observer");
+        } else {
+            let run_loop = unsafe {
+                core_foundation::runloop::CFRunLoop::wrap_under_get_rule(CFRunLoopGetMain())
+            };
+            unsafe {
+                CFRunLoopAddSource(
+                    run_loop.as_concrete_TypeRef(),
+                    observer_source,
+                    kCFRunLoopDefaultMode,
+                );
+            }
+            observer_source_ptr.store(observer_source as *mut std::ffi::c_void, Ordering::Release);
+            tracing::info!("Observer CFRunLoopSource created and registered");
+        }
+
+        // Spawn thread to signal display source when events arrive
+        {
+            let display_source = display_source_ptr.clone();
+            std::thread::spawn(move || {
+                // The display_reconfig_rx is owned by ctx, so we just wait for the callback to signal
+                // The CGDisplayRegisterReconfigurationCallback already sends to our channel
+                // We just need to signal the source when we know there's data
+                loop {
+                    // Sleep briefly to allow batching of rapid display changes
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    let source = display_source.load(Ordering::Acquire);
+                    if !source.is_null() {
+                        unsafe {
+                            CFRunLoopSourceSignal(source as CFRunLoopSourceRef);
+                            CFRunLoopWakeUp(CFRunLoopGetMain());
+                        }
+                    }
+                }
+            });
+        }
+
+        // Spawn thread to signal workspace source when events arrive
+        {
+            let workspace_source = workspace_source_ptr;
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                let source = workspace_source.load(Ordering::Acquire);
+                if !source.is_null() {
+                    unsafe {
+                        CFRunLoopSourceSignal(source as CFRunLoopSourceRef);
+                        CFRunLoopWakeUp(CFRunLoopGetMain());
+                    }
+                }
+            });
+        }
+
+        // Spawn thread to signal observer source when events arrive
+        {
+            let observer_source = observer_source_ptr;
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                let source = observer_source.load(Ordering::Acquire);
+                if !source.is_null() {
+                    unsafe {
+                        CFRunLoopSourceSignal(source as CFRunLoopSourceRef);
+                        CFRunLoopWakeUp(CFRunLoopGetMain());
+                    }
+                }
+            });
+        }
 
         // Run init script in background thread
         std::thread::spawn(|| {
             run_init_script();
         });
 
-        tracing::info!("Entering CFRunLoop");
-        CFRunLoop::run_current();
-        tracing::info!("CFRunLoop exited");
+        tracing::info!("Entering NSApp run loop");
+        ns_app.run();
+        tracing::info!("NSApp run loop exited");
     }
 }
 
