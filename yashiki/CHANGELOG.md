@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.6](https://github.com/typester/yashiki/compare/yashiki-v0.7.5...yashiki-v0.7.6) - 2026-01-20
+
+### Fixed
+
+- Fix focus state inconsistencies in tag operations and window lifecycle ([#69](https://github.com/typester/yashiki/pull/69))
+- version cmd ([#68](https://github.com/typester/yashiki/pull/68))
+
 ## [0.7.5](https://github.com/typester/yashiki/compare/yashiki-v0.7.4...yashiki-v0.7.5) - 2026-01-20
 
 ### Added
