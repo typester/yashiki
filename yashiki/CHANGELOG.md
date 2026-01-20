@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.7](https://github.com/typester/yashiki/compare/yashiki-v0.7.6...yashiki-v0.7.7) - 2026-01-20
+
+### Fixed
+
+- Hide windows outside bounding box of all monitors ([#71](https://github.com/typester/yashiki/pull/71))
+
 ## [0.7.6](https://github.com/typester/yashiki/compare/yashiki-v0.7.5...yashiki-v0.7.6) - 2026-01-20
 
 ### Fixed
