@@ -1,0 +1,275 @@
+#compdef yashiki
+
+# Yashiki - macOS tiling window manager
+# Zsh completion script
+
+_yashiki_directions() {
+    local directions=(
+        'left:Focus window to the left'
+        'right:Focus window to the right'
+        'up:Focus window above'
+        'down:Focus window below'
+        'next:Focus next window in stack order'
+        'prev:Focus previous window in stack order'
+    )
+    _describe -t directions 'direction' directions
+}
+
+_yashiki_output_directions() {
+    local directions=(
+        'next:Focus next display'
+        'prev:Focus previous display'
+    )
+    _describe -t directions 'direction' directions
+}
+
+_yashiki_cursor_warp_modes() {
+    local modes=(
+        'disabled:Cursor does not follow focus'
+        'on-output-change:Cursor warps when focus changes to different display'
+        'on-focus-change:Cursor warps on every focus change'
+    )
+    _describe -t modes 'mode' modes
+}
+
+_yashiki_layouts() {
+    local layouts=(
+        'tatami:Master-stack layout'
+        'byobu:Accordion/stacked layout'
+    )
+    _describe -t layouts 'layout' layouts
+}
+
+_yashiki_rule_actions() {
+    local actions=(
+        'ignore:Never manage this window'
+        'float:Make window floating'
+        'no-float:Make window tiled'
+        'tags:Set window tags (requires bitmask)'
+        'output:Set window output (requires ID or name)'
+        'position:Set window position (requires x y)'
+        'dimensions:Set window dimensions (requires width height)'
+    )
+    _describe -t actions 'action' actions
+}
+
+_yashiki_window_levels() {
+    local levels=(
+        'normal:Normal window level (0)'
+        'floating:Floating window level (3)'
+        'modal:Modal window level (8)'
+        'utility:Utility window level (19)'
+        'popup:Popup window level (101)'
+        'other:Any non-normal level'
+    )
+    _describe -t levels 'window level' levels
+}
+
+_yashiki_button_states() {
+    local states=(
+        'exists:Button exists (enabled or disabled)'
+        'none:Button does not exist'
+        'enabled:Button exists and is enabled'
+        'disabled:Button exists but is disabled'
+    )
+    _describe -t states 'button state' states
+}
+
+_yashiki_event_filters() {
+    local filters=(
+        'window:Window creation/destruction/update events'
+        'focus:Focus change events'
+        'display:Display add/remove/update events'
+        'tags:Tag change events'
+        'layout:Layout change events'
+    )
+    _describe -t filters 'event filter' filters
+}
+
+_yashiki_subcommands() {
+    local commands=(
+        'start:Start the yashiki daemon'
+        'version:Show version information'
+        'bind:Bind a hotkey to a command'
+        'unbind:Unbind a hotkey'
+        'list-bindings:List all hotkey bindings'
+        'tag-view:Switch to specific tags'
+        'tag-toggle:Toggle visibility of tags'
+        'tag-view-last:Switch to previously viewed tags'
+        'window-move-to-tag:Move focused window to tags'
+        'window-toggle-tag:Toggle tags on focused window'
+        'window-focus:Focus window in specified direction'
+        'window-swap:Swap focused window with window in direction'
+        'window-toggle-fullscreen:Toggle fullscreen for focused window'
+        'window-toggle-float:Toggle floating state for focused window'
+        'window-close:Close the focused window'
+        'output-focus:Focus next or previous display'
+        'output-send:Send focused window to next or previous display'
+        'retile:Re-apply the current layout'
+        'layout-set-default:Set the default layout engine'
+        'layout-set:Set layout engine for tags'
+        'layout-get:Get current layout engine'
+        'layout-cmd:Send command to layout engine'
+        'list-windows:List all managed windows'
+        'list-outputs:List all displays'
+        'get-state:Get current window manager state'
+        'focused-window:Get the focused window ID'
+        'exec:Execute a shell command'
+        'exec-or-focus:Focus app if running, otherwise execute command'
+        'exec-path:Get the current exec path'
+        'set-exec-path:Set the exec path'
+        'add-exec-path:Add a path to exec path'
+        'rule-add:Add a window rule'
+        'rule-del:Remove a window rule'
+        'list-rules:List all window rules'
+        'set-cursor-warp:Set cursor warp mode'
+        'get-cursor-warp:Get current cursor warp mode'
+        'set-outer-gap:Set outer gap'
+        'get-outer-gap:Get current outer gap'
+        'subscribe:Subscribe to state change events'
+        'quit:Quit the yashiki daemon'
+    )
+    _describe -t commands 'command' commands
+}
+
+_yashiki_bind_commands() {
+    local commands=(
+        'tag-view:Switch to specific tags'
+        'tag-toggle:Toggle visibility of tags'
+        'tag-view-last:Switch to previously viewed tags'
+        'window-move-to-tag:Move focused window to tags'
+        'window-toggle-tag:Toggle tags on focused window'
+        'window-focus:Focus window in specified direction'
+        'window-swap:Swap focused window with window in direction'
+        'window-toggle-fullscreen:Toggle fullscreen for focused window'
+        'window-toggle-float:Toggle floating state for focused window'
+        'window-close:Close the focused window'
+        'output-focus:Focus next or previous display'
+        'output-send:Send focused window to next or previous display'
+        'retile:Re-apply the current layout'
+        'layout-set-default:Set the default layout engine'
+        'layout-set:Set layout engine for tags'
+        'layout-cmd:Send command to layout engine'
+        'exec:Execute a shell command'
+        'exec-or-focus:Focus app if running, otherwise execute command'
+        'quit:Quit the yashiki daemon'
+    )
+    _describe -t commands 'command' commands
+}
+
+_yashiki_rule_options() {
+    _arguments -s \
+        '--app-name=[Application name pattern]:pattern:' \
+        '--app-id=[Bundle identifier pattern]:pattern:' \
+        '--title=[Window title pattern]:pattern:' \
+        '--ax-id=[AXIdentifier pattern]:pattern:' \
+        '--subrole=[AXSubrole pattern]:pattern:' \
+        '--window-level=[Window level]:level:_yashiki_window_levels' \
+        '--close-button=[Close button state]:state:_yashiki_button_states' \
+        '--fullscreen-button=[Fullscreen button state]:state:_yashiki_button_states' \
+        '--minimize-button=[Minimize button state]:state:_yashiki_button_states' \
+        '--zoom-button=[Zoom button state]:state:_yashiki_button_states' \
+        '*:action:_yashiki_rule_actions'
+}
+
+_yashiki() {
+    local curcontext="$curcontext" state line
+    typeset -A opt_args
+
+    _arguments -C \
+        '1: :_yashiki_subcommands' \
+        '*::arg:->args'
+
+    case $state in
+        args)
+            case $line[1] in
+                start|version|list-bindings|tag-view-last|window-toggle-fullscreen|window-toggle-float|window-close|list-outputs|get-state|focused-window|exec-path|list-rules|get-cursor-warp|get-outer-gap|quit)
+                    # No arguments
+                    ;;
+                bind)
+                    _arguments \
+                        '1:hotkey:' \
+                        '2:command:_yashiki_bind_commands' \
+                        '*:args:'
+                    ;;
+                unbind)
+                    _arguments '1:hotkey:'
+                    ;;
+                tag-view|tag-toggle)
+                    _arguments \
+                        '--output=[Output ID or name]:output:' \
+                        '1:tags bitmask:'
+                    ;;
+                window-move-to-tag|window-toggle-tag)
+                    _arguments '1:tags bitmask:'
+                    ;;
+                window-focus|window-swap)
+                    _arguments '1:direction:_yashiki_directions'
+                    ;;
+                output-focus|output-send)
+                    _arguments '1:direction:_yashiki_output_directions'
+                    ;;
+                retile)
+                    _arguments '--output=[Output ID or name]:output:'
+                    ;;
+                layout-set-default)
+                    _arguments '1:layout:_yashiki_layouts'
+                    ;;
+                layout-set)
+                    _arguments \
+                        '--tags=[Tags bitmask]:tags:' \
+                        '--output=[Output ID or name]:output:' \
+                        '1:layout:_yashiki_layouts'
+                    ;;
+                layout-get)
+                    _arguments \
+                        '--tags=[Tags bitmask]:tags:' \
+                        '--output=[Output ID or name]:output:'
+                    ;;
+                layout-cmd)
+                    _arguments \
+                        '--layout=[Target layout engine]:layout:_yashiki_layouts' \
+                        '1:command:' \
+                        '*:args:'
+                    ;;
+                list-windows)
+                    _arguments \
+                        '--all[Include ignored windows]' \
+                        '--debug[Show debug info]'
+                    ;;
+                exec)
+                    _arguments '1:shell command:'
+                    ;;
+                exec-or-focus)
+                    _arguments \
+                        '--app-name=[Application name to focus]:app name:' \
+                        '1:shell command:'
+                    ;;
+                set-exec-path)
+                    _arguments '1:path:_files -/'
+                    ;;
+                add-exec-path)
+                    _arguments \
+                        '--append[Append to end instead of prepending]' \
+                        '1:path:_files -/'
+                    ;;
+                rule-add|rule-del)
+                    _yashiki_rule_options
+                    ;;
+                set-cursor-warp)
+                    _arguments '1:mode:_yashiki_cursor_warp_modes'
+                    ;;
+                set-outer-gap)
+                    _arguments '*:gap value:'
+                    ;;
+                subscribe)
+                    _arguments \
+                        '--snapshot[Request snapshot on connection]' \
+                        '--filter=[Event filter]:filter:_yashiki_event_filters'
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_yashiki "$@"
