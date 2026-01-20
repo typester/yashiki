@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2](https://github.com/typester/yashiki/compare/yashiki-v0.7.1...yashiki-v0.7.2) - 2026-01-20
+
+### Fixed
+
+- display size change issue ([#60](https://github.com/typester/yashiki/pull/60))
+- raycast focus issue ([#59](https://github.com/typester/yashiki/pull/59))
+
 ## [0.7.1](https://github.com/typester/yashiki/compare/yashiki-v0.7.0...yashiki-v0.7.1) - 2026-01-20
 
 ### Fixed
