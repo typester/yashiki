@@ -1998,6 +1998,10 @@ fn focus_visible_window_if_needed<M: WindowManipulator>(state: &RefCell<State>, 
         tracing::info!("Focusing visible window {} after tag switch", window_id);
         manipulator.focus_window(window_id, pid);
 
+        // Update internal state immediately after focusing
+        // This ensures emit_state_change_events will detect the focus change
+        state.borrow_mut().set_focused(Some(window_id));
+
         // Warp cursor if OnFocusChange mode (not OnOutputChange since this is not an output change)
         if cursor_warp_mode == CursorWarpMode::OnFocusChange {
             manipulator.warp_cursor(cx, cy);
