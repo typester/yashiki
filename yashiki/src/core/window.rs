@@ -99,4 +99,11 @@ impl Rect {
             height: bounds.height as u32,
         }
     }
+
+    pub fn center(&self) -> (i32, i32) {
+        (
+            self.x + self.width as i32 / 2,
+            self.y + self.height as i32 / 2,
+        )
+    }
 }

@@ -47,6 +47,9 @@ pub enum Effect {
         path: String,
     },
     FocusVisibleWindowIfNeeded,
+    WarpCursorToDisplay {
+        display_id: DisplayId,
+    },
 }
 
 pub struct CommandResult {

@@ -29,6 +29,13 @@ pub struct DisplayChangeResult {
     pub removed: Vec<DisplayId>,
 }
 
+/// Result of focus_output operation
+#[derive(Debug, Clone, PartialEq)]
+pub enum FocusOutputResult {
+    Window { window_id: WindowId, pid: i32 },
+    EmptyDisplay { display_id: DisplayId },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowMove {
     pub window_id: WindowId,
@@ -1082,7 +1089,7 @@ impl State {
     }
 
     /// Focus the next/prev output (display). Returns window to focus on target display.
-    pub fn focus_output(&mut self, direction: OutputDirection) -> Option<(WindowId, i32)> {
+    pub fn focus_output(&mut self, direction: OutputDirection) -> Option<FocusOutputResult> {
         if self.displays.len() <= 1 {
             return None;
         }
@@ -1108,9 +1115,18 @@ impl State {
         );
         self.focused_display = target_display_id;
 
-        // Return a window on the target display to focus
+        // Return a window on the target display to focus, or empty display result
         let visible = self.visible_windows_on_display(target_display_id);
-        visible.first().map(|w| (w.id, w.pid))
+        if let Some(w) = visible.first() {
+            Some(FocusOutputResult::Window {
+                window_id: w.id,
+                pid: w.pid,
+            })
+        } else {
+            Some(FocusOutputResult::EmptyDisplay {
+                display_id: target_display_id,
+            })
+        }
     }
 
     /// Send focused window to next/prev output. Returns (source_display, target_display) for retiling.
@@ -1927,8 +1943,40 @@ mod tests {
         assert_eq!(state.focused_display, 2);
 
         // Should return window on display 2
-        let (window_id, _) = result.unwrap();
-        assert_eq!(window_id, 101);
+        match result.unwrap() {
+            FocusOutputResult::Window { window_id, .. } => assert_eq!(window_id, 101),
+            FocusOutputResult::EmptyDisplay { .. } => panic!("Expected Window result"),
+        }
+    }
+
+    #[test]
+    fn test_focus_output_empty_display() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                // Only window on display 1
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        assert_eq!(state.focused_display, 1);
+
+        // Focus next output (empty display)
+        let result = state.focus_output(OutputDirection::Next);
+        assert!(result.is_some());
+        assert_eq!(state.focused_display, 2);
+
+        // Should return EmptyDisplay since display 2 has no windows
+        match result.unwrap() {
+            FocusOutputResult::EmptyDisplay { display_id } => assert_eq!(display_id, 2),
+            FocusOutputResult::Window { .. } => panic!("Expected EmptyDisplay result"),
+        }
     }
 
     #[test]
