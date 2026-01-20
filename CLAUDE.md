@@ -222,7 +222,7 @@ Each group sorted alphabetically, blank lines between groups.
 - Window's display determined by center point location
 
 ### Monitor Connection/Disconnection
-- Polls `CGGetActiveDisplayList` in timer_callback (50ms)
+- Polls `CGGetActiveDisplayList` in timer_callback (500ms)
 - Orphaned windows moved to fallback display, affected displays retiled
 
 ### Coordinate Systems

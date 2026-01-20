@@ -870,7 +870,7 @@ impl App {
         let timer = unsafe {
             core_foundation::runloop::CFRunLoopTimer::new(
                 core_foundation::date::CFAbsoluteTimeGetCurrent(),
-                0.05, // 50ms interval
+                0.5, // 500ms interval
                 0,
                 0,
                 timer_callback,
