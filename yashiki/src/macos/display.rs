@@ -15,7 +15,7 @@ use super::get_bundle_id_for_pid;
 
 pub type DisplayId = u32;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DisplayInfo {
     pub id: DisplayId,
     pub name: String,
@@ -34,7 +34,7 @@ pub struct WindowInfo {
     pub layer: i32,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Bounds {
     pub x: f64,
     pub y: f64,
@@ -122,71 +122,58 @@ fn parse_bounds(dict: &CFDictionary, key: &str) -> Option<Bounds> {
 }
 
 pub fn get_all_displays() -> Vec<DisplayInfo> {
+    let display_ids = get_active_display_ids();
+    if display_ids.is_empty() {
+        return Vec::new();
+    }
+
     let main_display_id = unsafe { CGMainDisplayID() };
-
-    // Get MainThreadMarker - this is safe because we're called from the main thread
-    let mtm = unsafe { MainThreadMarker::new_unchecked() };
-
-    // Use NSScreen to get visible frames (excluding menu bar and dock)
-    let screens = NSScreen::screens(mtm);
-
-    // Get main screen height for coordinate conversion
-    // NSScreen uses bottom-left origin (main screen's bottom-left is (0,0))
-    // Core Graphics uses top-left origin (main screen's top-left is (0,0))
-    let main_screen_height = screens
-        .iter()
-        .find(|s| get_display_id_for_screen(s) == Some(main_display_id))
-        .map(|s| s.frame().size.height)
-        .unwrap_or(0.0);
-
-    // Detect menu bar heights for external monitors where NSScreen doesn't report them
     let menu_bar_heights = detect_menu_bar_heights();
+
+    // Get display names from NSScreen (names don't change with resolution)
+    let display_names = get_display_names();
+
+    display_ids
+        .iter()
+        .map(|&display_id| {
+            let bounds = get_display_bounds(display_id);
+            let menu_bar_height = menu_bar_heights.get(&display_id).copied().unwrap_or(0.0);
+
+            // Visible frame = full bounds minus menu bar at top
+            let visible_y = bounds.y + menu_bar_height;
+            let visible_height = bounds.height - menu_bar_height;
+
+            let name = display_names
+                .get(&display_id)
+                .cloned()
+                .unwrap_or_else(|| format!("Display {}", display_id));
+
+            DisplayInfo {
+                id: display_id,
+                name,
+                frame: Bounds {
+                    x: bounds.x,
+                    y: visible_y,
+                    width: bounds.width,
+                    height: visible_height,
+                },
+                is_main: display_id == main_display_id,
+            }
+        })
+        .collect()
+}
+
+/// Get display names from NSScreen (best effort, may be cached but names don't change)
+fn get_display_names() -> HashMap<DisplayId, String> {
+    let mtm = unsafe { MainThreadMarker::new_unchecked() };
+    let screens = NSScreen::screens(mtm);
 
     screens
         .iter()
         .filter_map(|screen| {
-            // Get CGDirectDisplayID from screen's deviceDescription
             let display_id = get_display_id_for_screen(&screen)?;
-            let visible_frame = screen.visibleFrame();
-            let frame = screen.frame();
-
-            // Get display name via localizedName (macOS 10.15+)
             let name = screen.localizedName().to_string();
-
-            // Determine effective visible area
-            // If visibleFrame height equals frame height (no menu bar reported),
-            // use detected menu bar height to adjust
-            let (effective_y, effective_height) =
-                if (visible_frame.size.height - frame.size.height).abs() < 1.0 {
-                    // NSScreen didn't report menu bar, check if we detected one
-                    if let Some(&menu_bar_height) = menu_bar_heights.get(&display_id) {
-                        (
-                            visible_frame.origin.y,
-                            visible_frame.size.height - menu_bar_height,
-                        )
-                    } else {
-                        (visible_frame.origin.y, visible_frame.size.height)
-                    }
-                } else {
-                    (visible_frame.origin.y, visible_frame.size.height)
-                };
-
-            // Convert NSScreen coordinates to Core Graphics coordinates
-            // NSScreen: origin.y is distance from main screen's bottom
-            // Core Graphics: origin.y is distance from main screen's top
-            let top_left_y = main_screen_height - effective_y - effective_height;
-
-            Some(DisplayInfo {
-                id: display_id,
-                name,
-                frame: Bounds {
-                    x: visible_frame.origin.x,
-                    y: top_left_y,
-                    width: visible_frame.size.width,
-                    height: effective_height,
-                },
-                is_main: display_id == main_display_id,
-            })
+            Some((display_id, name))
         })
         .collect()
 }
