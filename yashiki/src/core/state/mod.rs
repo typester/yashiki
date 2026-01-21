@@ -39,6 +39,14 @@ pub enum FocusOutputResult {
     EmptyDisplay { display_id: DisplayId },
 }
 
+/// Result of send_to_output operation
+#[derive(Debug)]
+pub struct SendToOutputResult {
+    pub source_display_id: DisplayId,
+    pub target_display_id: DisplayId,
+    pub window_moves: Vec<WindowMove>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowMove {
     pub window_id: WindowId,
@@ -315,7 +323,7 @@ impl State {
         focus_output(self, direction)
     }
 
-    pub fn send_to_output(&mut self, direction: OutputDirection) -> Option<(DisplayId, DisplayId)> {
+    pub fn send_to_output(&mut self, direction: OutputDirection) -> Option<SendToOutputResult> {
         send_to_output(self, direction)
     }
 
@@ -1257,5 +1265,157 @@ mod tests {
         let result = state.apply_rules_to_window_extended("Safari", None, "Window", &ext);
 
         assert_eq!(result.is_floating, None);
+    }
+
+    #[test]
+    fn test_send_to_output_visible_on_target() {
+        // Window tags match target display's visible_tags
+        // → Window should stay visible, no hide moves
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Both displays show tag 1 (default), window has tag 1
+        assert_eq!(state.windows.get(&100).unwrap().tags.mask(), 1);
+        assert_eq!(state.displays.get(&1).unwrap().visible_tags.mask(), 1);
+        assert_eq!(state.displays.get(&2).unwrap().visible_tags.mask(), 1);
+
+        let result = state.send_to_output(OutputDirection::Next);
+        assert!(result.is_some());
+
+        let result = result.unwrap();
+        assert_eq!(result.source_display_id, 1);
+        assert_eq!(result.target_display_id, 2);
+        // Window should stay visible - no hide moves needed
+        assert!(result.window_moves.is_empty());
+
+        // Window should be on target display
+        assert_eq!(state.windows.get(&100).unwrap().display_id, 2);
+        // Window should not be hidden
+        assert!(!state.windows.get(&100).unwrap().is_hidden());
+    }
+
+    #[test]
+    fn test_send_to_output_hidden_on_target() {
+        // Window tags don't match target display's visible_tags
+        // → Window should be hidden (moves generated)
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Move window to tag 2
+        state.windows.get_mut(&100).unwrap().tags = Tag::new(2);
+
+        // Display 1 shows tag 2, Display 2 shows tag 1
+        state.displays.get_mut(&1).unwrap().visible_tags = Tag::new(2);
+        state.displays.get_mut(&2).unwrap().visible_tags = Tag::new(1);
+
+        let result = state.send_to_output(OutputDirection::Next);
+        assert!(result.is_some());
+
+        let result = result.unwrap();
+        assert_eq!(result.source_display_id, 1);
+        assert_eq!(result.target_display_id, 2);
+        // Window should be hidden - hide move generated
+        assert_eq!(result.window_moves.len(), 1);
+        assert_eq!(result.window_moves[0].window_id, 100);
+
+        // Window should be on target display
+        assert_eq!(state.windows.get(&100).unwrap().display_id, 2);
+        // Window should be hidden (saved_frame is Some)
+        assert!(state.windows.get(&100).unwrap().is_hidden());
+    }
+
+    #[test]
+    fn test_send_to_output_updates_window_order() {
+        // Verify window_order is updated on both displays
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Window 100 is on display 1, window 101 is on display 2
+        assert!(state.displays.get(&1).unwrap().window_order.contains(&100));
+        assert!(state.displays.get(&2).unwrap().window_order.contains(&101));
+
+        let result = state.send_to_output(OutputDirection::Next);
+        assert!(result.is_some());
+
+        // Window 100 should be removed from display 1's order and added to display 2's order
+        assert!(!state.displays.get(&1).unwrap().window_order.contains(&100));
+        assert!(state.displays.get(&2).unwrap().window_order.contains(&100));
+    }
+
+    #[test]
+    fn test_send_to_output_already_hidden_becomes_visible() {
+        // Window is already hidden on source display, becomes visible on target display
+        // → Window should be shown with correct target display position
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Window has tag 2, display 1 shows tag 1 → window is hidden
+        state.windows.get_mut(&100).unwrap().tags = Tag::new(2);
+        state.displays.get_mut(&1).unwrap().visible_tags = Tag::new(1);
+        state.displays.get_mut(&2).unwrap().visible_tags = Tag::new(2);
+
+        // Hide the window on display 1
+        let _hide_moves = state.compute_layout_changes(1);
+        assert!(state.windows.get(&100).unwrap().is_hidden());
+
+        // Now send to output - target display shows tag 2, so window should become visible
+        let result = state.send_to_output(OutputDirection::Next);
+        assert!(result.is_some());
+
+        let result = result.unwrap();
+        // Window should be shown - show move generated
+        assert_eq!(result.window_moves.len(), 1);
+        let show_move = &result.window_moves[0];
+        assert_eq!(show_move.window_id, 100);
+        // The new position should be on target display (x >= 1920), not source display
+        assert!(
+            show_move.new_x >= 1920,
+            "Window should be shown on target display (x={})",
+            show_move.new_x
+        );
+
+        // Window should no longer be hidden
+        assert!(!state.windows.get(&100).unwrap().is_hidden());
     }
 }
