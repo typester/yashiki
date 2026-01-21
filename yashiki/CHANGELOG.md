@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/typester/yashiki/compare/yashiki-v0.8.0...yashiki-v0.8.1) - 2026-01-21
+
+### Fixed
+
+- prevent visible windows from moving to newly connected displays ([#75](https://github.com/typester/yashiki/pull/75))
+
+### Other
+
+- Split god classes into focused modules ([#76](https://github.com/typester/yashiki/pull/76))
+
 ## [0.8.0](https://github.com/typester/yashiki/compare/yashiki-v0.7.7...yashiki-v0.8.0) - 2026-01-21
 
 ### Added
