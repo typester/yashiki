@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2](https://github.com/typester/yashiki/compare/yashiki-v0.8.1...yashiki-v0.8.2) - 2026-01-21
+
+### Fixed
+
+- improve handling of windows not in state and hidden window movement ([#78](https://github.com/typester/yashiki/pull/78))
+
 ## [0.8.1](https://github.com/typester/yashiki/compare/yashiki-v0.8.0...yashiki-v0.8.1) - 2026-01-21
 
 ### Fixed
