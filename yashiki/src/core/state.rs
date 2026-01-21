@@ -216,8 +216,37 @@ impl State {
 
         // Handle case where no displays were removed (just updates or additions)
         if removed_ids.is_empty() {
+            // Save visible window display assignments before sync
+            // to detect windows "stolen" by newly added displays
+            let visible_window_displays: HashMap<WindowId, DisplayId> = self
+                .windows
+                .iter()
+                .filter(|(_, w)| !w.is_hidden())
+                .map(|(id, w)| (*id, w.display_id))
+                .collect();
+
             // Sync all to add new displays and update existing ones
             self.sync_all(ws);
+
+            // Detect and restore windows that were moved to new displays by macOS
+            let mut stolen_window_displays: HashSet<DisplayId> = HashSet::new();
+            for (window_id, original_display_id) in &visible_window_displays {
+                if let Some(window) = self.windows.get_mut(window_id) {
+                    // Detect: existing display → newly added display
+                    if !added_ids.contains(original_display_id)
+                        && added_ids.contains(&window.display_id)
+                    {
+                        tracing::info!(
+                            "Restoring window {} to original display {} (macOS moved it to new display {})",
+                            window_id,
+                            original_display_id,
+                            window.display_id
+                        );
+                        window.display_id = *original_display_id;
+                        stolen_window_displays.insert(*original_display_id);
+                    }
+                }
+            }
 
             // Collect newly added displays
             let added: Vec<_> = self
@@ -227,9 +256,13 @@ impl State {
                 .cloned()
                 .collect();
 
+            // Retile: new displays + displays with restored windows
+            let mut displays_to_retile: Vec<_> = added_ids.iter().copied().collect();
+            displays_to_retile.extend(stolen_window_displays);
+
             return DisplayChangeResult {
                 window_moves: vec![],
-                displays_to_retile: vec![],
+                displays_to_retile,
                 added,
                 removed: vec![],
             };
