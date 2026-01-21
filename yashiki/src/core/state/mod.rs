@@ -210,7 +210,7 @@ impl State {
         sync_all(self, ws)
     }
 
-    pub fn sync_focused_window<W: WindowSystem>(&mut self, ws: &W) {
+    pub fn sync_focused_window<W: WindowSystem>(&mut self, ws: &W) -> (bool, Vec<WindowId>) {
         sync_focused_window(self, ws)
     }
 
@@ -218,7 +218,7 @@ impl State {
         &mut self,
         ws: &W,
         pid_hint: Option<i32>,
-    ) {
+    ) -> (bool, Vec<WindowId>) {
         sync_focused_window_with_hint(self, ws, pid_hint)
     }
 
@@ -247,12 +247,12 @@ impl State {
                 (changed, vec![], rehide_moves)
             }
             Event::FocusedWindowChanged => {
-                self.sync_focused_window(ws);
-                (false, vec![], vec![])
+                let (changed, new_ids) = self.sync_focused_window(ws);
+                (changed, new_ids, vec![])
             }
             Event::ApplicationActivated { pid } => {
-                self.sync_focused_window_with_hint(ws, Some(*pid));
-                (false, vec![], vec![])
+                let (changed, new_ids) = self.sync_focused_window_with_hint(ws, Some(*pid));
+                (changed, new_ids, vec![])
             }
             Event::ApplicationDeactivated | Event::ApplicationHidden | Event::ApplicationShown => {
                 (false, vec![], vec![])

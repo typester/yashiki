@@ -58,17 +58,19 @@ pub fn sync_all<W: WindowSystem>(state: &mut State, ws: &W) {
     }
 }
 
-pub fn sync_focused_window<W: WindowSystem>(state: &mut State, ws: &W) {
-    sync_focused_window_with_hint(state, ws, None);
+pub fn sync_focused_window<W: WindowSystem>(state: &mut State, ws: &W) -> (bool, Vec<WindowId>) {
+    sync_focused_window_with_hint(state, ws, None)
 }
 
 pub fn sync_focused_window_with_hint<W: WindowSystem>(
     state: &mut State,
     ws: &W,
     pid_hint: Option<i32>,
-) {
+) -> (bool, Vec<WindowId>) {
     if let Some(focused_info) = ws.get_focused_window() {
         let window_id = focused_info.window_id;
+
+        // Window exists - just update focus
         if let Some(window) = state.windows.get(&window_id) {
             let display_id = window.display_id;
             state.set_focused(Some(window_id));
@@ -80,10 +82,35 @@ pub fn sync_focused_window_with_hint<W: WindowSystem>(
                 );
                 state.focused_display = display_id;
             }
-            return;
+            return (false, vec![]);
+        }
+
+        // Window not in state - look up pid from system windows and sync
+        let window_infos = ws.get_on_screen_windows();
+        if let Some(info) = window_infos.iter().find(|w| w.window_id == window_id) {
+            let pid = info.pid;
+            tracing::info!(
+                "Focused window {} not in state, syncing pid {}",
+                window_id,
+                pid
+            );
+
+            let (changed, new_ids, _) = sync_pid(state, ws, pid);
+
+            // Set focus on the new window if it was added
+            if let Some(window) = state.windows.get(&window_id) {
+                let display_id = window.display_id;
+                state.set_focused(Some(window_id));
+                if state.focused_display != display_id {
+                    state.focused_display = display_id;
+                }
+            }
+
+            return (changed, new_ids);
         }
     }
 
+    // Fallback: use pid_hint
     if let Some(pid) = pid_hint {
         let visible_tags = state.visible_tags();
         let pid_windows: Vec<_> = state
@@ -104,11 +131,12 @@ pub fn sync_focused_window_with_hint<W: WindowSystem>(
             if state.focused_display != display_id {
                 state.focused_display = display_id;
             }
-            return;
+            return (false, vec![]);
         }
     }
 
     state.set_focused(None);
+    (false, vec![])
 }
 
 pub fn sync_pid<W: WindowSystem>(
