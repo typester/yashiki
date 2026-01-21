@@ -216,8 +216,37 @@ impl State {
 
         // Handle case where no displays were removed (just updates or additions)
         if removed_ids.is_empty() {
+            // Save visible window display assignments before sync
+            // to detect windows "stolen" by newly added displays
+            let visible_window_displays: HashMap<WindowId, DisplayId> = self
+                .windows
+                .iter()
+                .filter(|(_, w)| !w.is_hidden())
+                .map(|(id, w)| (*id, w.display_id))
+                .collect();
+
             // Sync all to add new displays and update existing ones
             self.sync_all(ws);
+
+            // Detect and restore windows that were moved to new displays by macOS
+            let mut stolen_window_displays: HashSet<DisplayId> = HashSet::new();
+            for (window_id, original_display_id) in &visible_window_displays {
+                if let Some(window) = self.windows.get_mut(window_id) {
+                    // Detect: existing display → newly added display
+                    if !added_ids.contains(original_display_id)
+                        && added_ids.contains(&window.display_id)
+                    {
+                        tracing::info!(
+                            "Restoring window {} to original display {} (macOS moved it to new display {})",
+                            window_id,
+                            original_display_id,
+                            window.display_id
+                        );
+                        window.display_id = *original_display_id;
+                        stolen_window_displays.insert(*original_display_id);
+                    }
+                }
+            }
 
             // Collect newly added displays
             let added: Vec<_> = self
@@ -227,9 +256,13 @@ impl State {
                 .cloned()
                 .collect();
 
+            // Retile: new displays + displays with restored windows
+            let mut displays_to_retile: Vec<_> = added_ids.iter().copied().collect();
+            displays_to_retile.extend(stolen_window_displays);
+
             return DisplayChangeResult {
                 window_moves: vec![],
-                displays_to_retile: vec![],
+                displays_to_retile,
                 added,
                 removed: vec![],
             };
@@ -425,9 +458,15 @@ impl State {
     }
 
     /// Sync windows for a specific PID.
-    /// Returns (changed, new_window_ids) where changed is true if window count changed,
-    /// and new_window_ids contains the IDs of newly added windows.
-    pub fn sync_pid<W: WindowSystem>(&mut self, ws: &W, pid: i32) -> (bool, Vec<WindowId>) {
+    /// Returns (changed, added_window_ids, rehide_moves) where:
+    /// - changed: true if window count changed
+    /// - added_window_ids: IDs of newly added windows
+    /// - rehide_moves: WindowMoves to re-hide hidden windows that macOS moved
+    pub fn sync_pid<W: WindowSystem>(
+        &mut self,
+        ws: &W,
+        pid: i32,
+    ) -> (bool, Vec<WindowId>, Vec<WindowMove>) {
         let window_infos = ws.get_on_screen_windows();
         let pid_window_infos: Vec<_> = window_infos.iter().filter(|w| w.pid == pid).collect();
 
@@ -441,6 +480,7 @@ impl State {
 
         let mut changed = false;
         let mut added_window_ids = Vec::new();
+        let mut rehide_moves = Vec::new();
 
         // Remove windows that no longer exist
         for id in current_ids.difference(&new_ids) {
@@ -482,6 +522,7 @@ impl State {
         }
 
         // Update existing windows
+        let (hide_x, hide_y) = self.compute_global_hide_position();
         for id in current_ids.intersection(&new_ids) {
             if let Some(info) = pid_window_infos.iter().find(|w| w.window_id == *id) {
                 // Fetch extended attributes to get AX title
@@ -512,14 +553,34 @@ impl State {
                             new_frame.y
                         );
                         window.title = new_title;
-                        window.frame = new_frame;
-                        window.display_id = new_display_id;
+
+                        if window.is_hidden() {
+                            // Hidden window was moved by macOS.
+                            // Don't update frame/display_id; generate a move to re-hide it.
+                            if new_frame.x != hide_x || new_frame.y != hide_y {
+                                tracing::debug!(
+                                    "Re-hiding window {} (macOS moved it from hide position)",
+                                    window.id
+                                );
+                                rehide_moves.push(WindowMove {
+                                    window_id: window.id,
+                                    pid: window.pid,
+                                    old_x: new_frame.x,
+                                    old_y: new_frame.y,
+                                    new_x: hide_x,
+                                    new_y: hide_y,
+                                });
+                            }
+                        } else {
+                            window.frame = new_frame;
+                            window.display_id = new_display_id;
+                        }
                     }
                 }
             }
         }
 
-        (changed, added_window_ids)
+        (changed, added_window_ids, rehide_moves)
     }
 
     fn find_display_for_bounds(&self, bounds: &crate::macos::Bounds) -> DisplayId {
@@ -636,12 +697,15 @@ impl State {
     }
 
     /// Handle an event.
-    /// Returns (needs_retile, new_window_ids) where needs_retile is true if window count changed.
+    /// Returns (needs_retile, new_window_ids, rehide_moves) where:
+    /// - needs_retile: true if window count changed
+    /// - new_window_ids: IDs of newly added windows
+    /// - rehide_moves: WindowMoves to re-hide hidden windows that macOS moved
     pub fn handle_event<W: WindowSystem>(
         &mut self,
         ws: &W,
         event: &Event,
-    ) -> (bool, Vec<WindowId>) {
+    ) -> (bool, Vec<WindowId>, Vec<WindowMove>) {
         match event {
             Event::WindowCreated { pid } | Event::WindowDestroyed { pid } => {
                 self.sync_pid(ws, *pid)
@@ -652,19 +716,19 @@ impl State {
             | Event::WindowDeminiaturized { pid } => {
                 // Propagate changed flag if window count changed (e.g., popup window disappeared)
                 // but don't return new_window_ids (we don't want to apply rules again)
-                let (changed, _) = self.sync_pid(ws, *pid);
-                (changed, vec![])
+                let (changed, _, rehide_moves) = self.sync_pid(ws, *pid);
+                (changed, vec![], rehide_moves)
             }
             Event::FocusedWindowChanged => {
                 self.sync_focused_window(ws);
-                (false, vec![])
+                (false, vec![], vec![])
             }
             Event::ApplicationActivated { pid } => {
                 self.sync_focused_window_with_hint(ws, Some(*pid));
-                (false, vec![])
+                (false, vec![], vec![])
             }
             Event::ApplicationDeactivated | Event::ApplicationHidden | Event::ApplicationShown => {
-                (false, vec![])
+                (false, vec![], vec![])
             }
         }
     }
@@ -713,8 +777,13 @@ impl State {
                     .clone()
                     .unwrap_or_else(|| info.name.clone().unwrap_or_default());
                 window.title = new_title;
-                window.frame = Rect::from_bounds(&info.bounds);
-                window.display_id = new_display_id;
+                // Don't update frame/display_id for hidden windows.
+                // Hidden windows are moved offscreen to a position outside any display,
+                // so find_display_for_bounds would incorrectly fallback to focused_display.
+                if !window.is_hidden() {
+                    window.frame = Rect::from_bounds(&info.bounds);
+                    window.display_id = new_display_id;
+                }
             }
         }
     }
@@ -2018,10 +2087,11 @@ mod tests {
             101, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
         ));
 
-        let (changed, new_ids) = state.sync_pid(&ws, 1000);
+        let (changed, new_ids, rehide_moves) = state.sync_pid(&ws, 1000);
         assert!(changed);
         assert_eq!(state.windows.len(), 2);
         assert_eq!(new_ids, vec![101]);
+        assert!(rehide_moves.is_empty());
     }
 
     #[test]
@@ -2040,12 +2110,13 @@ mod tests {
         // Remove window 101
         ws.remove_window(101);
 
-        let (changed, new_ids) = state.sync_pid(&ws, 1000);
+        let (changed, new_ids, rehide_moves) = state.sync_pid(&ws, 1000);
         assert!(changed);
         assert!(new_ids.is_empty()); // No new windows when removing
         assert_eq!(state.windows.len(), 1);
         assert!(state.windows.contains_key(&100));
         assert!(!state.windows.contains_key(&101));
+        assert!(rehide_moves.is_empty());
     }
 
     #[test]
@@ -2063,7 +2134,7 @@ mod tests {
 
         // Remove the focused window
         ws.remove_window(101);
-        let (changed, _) = state.sync_pid(&ws, 1000);
+        let (changed, _, _) = state.sync_pid(&ws, 1000);
 
         assert!(changed);
         assert_eq!(state.focused, None); // focused should be cleared

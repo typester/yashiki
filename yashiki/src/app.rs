@@ -646,8 +646,13 @@ impl App {
                         }
 
                         // Sync windows for this pid immediately after adding observer
-                        let (changed, new_window_ids) =
+                        let (changed, new_window_ids, rehide_moves) =
                             ctx.state.borrow_mut().sync_pid(&ctx.window_system, pid);
+
+                        // Re-hide windows that macOS moved from hide position
+                        if !rehide_moves.is_empty() {
+                            ctx.window_manipulator.apply_window_moves(&rehide_moves);
+                        }
 
                         // Apply rules to newly discovered windows and emit events
                         process_new_windows(
@@ -689,7 +694,9 @@ impl App {
                         }
 
                         // Remove windows belonging to this PID from state
-                        let (changed, _) = ctx.state.borrow_mut().sync_pid(&ctx.window_system, pid);
+                        // Note: rehide_moves is not needed here as windows are being removed
+                        let (changed, _, _) =
+                            ctx.state.borrow_mut().sync_pid(&ctx.window_system, pid);
                         if changed {
                             do_retile(
                                 &ctx.state,
@@ -775,8 +782,13 @@ impl App {
 
                         // Sync windows for this pid
                         tracing::info!("Syncing windows for activated app pid {}", *pid);
-                        let (changed, new_window_ids) =
+                        let (changed, new_window_ids, rehide_moves) =
                             ctx.state.borrow_mut().sync_pid(&ctx.window_system, *pid);
+
+                        // Re-hide windows that macOS moved from hide position
+                        if !rehide_moves.is_empty() {
+                            ctx.window_manipulator.apply_window_moves(&rehide_moves);
+                        }
 
                         if changed {
                             needs_retile = true;
@@ -793,10 +805,15 @@ impl App {
                     }
                 }
 
-                let (changed, new_window_ids) = ctx
+                let (changed, new_window_ids, rehide_moves) = ctx
                     .state
                     .borrow_mut()
                     .handle_event(&ctx.window_system, &event);
+
+                // Re-hide windows that macOS moved from hide position
+                if !rehide_moves.is_empty() {
+                    ctx.window_manipulator.apply_window_moves(&rehide_moves);
+                }
 
                 if changed {
                     needs_retile = true;
