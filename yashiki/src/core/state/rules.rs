@@ -1,30 +1,18 @@
 use std::collections::HashSet;
 
-use super::super::{Tag, WindowId};
+use super::super::{RuleApplicationResult, Tag, WindowId};
 use crate::effect::Effect;
 use crate::macos::DisplayId;
 use yashiki_ipc::{ExtendedWindowAttributes, RuleAction, RuleMatcher, WindowRule};
 
-use super::super::state::{RuleApplicationResult, State, WindowMove};
+use super::super::state::{State, WindowMove};
 
 pub fn add_rule(state: &mut State, rule: WindowRule) {
-    tracing::info!("Adding rule: {:?} -> {:?}", rule.matcher, rule.action);
-    state.rules.push(rule);
-    state
-        .rules
-        .sort_by_key(|r| std::cmp::Reverse(r.specificity()));
+    state.rules_engine.add_rule(rule);
 }
 
 pub fn remove_rule(state: &mut State, matcher: &RuleMatcher, action: &RuleAction) -> bool {
-    let initial_len = state.rules.len();
-    state
-        .rules
-        .retain(|r| &r.matcher != matcher || &r.action != action);
-    let removed = state.rules.len() < initial_len;
-    if removed {
-        tracing::info!("Removed rule: {:?} -> {:?}", matcher, action);
-    }
-    removed
+    state.rules_engine.remove_rule(matcher, action)
 }
 
 #[cfg(test)]
@@ -52,10 +40,9 @@ pub fn should_ignore_window_extended(
     title: &str,
     ext: &ExtendedWindowAttributes,
 ) -> bool {
-    state.rules.iter().any(|rule| {
-        matches!(rule.action, RuleAction::Ignore)
-            && rule.matcher.matches_extended(app_name, app_id, title, ext)
-    })
+    state
+        .rules_engine
+        .should_ignore(app_name, app_id, title, ext)
 }
 
 pub fn has_matching_non_ignore_rule(
@@ -65,24 +52,9 @@ pub fn has_matching_non_ignore_rule(
     title: &str,
     ext: &ExtendedWindowAttributes,
 ) -> bool {
-    state.rules.iter().any(|rule| {
-        !matches!(rule.action, RuleAction::Ignore)
-            && rule.matcher.matches_extended(app_name, app_id, title, ext)
-    })
-}
-
-pub fn get_matching_rules_extended<'a>(
-    state: &'a State,
-    app_name: &str,
-    app_id: Option<&str>,
-    title: &str,
-    ext: &ExtendedWindowAttributes,
-) -> Vec<&'a WindowRule> {
     state
-        .rules
-        .iter()
-        .filter(|rule| rule.matcher.matches_extended(app_name, app_id, title, ext))
-        .collect()
+        .rules_engine
+        .has_matching_non_ignore_rule(app_name, app_id, title, ext)
 }
 
 pub fn apply_rules_to_window_extended(
@@ -92,47 +64,19 @@ pub fn apply_rules_to_window_extended(
     title: &str,
     ext: &ExtendedWindowAttributes,
 ) -> RuleApplicationResult {
-    let matching_rules = get_matching_rules_extended(state, app_name, app_id, title, ext);
-    let mut result = RuleApplicationResult::default();
+    // Get base result from rules engine
+    let mut result = state.rules_engine.apply_rules(app_name, app_id, title, ext);
 
-    for rule in matching_rules {
-        match &rule.action {
-            RuleAction::Ignore => {}
-            RuleAction::Float => {
-                if result.is_floating.is_none() {
-                    result.is_floating = Some(true);
-                }
-            }
-            RuleAction::NoFloat => {
-                if result.is_floating.is_none() {
-                    result.is_floating = Some(false);
-                }
-            }
-            RuleAction::Tags { tags: t } => {
-                if result.tags.is_none() {
-                    result.tags = Some(*t);
-                }
-            }
-            RuleAction::Output { output: o } => {
-                if result.display_id.is_none() {
-                    result.display_id = state.resolve_output(o);
-                }
-            }
-            RuleAction::Position { x, y } => {
-                if result.position.is_none() {
-                    result.position = Some((*x, *y));
-                }
-            }
-            RuleAction::Dimensions { width, height } => {
-                if result.dimensions.is_none() {
-                    result.dimensions = Some((*width, *height));
-                }
+    // Resolve Output rules that require State access
+    for rule in state
+        .rules_engine
+        .get_matching_rules(app_name, app_id, title, ext)
+    {
+        if let RuleAction::Output { output: o } = &rule.action {
+            if result.display_id.is_none() {
+                result.display_id = state.resolve_output(o);
             }
         }
-    }
-
-    if result.is_floating.is_none() && ext.window_level != 0 {
-        result.is_floating = Some(true);
     }
 
     result
@@ -275,7 +219,7 @@ fn compute_hide_for_window(state: &mut State, window_id: WindowId) -> Option<Win
 pub fn apply_rules_to_all_windows(
     state: &mut State,
 ) -> (Vec<DisplayId>, Vec<Effect>, Vec<WindowId>) {
-    if state.rules.is_empty() {
+    if state.rules_engine.is_empty() {
         return (vec![], vec![], vec![]);
     }
 

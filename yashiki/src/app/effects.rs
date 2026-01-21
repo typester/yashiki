@@ -34,7 +34,7 @@ pub fn execute_effects<M: WindowManipulator>(
                 state.borrow_mut().set_focused(Some(window_id));
 
                 // Warp cursor based on cursor_warp mode
-                let cursor_warp_mode = state.borrow().cursor_warp;
+                let cursor_warp_mode = state.borrow().config.cursor_warp;
                 let should_warp = match cursor_warp_mode {
                     CursorWarpMode::Disabled => false,
                     CursorWarpMode::OnOutputChange => is_output_change,
@@ -77,7 +77,7 @@ pub fn execute_effects<M: WindowManipulator>(
                 display_id,
             } => {
                 let state = state.borrow();
-                let outer_gap = state.outer_gap;
+                let outer_gap = state.config.outer_gap;
                 if let Some(display) = state.displays.get(&display_id) {
                     manipulator.set_window_frame(
                         window_id,
@@ -131,7 +131,7 @@ pub fn execute_effects<M: WindowManipulator>(
                 focus_visible_window_if_needed(state, manipulator);
             }
             Effect::WarpCursorToDisplay { display_id } => {
-                let cursor_warp_mode = state.borrow().cursor_warp;
+                let cursor_warp_mode = state.borrow().config.cursor_warp;
                 let should_warp = match cursor_warp_mode {
                     CursorWarpMode::Disabled => false,
                     CursorWarpMode::OnOutputChange | CursorWarpMode::OnFocusChange => true,

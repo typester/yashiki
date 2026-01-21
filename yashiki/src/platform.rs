@@ -627,4 +627,47 @@ pub mod mock {
             layer,
         }
     }
+
+    /// Mock implementation of WindowManipulator for tests
+    #[derive(Default)]
+    pub struct MockWindowManipulator;
+
+    impl MockWindowManipulator {
+        pub fn new() -> Self {
+            Self
+        }
+    }
+
+    impl WindowManipulator for MockWindowManipulator {
+        fn apply_window_moves(&self, _moves: &[WindowMove]) {}
+        fn apply_layout(
+            &self,
+            _display_id: DisplayId,
+            _frame: &crate::core::Rect,
+            _geometries: &[WindowGeometry],
+        ) {
+        }
+        fn focus_window(&self, _window_id: u32, _pid: i32) {}
+        fn move_window_to_position(&self, _window_id: u32, _pid: i32, _x: i32, _y: i32) {}
+        fn set_window_dimensions(&self, _window_id: u32, _pid: i32, _width: u32, _height: u32) {}
+        fn set_window_frame(
+            &self,
+            _window_id: u32,
+            _pid: i32,
+            _x: i32,
+            _y: i32,
+            _width: u32,
+            _height: u32,
+        ) {
+        }
+        fn close_window(&self, _window_id: u32, _pid: i32) {}
+        fn exec_command(&self, _command: &str, _path: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn exec_command_tracked(&self, _command: &str, _path: &str) -> Result<u32, String> {
+            Ok(0)
+        }
+        fn terminate_process(&self, _pid: u32) {}
+        fn warp_cursor(&self, _x: i32, _y: i32) {}
+    }
 }

@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 
-use super::{Display, Tag, Window, WindowId};
+use super::{Config, Display, RulesEngine, Tag, Window, WindowId};
 use crate::effect::Effect;
 use crate::event::Event;
 use crate::macos::DisplayId;
 use crate::platform::WindowSystem;
 use yashiki_ipc::{
-    CursorWarpMode, Direction, ExtendedWindowAttributes, OuterGap, OutputDirection,
-    OutputSpecifier, RuleAction, RuleMatcher, WindowRule,
+    Direction, OutputDirection, OutputSpecifier, RuleAction, RuleMatcher, WindowRule,
 };
 
 mod display;
@@ -23,16 +22,6 @@ use layout::*;
 use rules::*;
 use sync::*;
 use tags::*;
-
-/// Result of applying rules to a window
-#[derive(Debug, Default)]
-pub struct RuleApplicationResult {
-    pub tags: Option<u32>,
-    pub display_id: Option<DisplayId>,
-    pub position: Option<(i32, i32)>,
-    pub dimensions: Option<(u32, u32)>,
-    pub is_floating: Option<bool>,
-}
 
 /// Result of handling display configuration changes
 #[derive(Debug, Default)]
@@ -74,12 +63,9 @@ pub struct State {
     pub(crate) default_tag: Tag,
     pub default_layout: String,
     pub tag_layouts: HashMap<u8, String>,
-    pub exec_path: String,
-    pub rules: Vec<WindowRule>,
-    pub cursor_warp: CursorWarpMode,
-    pub outer_gap: OuterGap,
-    pub init_completed: bool,
+    pub rules_engine: RulesEngine,
     pub tracked_processes: Vec<TrackedProcess>,
+    pub config: Config,
 }
 
 impl State {
@@ -92,12 +78,9 @@ impl State {
             default_tag: Tag::new(1),
             default_layout: "tatami".to_string(),
             tag_layouts: HashMap::new(),
-            exec_path: String::new(),
-            rules: Vec::new(),
-            cursor_warp: CursorWarpMode::default(),
-            outer_gap: OuterGap::default(),
-            init_completed: false,
+            rules_engine: RulesEngine::new(),
             tracked_processes: Vec::new(),
+            config: Config::new(),
         }
     }
 
@@ -368,42 +351,23 @@ impl State {
         should_ignore_window(self, app_name, app_id, title, ax_id, subrole)
     }
 
-    pub fn should_ignore_window_extended(
-        &self,
-        app_name: &str,
-        app_id: Option<&str>,
-        title: &str,
-        ext: &ExtendedWindowAttributes,
-    ) -> bool {
-        should_ignore_window_extended(self, app_name, app_id, title, ext)
-    }
-
-    pub fn get_matching_rules_extended(
-        &self,
-        app_name: &str,
-        app_id: Option<&str>,
-        title: &str,
-        ext: &ExtendedWindowAttributes,
-    ) -> Vec<&WindowRule> {
-        get_matching_rules_extended(self, app_name, app_id, title, ext)
-    }
-
-    pub fn apply_rules_to_window_extended(
-        &self,
-        app_name: &str,
-        app_id: Option<&str>,
-        title: &str,
-        ext: &ExtendedWindowAttributes,
-    ) -> RuleApplicationResult {
-        apply_rules_to_window_extended(self, app_name, app_id, title, ext)
-    }
-
     pub fn apply_rules_to_new_window(&mut self, window_id: WindowId) -> Vec<Effect> {
         apply_rules_to_new_window(self, window_id)
     }
 
     pub fn apply_rules_to_all_windows(&mut self) -> (Vec<DisplayId>, Vec<Effect>, Vec<WindowId>) {
         apply_rules_to_all_windows(self)
+    }
+
+    #[cfg(test)]
+    pub fn apply_rules_to_window_extended(
+        &self,
+        app_name: &str,
+        app_id: Option<&str>,
+        title: &str,
+        ext: &yashiki_ipc::ExtendedWindowAttributes,
+    ) -> super::RuleApplicationResult {
+        apply_rules_to_window_extended(self, app_name, app_id, title, ext)
     }
 }
 
@@ -419,6 +383,7 @@ mod tests {
     use crate::platform::mock::{
         create_test_display, create_test_window, create_test_window_with_layer, MockWindowSystem,
     };
+    use yashiki_ipc::ExtendedWindowAttributes;
 
     fn setup_mock_system() -> MockWindowSystem {
         MockWindowSystem::new()

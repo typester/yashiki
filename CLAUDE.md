@@ -153,9 +153,10 @@ yashiki rule-add --subrole AXUnknown ignore
 
 ### Core Modules
 - **macos/** - Platform bindings: accessibility.rs (AXUIElement), display.rs (CGWindowList, NSScreen), observer.rs (AXObserver), workspace.rs (NSWorkspace), hotkey.rs (CGEventTap)
-- **core/** - State management: state.rs, window.rs, display.rs, tag.rs
+- **core/** - State management: state/mod.rs, window.rs, display.rs, tag.rs, config.rs, rules_engine.rs
 - **ipc/** - server.rs, client.rs, event_server.rs
 - **app.rs** - Main event loop (CFRunLoop), effect pattern
+- **app/** - Command handling: dispatch.rs (unified command dispatcher), sync_helper.rs (sync+retile helper)
 - **layout.rs** - LayoutEngine, LayoutEngineManager
 - **platform.rs** - WindowSystem/WindowManipulator traits for testability
 - **yashiki-ipc/** - Shared types (Command, Response, LayoutMessage, WindowRule, StateEvent, etc.)
@@ -258,7 +259,7 @@ Use `ignore` rule with subrole/ax-id matching. Example: `--subrole AXUnknown ign
 
 Run: `cargo test --all`
 
-Tested modules: core/tag.rs, macos/hotkey.rs, yashiki-ipc, core/state.rs, app.rs, event_emitter.rs, yashiki-layout-byobu
+Tested modules: core/tag.rs, core/state.rs, core/rules_engine.rs, macos/hotkey.rs, yashiki-ipc, app.rs, app/dispatch.rs, app/sync_helper.rs, event_emitter.rs, yashiki-layout-byobu
 
 ### Architecture for Testability
 - `platform.rs`: WindowSystem trait (queries), WindowManipulator trait (side effects)

@@ -369,29 +369,29 @@ pub fn process_command(
 
         // Exec path commands
         Command::GetExecPath => CommandResult::with_response(Response::ExecPath {
-            path: state.exec_path.clone(),
+            path: state.config.exec_path.clone(),
         }),
         Command::SetExecPath { path } => {
             tracing::info!("Set exec path: {}", path);
-            state.exec_path = path.clone();
+            state.config.exec_path = path.clone();
             CommandResult::ok_with_effects(vec![Effect::UpdateLayoutExecPath {
                 path: path.clone(),
             }])
         }
         Command::AddExecPath { path, append } => {
             let new_exec_path = if *append {
-                if state.exec_path.is_empty() {
+                if state.config.exec_path.is_empty() {
                     path.clone()
                 } else {
-                    format!("{}:{}", state.exec_path, path)
+                    format!("{}:{}", state.config.exec_path, path)
                 }
-            } else if state.exec_path.is_empty() {
+            } else if state.config.exec_path.is_empty() {
                 path.clone()
             } else {
-                format!("{}:{}", path, state.exec_path)
+                format!("{}:{}", path, state.config.exec_path)
             };
             tracing::info!("Add exec path: {} (append={})", path, append);
-            state.exec_path = new_exec_path.clone();
+            state.config.exec_path = new_exec_path.clone();
             CommandResult::ok_with_effects(vec![Effect::UpdateLayoutExecPath {
                 path: new_exec_path,
             }])
@@ -402,12 +402,12 @@ pub fn process_command(
             if *track {
                 CommandResult::ok_with_effects(vec![Effect::ExecCommandTracked {
                     command: command.clone(),
-                    path: state.exec_path.clone(),
+                    path: state.config.exec_path.clone(),
                 }])
             } else {
                 CommandResult::ok_with_effects(vec![Effect::ExecCommand {
                     command: command.clone(),
-                    path: state.exec_path.clone(),
+                    path: state.config.exec_path.clone(),
                 }])
             }
         }
@@ -476,7 +476,7 @@ pub fn process_command(
                 );
                 CommandResult::ok_with_effects(vec![Effect::ExecCommand {
                     command: command.clone(),
-                    path: state.exec_path.clone(),
+                    path: state.config.exec_path.clone(),
                 }])
             }
         }
@@ -485,7 +485,7 @@ pub fn process_command(
         Command::RuleAdd { rule } => {
             state.add_rule(rule.clone());
 
-            if state.init_completed {
+            if state.config.init_completed {
                 CommandResult::ok_with_effects(apply_rules_effects(state))
             } else {
                 CommandResult::ok()
@@ -500,7 +500,8 @@ pub fn process_command(
         }
         Command::ListRules => {
             let rules: Vec<RuleInfo> = state
-                .rules
+                .rules_engine
+                .rules()
                 .iter()
                 .map(|r| {
                     let action_str = match &r.action {
@@ -539,7 +540,7 @@ pub fn process_command(
             CommandResult::with_response(Response::Rules { rules })
         }
         Command::ApplyRules => {
-            state.init_completed = true;
+            state.config.init_completed = true;
             tracing::info!("Applied rules to all existing windows");
             CommandResult::ok_with_effects(apply_rules_effects(state))
         }
@@ -547,24 +548,24 @@ pub fn process_command(
         // Cursor warp
         Command::SetCursorWarp { mode } => {
             tracing::info!("Set cursor warp mode: {:?}", mode);
-            state.cursor_warp = *mode;
+            state.config.cursor_warp = *mode;
             CommandResult::ok()
         }
         Command::GetCursorWarp => CommandResult::with_response(Response::CursorWarp {
-            mode: state.cursor_warp,
+            mode: state.config.cursor_warp,
         }),
 
         // Outer gap
         Command::SetOuterGap { values } => match OuterGap::from_args(values) {
             Some(gap) => {
                 tracing::info!("Set outer gap: {}", gap);
-                state.outer_gap = gap;
+                state.config.outer_gap = gap;
                 CommandResult::ok_with_effects(vec![Effect::Retile])
             }
             None => CommandResult::error("usage: set-outer-gap <all> | <v h> | <t r b l>"),
         },
         Command::GetOuterGap => CommandResult::with_response(Response::OuterGap {
-            outer_gap: state.outer_gap,
+            outer_gap: state.config.outer_gap,
         }),
 
         // Control

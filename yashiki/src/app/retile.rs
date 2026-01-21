@@ -39,7 +39,7 @@ fn retile_single_display<M: WindowManipulator>(
     // First, handle any fullscreen windows on this display
     {
         let state = state.borrow();
-        let outer_gap = state.outer_gap;
+        let outer_gap = state.config.outer_gap;
         if let Some(display) = state.displays.get(&display_id) {
             let fullscreen_windows: Vec<_> = state
                 .windows
@@ -79,7 +79,7 @@ fn retile_single_display<M: WindowManipulator>(
         }
         let window_ids: Vec<u32> = visible_windows.iter().map(|w| w.id).collect();
         let layout_name = state.current_layout_for_display(display_id).to_string();
-        let outer_gap = state.outer_gap;
+        let outer_gap = state.config.outer_gap;
         // Subtract outer gap from dimensions before sending to layout engine
         let usable_width = display.frame.width.saturating_sub(outer_gap.horizontal());
         let usable_height = display.frame.height.saturating_sub(outer_gap.vertical());

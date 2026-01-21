@@ -49,7 +49,7 @@ pub fn focus_visible_window_if_needed<M: WindowManipulator>(
             .or_else(|| all_visible.first());
 
         match window {
-            Some(w) => (Some((w.id, w.pid, w.center())), state.cursor_warp),
+            Some(w) => (Some((w.id, w.pid, w.center())), state.config.cursor_warp),
             None => return,
         }
     };

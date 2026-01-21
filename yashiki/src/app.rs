@@ -17,17 +17,18 @@ use tokio::sync::mpsc;
 
 mod channels;
 mod command;
+mod dispatch;
 mod effects;
 mod focus;
 mod retile;
 mod state_events;
+mod sync_helper;
 
 use channels::{create_channels, run_async, IpcCommandWithResponse, MainChannels, SnapshotRequest};
-use command::{list_all_windows, process_command};
-use effects::execute_effects;
+use dispatch::dispatch_command;
 use focus::{notify_layout_focus, switch_tag_for_focused_window};
 use retile::{do_retile, do_retile_display};
-use state_events::{capture_event_state, emit_state_change_events};
+use sync_helper::{process_new_windows, sync_and_process_new_windows};
 
 use crate::core::State;
 use crate::event::Event;
@@ -38,8 +39,8 @@ use crate::macos::{
     DisplayReconfigEvent, HotkeyManager, ObserverManager, WorkspaceEvent, WorkspaceWatcher,
 };
 use crate::pid;
-use crate::platform::{MacOSWindowManipulator, MacOSWindowSystem, WindowManipulator, WindowSystem};
-use yashiki_ipc::{Command, Response};
+use crate::platform::{MacOSWindowManipulator, MacOSWindowSystem, WindowManipulator};
+use yashiki_ipc::Command;
 
 struct RunLoopContext {
     ipc_cmd_rx: std_mpsc::Receiver<IpcCommandWithResponse>,
@@ -139,12 +140,12 @@ impl App {
         // Initialize state with current windows
         let window_system = MacOSWindowSystem;
         let mut state = State::new();
-        state.exec_path = build_initial_exec_path();
+        state.config.exec_path = build_initial_exec_path();
         state.sync_all(&window_system);
 
         // Create layout engine manager (lazy spawning)
         let mut layout_engine_manager = LayoutEngineManager::new();
-        layout_engine_manager.set_exec_path(&state.exec_path);
+        layout_engine_manager.set_exec_path(&state.config.exec_path);
         let layout_engine_manager = RefCell::new(layout_engine_manager);
 
         let state = RefCell::new(state);
@@ -205,21 +206,16 @@ impl App {
             while let Ok((cmd, resp_tx)) = ctx.ipc_cmd_rx.try_recv() {
                 tracing::debug!("Received IPC command: {:?}", cmd);
 
-                // Capture state before command for event emission
-                let pre_state = capture_event_state(&ctx.state);
-
-                let response = handle_ipc_command(
+                let response = dispatch_command(
+                    &cmd,
                     &ctx.state,
                     &ctx.layout_engine_manager,
                     &ctx.hotkey_manager,
                     &ctx.window_system,
                     &ctx.window_manipulator,
-                    &cmd,
+                    &ctx.event_emitter,
                 );
                 let _ = resp_tx.blocking_send(response);
-
-                // Emit events based on state changes
-                emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
 
                 // Handle Quit command after sending response
                 if matches!(cmd, Command::Quit) {
@@ -291,20 +287,15 @@ impl App {
             while let Ok(cmd) = ctx.hotkey_cmd_rx.try_recv() {
                 tracing::debug!("Received hotkey command: {:?}", cmd);
 
-                // Capture state before command for event emission
-                let pre_state = capture_event_state(&ctx.state);
-
-                let _ = handle_ipc_command(
+                let _ = dispatch_command(
+                    &cmd,
                     &ctx.state,
                     &ctx.layout_engine_manager,
                     &ctx.hotkey_manager,
                     &ctx.window_system,
                     &ctx.window_manipulator,
-                    &cmd,
+                    &ctx.event_emitter,
                 );
-
-                // Emit events based on state changes
-                emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
             }
         }
 
@@ -457,24 +448,16 @@ impl App {
                         }
 
                         // Sync windows for this pid immediately after adding observer
-                        let (changed, new_window_ids, rehide_moves) =
-                            ctx.state.borrow_mut().sync_pid(&ctx.window_system, pid);
-
-                        // Re-hide windows that macOS moved from hide position
-                        if !rehide_moves.is_empty() {
-                            ctx.window_manipulator.apply_window_moves(&rehide_moves);
-                        }
-
-                        // Apply rules to newly discovered windows and emit events
-                        process_new_windows(
-                            new_window_ids,
+                        let result = sync_and_process_new_windows(
                             &ctx.state,
+                            &ctx.window_system,
                             &ctx.layout_engine_manager,
                             &ctx.window_manipulator,
                             &ctx.event_emitter,
+                            pid,
                         );
 
-                        if changed {
+                        if result.changed {
                             do_retile(
                                 &ctx.state,
                                 &ctx.layout_engine_manager,
@@ -593,26 +576,18 @@ impl App {
 
                         // Sync windows for this pid
                         tracing::info!("Syncing windows for activated app pid {}", *pid);
-                        let (changed, new_window_ids, rehide_moves) =
-                            ctx.state.borrow_mut().sync_pid(&ctx.window_system, *pid);
-
-                        // Re-hide windows that macOS moved from hide position
-                        if !rehide_moves.is_empty() {
-                            ctx.window_manipulator.apply_window_moves(&rehide_moves);
-                        }
-
-                        if changed {
-                            needs_retile = true;
-                        }
-
-                        // Apply rules to new windows
-                        process_new_windows(
-                            new_window_ids,
+                        let result = sync_and_process_new_windows(
                             &ctx.state,
+                            &ctx.window_system,
                             &ctx.layout_engine_manager,
                             &ctx.window_manipulator,
                             &ctx.event_emitter,
+                            *pid,
                         );
+
+                        if result.changed {
+                            needs_retile = true;
+                        }
                     }
                 }
 
@@ -812,60 +787,11 @@ fn send_apply_rules(needs_delay: bool) {
     }
 }
 
-/// This function orchestrates process_command and execute_effects.
-fn handle_ipc_command<S: WindowSystem, M: WindowManipulator>(
-    state: &RefCell<State>,
-    layout_engine_manager: &RefCell<LayoutEngineManager>,
-    hotkey_manager: &RefCell<HotkeyManager>,
-    window_system: &S,
-    manipulator: &M,
-    cmd: &Command,
-) -> Response {
-    // Handle ListWindows with all=true specially (requires system query)
-    if let Command::ListWindows { all: true, debug } = cmd {
-        return list_all_windows(state, window_system, *debug);
-    }
-
-    let result = process_command(
-        &mut state.borrow_mut(),
-        &mut hotkey_manager.borrow_mut(),
-        cmd,
-    );
-
-    if let Err(e) = execute_effects(result.effects, state, layout_engine_manager, manipulator) {
-        return Response::Error { message: e };
-    }
-
-    result.response
-}
-
-/// Process newly discovered windows: apply rules and emit events
-fn process_new_windows<M: WindowManipulator>(
-    new_window_ids: Vec<u32>,
-    state: &RefCell<State>,
-    layout_engine_manager: &RefCell<LayoutEngineManager>,
-    manipulator: &M,
-    event_emitter: &EventEmitter,
-) {
-    for window_id in new_window_ids {
-        let effects = state.borrow_mut().apply_rules_to_new_window(window_id);
-        if !effects.is_empty() {
-            let _ = execute_effects(effects, state, layout_engine_manager, manipulator);
-        }
-
-        // Emit window created event
-        {
-            let state = state.borrow();
-            if let Some(window) = state.windows.get(&window_id) {
-                event_emitter.emit_window_created(window, state.focused);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::command::process_command;
+    use crate::app::state_events::{capture_event_state, emit_state_change_events};
     use crate::effect::Effect;
     use crate::platform::mock::{create_test_display, create_test_window, MockWindowSystem};
     use yashiki_ipc::{Command, Direction, Response};
