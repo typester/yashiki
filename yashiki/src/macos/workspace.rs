@@ -1,6 +1,12 @@
 use std::cell::RefCell;
+use std::ffi::c_void;
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc as std_mpsc;
+use std::sync::Arc;
 
+use core_foundation::runloop::{
+    CFRunLoopGetMain, CFRunLoopSourceRef, CFRunLoopSourceSignal, CFRunLoopWakeUp,
+};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{define_class, msg_send, sel, DefinedClass};
@@ -106,6 +112,7 @@ pub enum WorkspaceEvent {
 
 struct Ivars {
     event_tx: RefCell<Option<std_mpsc::Sender<WorkspaceEvent>>>,
+    source_ptr: Arc<AtomicPtr<c_void>>,
 }
 
 define_class!(
@@ -124,6 +131,7 @@ define_class!(
                 if let Some(sender) = tx.as_ref() {
                     let _: Result<(), _> = sender.send(WorkspaceEvent::AppLaunched { pid });
                 }
+                signal_runloop_source(&self.ivars().source_ptr);
             }
         }
 
@@ -135,6 +143,7 @@ define_class!(
                 if let Some(sender) = tx.as_ref() {
                     let _: Result<(), _> = sender.send(WorkspaceEvent::AppTerminated { pid });
                 }
+                signal_runloop_source(&self.ivars().source_ptr);
             }
         }
 
@@ -145,9 +154,20 @@ define_class!(
             if let Some(sender) = tx.as_ref() {
                 let _: Result<(), _> = sender.send(WorkspaceEvent::DisplaysChanged);
             }
+            signal_runloop_source(&self.ivars().source_ptr);
         }
     }
 );
+
+fn signal_runloop_source(source_ptr: &Arc<AtomicPtr<c_void>>) {
+    let source = source_ptr.load(Ordering::Acquire);
+    if !source.is_null() {
+        unsafe {
+            CFRunLoopSourceSignal(source as CFRunLoopSourceRef);
+            CFRunLoopWakeUp(CFRunLoopGetMain());
+        }
+    }
+}
 
 fn get_pid_from_notification(notification: &NSNotification) -> Option<i32> {
     unsafe {
@@ -160,10 +180,15 @@ fn get_pid_from_notification(notification: &NSNotification) -> Option<i32> {
 }
 
 impl WorkspaceObserver {
-    fn new(event_tx: std_mpsc::Sender<WorkspaceEvent>, mtm: MainThreadMarker) -> Retained<Self> {
+    fn new(
+        event_tx: std_mpsc::Sender<WorkspaceEvent>,
+        source_ptr: Arc<AtomicPtr<c_void>>,
+        mtm: MainThreadMarker,
+    ) -> Retained<Self> {
         let this = mtm.alloc::<Self>();
         let this = this.set_ivars(Ivars {
             event_tx: RefCell::new(Some(event_tx)),
+            source_ptr,
         });
         unsafe { msg_send![super(this), init] }
     }
@@ -174,8 +199,12 @@ pub struct WorkspaceWatcher {
 }
 
 impl WorkspaceWatcher {
-    pub fn new(event_tx: std_mpsc::Sender<WorkspaceEvent>, mtm: MainThreadMarker) -> Self {
-        let observer = WorkspaceObserver::new(event_tx, mtm);
+    pub fn new(
+        event_tx: std_mpsc::Sender<WorkspaceEvent>,
+        source_ptr: Arc<AtomicPtr<c_void>>,
+        mtm: MainThreadMarker,
+    ) -> Self {
+        let observer = WorkspaceObserver::new(event_tx, source_ptr, mtm);
 
         unsafe {
             let workspace = NSWorkspace::sharedWorkspace();
