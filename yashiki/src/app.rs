@@ -141,7 +141,8 @@ impl App {
         let window_system = MacOSWindowSystem;
         let mut state = State::new();
         state.config.exec_path = build_initial_exec_path();
-        state.sync_all(&window_system);
+        // Initial sync has no hidden windows, so rehide_moves is always empty
+        let _ = state.sync_all(&window_system);
 
         // Create layout engine manager (lazy spawning)
         let mut layout_engine_manager = LayoutEngineManager::new();

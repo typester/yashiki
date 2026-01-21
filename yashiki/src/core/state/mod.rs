@@ -206,7 +206,7 @@ impl State {
 
     // Sync operations - delegated to state/sync.rs
 
-    pub fn sync_all<W: WindowSystem>(&mut self, ws: &W) {
+    pub fn sync_all<W: WindowSystem>(&mut self, ws: &W) -> Vec<WindowMove> {
         sync_all(self, ws)
     }
 

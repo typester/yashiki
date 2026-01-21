@@ -25,7 +25,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
             .map(|(id, w)| (*id, w.display_id))
             .collect();
 
-        sync_all(state, ws);
+        let rehide_moves = sync_all(state, ws);
 
         let mut stolen_window_displays: HashSet<DisplayId> = HashSet::new();
         for (window_id, original_display_id) in &visible_window_displays {
@@ -56,7 +56,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
         displays_to_retile.extend(stolen_window_displays);
 
         return DisplayChangeResult {
-            window_moves: vec![],
+            window_moves: rehide_moves,
             displays_to_retile,
             added,
             removed: vec![],
@@ -111,7 +111,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
         state.displays.remove(id);
     }
 
-    sync_all(state, ws);
+    let rehide_moves = sync_all(state, ws);
 
     let added: Vec<_> = state
         .displays
@@ -124,6 +124,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
         let moves = compute_layout_changes_for_display(state, *display_id);
         window_moves.extend(moves);
     }
+    window_moves.extend(rehide_moves);
 
     let displays_to_retile: Vec<_> = affected_displays.into_iter().collect();
 

@@ -8,7 +8,60 @@ use super::super::state::{State, WindowMove};
 use super::layout::{add_to_window_order, compute_global_hide_position, remove_from_window_order};
 use super::rules::{has_matching_non_ignore_rule, should_ignore_window_extended};
 
-pub fn sync_all<W: WindowSystem>(state: &mut State, ws: &W) {
+/// Check if a hidden window needs to be re-hidden (returns Some if moved from hide position)
+fn check_window_rehide(
+    window: &Window,
+    current_x: i32,
+    current_y: i32,
+    hide_x: i32,
+    hide_y: i32,
+) -> Option<WindowMove> {
+    if !window.is_hidden() {
+        return None;
+    }
+    if current_x != hide_x || current_y != hide_y {
+        tracing::debug!(
+            "Re-hiding window {} (macOS moved it from hide position)",
+            window.id
+        );
+        Some(WindowMove {
+            window_id: window.id,
+            pid: window.pid,
+            old_x: current_x,
+            old_y: current_y,
+            new_x: hide_x,
+            new_y: hide_y,
+        })
+    } else {
+        None
+    }
+}
+
+/// Detect hidden windows that macOS moved from the hide position.
+fn detect_rehide_moves(
+    state: &State,
+    window_infos: &[crate::macos::WindowInfo],
+) -> Vec<WindowMove> {
+    let (hide_x, hide_y) = compute_global_hide_position(state);
+    let mut rehide_moves = Vec::new();
+
+    for window in state.windows.values() {
+        if let Some(info) = window_infos.iter().find(|i| i.window_id == window.id) {
+            if let Some(mv) = check_window_rehide(
+                window,
+                info.bounds.x as i32,
+                info.bounds.y as i32,
+                hide_x,
+                hide_y,
+            ) {
+                rehide_moves.push(mv);
+            }
+        }
+    }
+    rehide_moves
+}
+
+pub fn sync_all<W: WindowSystem>(state: &mut State, ws: &W) -> Vec<WindowMove> {
     let display_infos = ws.get_all_displays();
     for info in &display_infos {
         state
@@ -36,7 +89,7 @@ pub fn sync_all<W: WindowSystem>(state: &mut State, ws: &W) {
     state.displays.retain(|id, _| current_ids.contains(id));
 
     let window_infos = ws.get_on_screen_windows();
-    sync_with_window_infos(state, ws, &window_infos);
+    let rehide_moves = sync_with_window_infos(state, ws, &window_infos);
     sync_focused_window(state, ws);
 
     tracing::info!(
@@ -56,6 +109,8 @@ pub fn sync_all<W: WindowSystem>(state: &mut State, ws: &W) {
             window.display_id
         );
     }
+
+    rehide_moves
 }
 
 pub fn sync_focused_window<W: WindowSystem>(state: &mut State, ws: &W) -> (bool, Vec<WindowId>) {
@@ -227,22 +282,11 @@ pub fn sync_pid<W: WindowSystem>(
                     );
                     window.title = new_title;
 
-                    if window.is_hidden() {
-                        if new_frame.x != hide_x || new_frame.y != hide_y {
-                            tracing::debug!(
-                                "Re-hiding window {} (macOS moved it from hide position)",
-                                window.id
-                            );
-                            rehide_moves.push(WindowMove {
-                                window_id: window.id,
-                                pid: window.pid,
-                                old_x: new_frame.x,
-                                old_y: new_frame.y,
-                                new_x: hide_x,
-                                new_y: hide_y,
-                            });
-                        }
-                    } else {
+                    if let Some(mv) =
+                        check_window_rehide(window, new_frame.x, new_frame.y, hide_x, hide_y)
+                    {
+                        rehide_moves.push(mv);
+                    } else if !window.is_hidden() {
                         window.frame = new_frame;
                         window.display_id = new_display_id;
                     }
@@ -358,7 +402,7 @@ pub fn sync_with_window_infos<W: WindowSystem>(
     state: &mut State,
     ws: &W,
     window_infos: &[crate::macos::WindowInfo],
-) {
+) -> Vec<WindowMove> {
     let current_ids: HashSet<WindowId> = state.windows.keys().copied().collect();
     let new_ids: HashSet<WindowId> = window_infos.iter().map(|w| w.window_id).collect();
 
@@ -393,4 +437,6 @@ pub fn sync_with_window_infos<W: WindowSystem>(
             }
         }
     }
+
+    detect_rehide_moves(state, window_infos)
 }
