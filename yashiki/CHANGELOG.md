@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/typester/yashiki/compare/yashiki-v0.7.7...yashiki-v0.8.0) - 2026-01-21
+
+### Added
+
+- [**breaking**] Remove polling threads, use event-driven CFRunLoopSource signaling ([#73](https://github.com/typester/yashiki/pull/73))
+
 ## [0.7.7](https://github.com/typester/yashiki/compare/yashiki-v0.7.6...yashiki-v0.7.7) - 2026-01-20
 
 ### Fixed
