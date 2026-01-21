@@ -202,6 +202,10 @@ Each group sorted alphabetically, blank lines between groups.
 ## Workflow
 
 - Present plan and wait for approval before implementing
+- **Review requests = report only, NEVER auto-fix**
+  - When asked to "review", "check", or "verify" code: report findings, do NOT modify code
+  - Wait for explicit approval before making any changes
+  - This applies even when bugs or issues are found during review
 - Run `cargo fmt --all` at the end of each task
 - Update docs when adding/changing features: README.md, CLAUDE.md, docs/*.md
 
