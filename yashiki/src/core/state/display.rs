@@ -5,8 +5,11 @@ use crate::macos::DisplayId;
 use crate::platform::WindowSystem;
 use yashiki_ipc::OutputDirection;
 
-use super::super::state::{DisplayChangeResult, FocusOutputResult, State};
-use super::layout::{compute_layout_changes_for_display, visible_windows_on_display};
+use super::super::state::{DisplayChangeResult, FocusOutputResult, SendToOutputResult, State};
+use super::layout::{
+    add_to_window_order, compute_layout_changes_for_display, remove_from_window_order,
+    visible_windows_on_display,
+};
 use super::sync::sync_all;
 
 pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> DisplayChangeResult {
@@ -175,10 +178,7 @@ pub fn focus_output(state: &mut State, direction: OutputDirection) -> Option<Foc
     }
 }
 
-pub fn send_to_output(
-    state: &mut State,
-    direction: OutputDirection,
-) -> Option<(DisplayId, DisplayId)> {
+pub fn send_to_output(state: &mut State, direction: OutputDirection) -> Option<SendToOutputResult> {
     let focused_id = state.focused?;
 
     if state.displays.len() <= 1 {
@@ -203,9 +203,10 @@ pub fn send_to_output(
     }
 
     let target_display = state.displays.get(&target_display_id)?;
-    let target_x = target_display.frame.x;
-    let target_y = target_display.frame.y;
+    let target_frame_x = target_display.frame.x;
+    let target_frame_y = target_display.frame.y;
 
+    // Update window's display_id and frame position
     let window = state.windows.get_mut(&focused_id)?;
     tracing::info!(
         "Send window {} to output: {} -> {}",
@@ -214,10 +215,30 @@ pub fn send_to_output(
         target_display_id
     );
     window.display_id = target_display_id;
-    window.frame.x = target_x;
-    window.frame.y = target_y;
+    // Set frame to target display's position (will be overwritten by retile if visible,
+    // or saved to saved_frame if hidden - either way, correct display context)
+    window.frame.x = target_frame_x;
+    window.frame.y = target_frame_y;
+
+    // If window was already hidden, update saved_frame to target display position
+    // so that when it becomes visible, it appears on the correct display
+    if let Some(ref mut saved) = window.saved_frame {
+        saved.x = target_frame_x;
+        saved.y = target_frame_y;
+    }
+
+    // Update window_order (move from source to target)
+    remove_from_window_order(state, focused_id);
+    add_to_window_order(state, focused_id, target_display_id);
+
+    // Compute visibility changes for target display
+    let moves = compute_layout_changes_for_display(state, target_display_id);
 
     state.focused_display = target_display_id;
 
-    Some((source_display_id, target_display_id))
+    Some(SendToOutputResult {
+        source_display_id,
+        target_display_id,
+        window_moves: moves,
+    })
 }

@@ -286,22 +286,15 @@ pub fn process_command(
 
         // Send to output - returns displays that need retiling
         Command::OutputSend { direction } => {
-            let displays_to_retile = state.send_to_output(*direction);
-            if let Some((source_display, target_display)) = displays_to_retile {
-                // Get the window info for moving
-                let mut effects = Vec::new();
-                if let Some(focused_id) = state.focused {
-                    if let Some(window) = state.windows.get(&focused_id) {
-                        effects.push(Effect::MoveWindowToPosition {
-                            window_id: focused_id,
-                            pid: window.pid,
-                            x: window.frame.x,
-                            y: window.frame.y,
-                        });
-                    }
-                }
-                effects.push(Effect::RetileDisplays(vec![source_display, target_display]));
-                CommandResult::ok_with_effects(effects)
+            if let Some(result) = state.send_to_output(*direction) {
+                CommandResult::ok_with_effects(vec![
+                    Effect::ApplyWindowMoves(result.window_moves),
+                    Effect::RetileDisplays(vec![
+                        result.source_display_id,
+                        result.target_display_id,
+                    ]),
+                    Effect::FocusVisibleWindowIfNeeded,
+                ])
             } else {
                 CommandResult::ok()
             }
