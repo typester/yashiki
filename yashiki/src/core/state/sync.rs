@@ -329,6 +329,12 @@ pub fn try_create_window<W: WindowSystem>(
     let app_name = &info.owner_name;
     let app_id = info.bundle_id.as_deref();
 
+    // Filter Control Center early - system UI that users never need to manage,
+    // and it creates many transient windows that slow down processing
+    if app_id == Some("com.apple.controlcenter") {
+        return None;
+    }
+
     let ext = ws.get_extended_attributes(info.window_id, info.pid, info.layer);
 
     let title = ext

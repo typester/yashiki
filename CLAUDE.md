@@ -201,12 +201,30 @@ Each group sorted alphabetically, blank lines between groups.
 
 ## Workflow
 
-- Present plan and wait for approval before implementing
-- **Review requests = report only, NEVER auto-fix**
-  - When asked to "review", "check", or "verify" code: report findings, do NOT modify code
-  - Wait for explicit approval before making any changes
-  - This applies even when bugs or issues are found during review
-- Run `cargo fmt --all` at the end of each task
+### ⚠️ CRITICAL: Never modify code without explicit approval
+
+**DO NOT edit any source code (*.rs, etc.) until the user explicitly approves.**
+
+Examples of what is NOT approval:
+- Discussing a plan or approach
+- Answering questions about implementation details
+- User saying the approach "sounds good" or "makes sense"
+
+**You MUST explicitly ask "Should I implement this?" and wait for clear confirmation before editing any code.**
+
+**Workflow:**
+1. Analyze the problem and present a plan
+2. Ask "Should I implement this?" (or similar)
+3. Wait for explicit approval from user
+4. Only then use Edit/Write tools on source code
+5. Run `cargo fmt --all` at the end of each task
+
+**Review requests = report only, NEVER auto-fix:**
+- When asked to "review", "check", or "verify" code: report findings, do NOT modify code
+- Wait for explicit approval before making any changes
+- This applies even when bugs or issues are found during review
+
+**Documentation updates:**
 - Update docs when adding/changing features: README.md, CLAUDE.md, docs/*.md
 
 ## Design Decisions
