@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3](https://github.com/typester/yashiki/compare/yashiki-v0.8.2...yashiki-v0.8.3) - 2026-01-21
+
+### Fixed
+
+- Filter out Control Center windows early in sync process ([#81](https://github.com/typester/yashiki/pull/81))
+- output-send window visibility bug ([#80](https://github.com/typester/yashiki/pull/80))
+
 ## [0.8.2](https://github.com/typester/yashiki/compare/yashiki-v0.8.1...yashiki-v0.8.2) - 2026-01-21
 
 ### Fixed
