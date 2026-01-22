@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/typester/yashiki/compare/yashiki-v0.8.3...yashiki-v0.9.0) - 2026-01-22
+
+### Fixed
+
+- track orphaned windows during sleep/wake to restore them to original display ([#84](https://github.com/typester/yashiki/pull/84))
+- [**breaking**] use per-display hide position to prevent window disappearance during cross-display fullscreen ([#83](https://github.com/typester/yashiki/pull/83))
+
 ## [0.8.3](https://github.com/typester/yashiki/compare/yashiki-v0.8.2...yashiki-v0.8.3) - 2026-01-21
 
 ### Fixed
