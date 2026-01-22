@@ -179,6 +179,7 @@ mod tests {
                 is_focused: false,
                 is_floating: false,
                 is_fullscreen: false,
+                output_id: 1,
                 status: None,
                 ax_id: None,
                 subrole: None,

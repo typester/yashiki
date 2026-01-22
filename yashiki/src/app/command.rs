@@ -62,6 +62,7 @@ pub fn process_command(
                         is_focused: state.focused == Some(w.id),
                         is_floating: w.is_floating,
                         is_fullscreen: w.is_fullscreen,
+                        output_id: w.display_id,
                         status: None,
                         ax_id: if *debug { w.ax_id.clone() } else { None },
                         subrole: if *debug { w.subrole.clone() } else { None },
@@ -598,6 +599,7 @@ pub fn list_all_windows<S: WindowSystem>(
                 is_focused: state.focused == Some(w.id),
                 is_floating: w.is_floating,
                 is_fullscreen: w.is_fullscreen,
+                output_id: w.display_id,
                 status: Some(WindowStatus::Managed),
                 ax_id: if debug { w.ax_id.clone() } else { None },
                 subrole: if debug { w.subrole.clone() } else { None },
@@ -635,6 +637,21 @@ pub fn list_all_windows<S: WindowSystem>(
                 None
             };
 
+            // Find display by center point
+            let cx = sys_win.bounds.x + sys_win.bounds.width / 2.0;
+            let cy = sys_win.bounds.y + sys_win.bounds.height / 2.0;
+            let output_id = state
+                .displays
+                .values()
+                .find(|d| {
+                    cx >= d.frame.x as f64
+                        && cx < (d.frame.x + d.frame.width as i32) as f64
+                        && cy >= d.frame.y as f64
+                        && cy < (d.frame.y + d.frame.height as i32) as f64
+                })
+                .map(|d| d.id)
+                .unwrap_or(0);
+
             windows.push(WindowInfo {
                 id: sys_win.window_id,
                 pid: sys_win.pid,
@@ -649,6 +666,7 @@ pub fn list_all_windows<S: WindowSystem>(
                 is_focused: false,
                 is_floating: false,
                 is_fullscreen: false,
+                output_id,
                 status: Some(WindowStatus::Ignored),
                 ax_id: ext_attrs.as_ref().and_then(|a| a.ax_id.clone()),
                 subrole: ext_attrs.as_ref().and_then(|a| a.subrole.clone()),

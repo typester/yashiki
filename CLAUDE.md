@@ -205,21 +205,38 @@ Each group sorted alphabetically, blank lines between groups.
 
 ### ⚠️ CRITICAL: Never modify code without explicit approval
 
-**DO NOT edit any source code (*.rs, etc.) until the user explicitly approves.**
+**ABSOLUTE RULE: DO NOT use Edit/Write tools on source code without explicit approval for THAT SPECIFIC change.**
 
-Examples of what is NOT approval:
+#### What counts as approval:
+- User explicitly says "yes", "do it", "go ahead", "implement it", "よろ", etc. in response to YOUR proposal
+- Approval is ONLY valid for the specific change you proposed
+
+#### What is NOT approval:
+- User asking a question (e.g., "where is this?", "what does this do?")
+- User describing a problem or desired behavior
 - Discussing a plan or approach
 - Answering questions about implementation details
 - User saying the approach "sounds good" or "makes sense"
+- Previous approval for a different change
+- Implicit assumption that related changes are needed
 
-**You MUST explicitly ask "Should I implement this?" and wait for clear confirmation before editing any code.**
+#### Scope of approval:
+- Approval for task A does NOT automatically approve task B, even if B seems necessary for A
+- If you discover additional changes are needed during implementation, STOP and ask
+- Each distinct file/feature change requires its own approval
 
-**Workflow:**
-1. Analyze the problem and present a plan
-2. Ask "Should I implement this?" (or similar)
-3. Wait for explicit approval from user
-4. Only then use Edit/Write tools on source code
-5. Run `cargo fmt --all` at the end of each task
+#### Workflow:
+1. Analyze the problem and present a plan (list specific files to modify)
+2. Ask "Should I implement this?" (or similar explicit question)
+3. Wait for explicit approval
+4. Only then use Edit/Write tools
+5. If unexpected changes are needed, STOP and ask again
+6. Run `cargo fmt --all` at the end
+
+#### When user asks a question during implementation:
+- ANSWER THE QUESTION ONLY
+- Do NOT assume the question implies approval for additional changes
+- If the answer reveals a need for more changes, propose them and wait for approval
 
 **Review requests = report only, NEVER auto-fix:**
 - When asked to "review", "check", or "verify" code: report findings, do NOT modify code

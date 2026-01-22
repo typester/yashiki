@@ -546,11 +546,12 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
                     format!(" [{}]", flags.join(","))
                 };
                 println!(
-                    "{}: {} ({}) [tags={}, {}x{} @ ({},{})]{}",
+                    "{}: {} ({}) [tags={}, output={}, {}x{} @ ({},{})]{}",
                     w.id,
                     w.app_name,
                     w.app_id.as_deref().unwrap_or("-"),
                     w.tags,
+                    w.output_id,
                     w.width,
                     w.height,
                     w.x,

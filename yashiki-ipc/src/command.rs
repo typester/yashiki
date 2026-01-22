@@ -781,6 +781,7 @@ pub struct WindowInfo {
     pub is_focused: bool,
     pub is_floating: bool,
     pub is_fullscreen: bool,
+    pub output_id: u32,
     // Optional status field (present when --all is used)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<WindowStatus>,
@@ -974,6 +975,7 @@ mod tests {
                 is_focused: true,
                 is_floating: false,
                 is_fullscreen: false,
+                output_id: 1,
                 status: None,
                 ax_id: None,
                 subrole: None,
@@ -1660,6 +1662,7 @@ mod tests {
                 is_focused: true,
                 is_floating: false,
                 is_fullscreen: false,
+                output_id: 1,
                 status: None,
                 ax_id: None,
                 subrole: None,
