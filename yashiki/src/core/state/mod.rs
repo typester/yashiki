@@ -1553,4 +1553,259 @@ mod tests {
         assert_eq!(moves2[0].new_x, 3839);
         assert_eq!(moves2[0].new_y, 1079);
     }
+
+    #[test]
+    fn test_orphan_tracking_on_display_removal() {
+        // When a display is removed, windows on that display should be orphaned
+        // and their original display should be tracked in orphaned_from
+        let ws1 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws1);
+
+        // Window 101 is on display 2
+        assert_eq!(state.windows.get(&101).unwrap().display_id, 2);
+        assert_eq!(state.windows.get(&101).unwrap().orphaned_from, None);
+
+        // Remove display 2
+        let ws2 = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let _result = state.handle_display_change(&ws2);
+
+        // Window 101 should now be on display 1 (fallback) with orphaned_from = Some(2)
+        assert_eq!(state.windows.get(&101).unwrap().display_id, 1);
+        assert_eq!(state.windows.get(&101).unwrap().orphaned_from, Some(2));
+
+        // Window 100 should not be affected (was already on display 1)
+        assert_eq!(state.windows.get(&100).unwrap().display_id, 1);
+        assert_eq!(state.windows.get(&100).unwrap().orphaned_from, None);
+    }
+
+    #[test]
+    fn test_orphan_restoration_on_display_return() {
+        // When a display returns, orphaned windows should be restored to their original display
+        let ws1 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws1);
+
+        // Remove display 2
+        let ws2 = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 100.0, 100.0, 800.0, 600.0), // macOS moves it
+            ])
+            .with_focused(Some(100));
+
+        let _result = state.handle_display_change(&ws2);
+        assert_eq!(state.windows.get(&101).unwrap().display_id, 1);
+        assert_eq!(state.windows.get(&101).unwrap().orphaned_from, Some(2));
+
+        // Bring display 2 back
+        let ws3 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 100.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let result = state.handle_display_change(&ws3);
+
+        // Window 101 should be restored to display 2
+        assert_eq!(state.windows.get(&101).unwrap().display_id, 2);
+        assert_eq!(state.windows.get(&101).unwrap().orphaned_from, None);
+
+        // Both displays should be retiled
+        assert!(result.displays_to_retile.contains(&1));
+        assert!(result.displays_to_retile.contains(&2));
+    }
+
+    #[test]
+    fn test_orphan_state_cleared_on_intentional_move() {
+        // When user intentionally moves a window via send_to_output, orphan state should be cleared
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Manually set orphaned_from to simulate a previous orphan state
+        state.windows.get_mut(&100).unwrap().orphaned_from = Some(2);
+
+        // User sends window to next output
+        let result = state.send_to_output(OutputDirection::Next);
+        assert!(result.is_some());
+
+        // orphaned_from should be cleared (user intentionally moved it)
+        assert_eq!(state.windows.get(&100).unwrap().orphaned_from, None);
+        assert_eq!(state.windows.get(&100).unwrap().display_id, 2);
+    }
+
+    #[test]
+    fn test_rapid_display_reconnect_preserves_window_position() {
+        // Simulates sleep/wake: display removed then quickly re-added
+        // Window should end up on its original display
+        let ws1 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws1);
+
+        // Step 1: Sleep - display 2 disconnects
+        let ws2 = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 100.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let _result = state.handle_display_change(&ws2);
+
+        // Verify window 101 is orphaned
+        assert_eq!(state.windows.get(&101).unwrap().display_id, 1);
+        assert_eq!(state.windows.get(&101).unwrap().orphaned_from, Some(2));
+
+        // Step 2: Wake - display 2 reconnects
+        // Note: macOS might have moved the window to display 1 physically,
+        // but the orphaned_from tracking should still restore it
+        let ws3 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                // Window 101 is still physically on display 1 (macOS didn't move it back)
+                create_test_window(101, 1001, "Terminal", 100.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let result = state.handle_display_change(&ws3);
+
+        // Window 101 should be restored to display 2
+        assert_eq!(state.windows.get(&101).unwrap().display_id, 2);
+        assert_eq!(state.windows.get(&101).unwrap().orphaned_from, None);
+
+        // Both displays should need retiling
+        assert!(result.displays_to_retile.contains(&1));
+        assert!(result.displays_to_retile.contains(&2));
+    }
+
+    #[test]
+    fn test_multi_stage_orphan_preserves_original_display() {
+        // Tests that when a window is orphaned multiple times (e.g., multiple displays disconnect),
+        // the original orphaned_from value is preserved
+        let ws1 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+                create_test_display(3, 3840.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 4000.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws1);
+
+        // Window is on display 3
+        assert_eq!(state.windows.get(&100).unwrap().display_id, 3);
+        assert_eq!(state.windows.get(&100).unwrap().orphaned_from, None);
+
+        // Remove display 3 - window moves to display 2 (or 1 as fallback)
+        // For this test, let's assume the main display is display 1
+        let ws2 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let _result = state.handle_display_change(&ws2);
+
+        // Window should be on fallback display (1) with orphaned_from = 3
+        assert_eq!(state.windows.get(&100).unwrap().display_id, 1);
+        assert_eq!(state.windows.get(&100).unwrap().orphaned_from, Some(3));
+
+        // Now remove display 2 as well - this should NOT change orphaned_from
+        // because the window is already orphaned from display 3
+        let ws3 = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let _result = state.handle_display_change(&ws3);
+
+        // Window is still on display 1, orphaned_from should still be 3 (not 1)
+        assert_eq!(state.windows.get(&100).unwrap().display_id, 1);
+        assert_eq!(state.windows.get(&100).unwrap().orphaned_from, Some(3));
+
+        // When display 3 comes back, window should be restored
+        let ws4 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(3, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let _result = state.handle_display_change(&ws4);
+
+        // Window should be restored to display 3
+        assert_eq!(state.windows.get(&100).unwrap().display_id, 3);
+        assert_eq!(state.windows.get(&100).unwrap().orphaned_from, None);
+    }
 }

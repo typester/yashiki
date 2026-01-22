@@ -184,6 +184,7 @@ mod tests {
             saved_frame: None,
             is_floating: false,
             is_fullscreen: false,
+            orphaned_from: None,
         }
     }
 

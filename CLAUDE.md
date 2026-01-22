@@ -277,6 +277,42 @@ Managed by daemon (not layout engines), applied to all layouts including fullscr
 ### Popup Filtering
 Use `ignore` rule with subrole/ax-id matching. Example: `--subrole AXUnknown ignore`
 
+### Orphan Tracking (Sleep/Wake Window Restoration)
+
+> **⚠️ IMPORTANT FOR FUTURE CHANGES:**
+> This design involves intentional trade-offs. Before modifying `orphaned_from` behavior or adding new places that set/clear it, **consult the user** and explain the impact on these documented behaviors.
+
+When displays disconnect (e.g., during sleep), windows are "orphaned" to a fallback display.
+The `orphaned_from` field in `Window` tracks the original display for restoration when it returns.
+
+**State transitions:**
+- `None` → `Some(display_id)`: Display disconnected, window moved to fallback
+- `Some(display_id)` → `None`: Original display returned and window restored, OR user explicitly moved window via Yashiki command
+- `Some(display_id)` → `Some(display_id)` (unchanged): Multi-stage disconnect preserves first source
+
+**When `orphaned_from` is cleared:**
+- `send_to_output` command (user explicitly moves window between displays)
+- Successful restoration when original display returns
+
+**When `orphaned_from` is NOT cleared (intentional):**
+- User drags window to another display (indistinguishable from OS-initiated moves)
+- Window rules move window to specific display
+- OS resolution changes or window repositioning
+
+**Rationale:** Clearing only on explicit Yashiki commands ensures OS callbacks don't accidentally discard orphan state. Trade-off: user drags are not recognized as user intent.
+
+**Known edge cases (accepted trade-offs):**
+1. **Rule + orphan conflict**: If user adds a rule moving an orphaned window, restoration may override the rule when original display returns
+2. **Drag + restoration**: User-dragged windows may be moved back when original display returns
+
+**Future improvement considerations:**
+- Detect user drags via AXUIElement move observation (would require distinguishing user drags from programmatic moves)
+- Use display UUID instead of CGDirectDisplayID for more robust identification
+
+**Related code:**
+- `core/window.rs`: `orphaned_from` field definition
+- `core/state/display.rs`: `handle_display_change()` - orphan/restore logic, `send_to_output()` - clear on user move
+
 ## Testing
 
 Run: `cargo test --all`

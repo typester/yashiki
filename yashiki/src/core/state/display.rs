@@ -1,6 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use super::super::WindowId;
 use crate::macos::DisplayId;
 use crate::platform::WindowSystem;
 use yashiki_ipc::OutputDirection;
@@ -21,30 +20,30 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
     let added_ids: HashSet<_> = current_ids.difference(&previous_ids).copied().collect();
 
     if removed_ids.is_empty() {
-        let visible_window_displays: HashMap<WindowId, DisplayId> = state
-            .windows
-            .iter()
-            .filter(|(_, w)| !w.is_hidden())
-            .map(|(id, w)| (*id, w.display_id))
-            .collect();
-
         let rehide_moves = sync_all(state, ws);
+        let mut displays_to_retile: HashSet<DisplayId> = added_ids.iter().copied().collect();
 
-        let mut stolen_window_displays: HashSet<DisplayId> = HashSet::new();
-        for (window_id, original_display_id) in &visible_window_displays {
-            if let Some(window) = state.windows.get_mut(window_id) {
-                if !added_ids.contains(original_display_id)
-                    && added_ids.contains(&window.display_id)
+        // Restore orphaned windows to their original displays if those displays have returned
+        for window in state.windows.values_mut() {
+            if let Some(original_display_id) = window.orphaned_from {
+                // Guard: Only restore if the original display is back and exists in state
+                if added_ids.contains(&original_display_id)
+                    && state.displays.contains_key(&original_display_id)
                 {
                     tracing::info!(
-                        "Restoring window {} to original display {} (macOS moved it to new display {})",
-                        window_id,
+                        "Restoring orphaned window {} ({}) to original display {} (currently on {})",
+                        window.id,
+                        window.app_name,
                         original_display_id,
                         window.display_id
                     );
-                    window.display_id = *original_display_id;
-                    stolen_window_displays.insert(*original_display_id);
+                    let previous_display = window.display_id;
+                    window.display_id = original_display_id;
+                    window.orphaned_from = None; // Clear orphan state after successful restoration
+                    displays_to_retile.insert(previous_display);
+                    displays_to_retile.insert(original_display_id);
                 }
+                // If original display didn't return, keep orphaned_from set for future restoration
             }
         }
 
@@ -55,12 +54,9 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
             .cloned()
             .collect();
 
-        let mut displays_to_retile: Vec<_> = added_ids.iter().copied().collect();
-        displays_to_retile.extend(stolen_window_displays);
-
         return DisplayChangeResult {
             window_moves: rehide_moves,
-            displays_to_retile,
+            displays_to_retile: displays_to_retile.into_iter().collect(),
             added,
             removed: vec![],
         };
@@ -96,6 +92,11 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
                 window.display_id,
                 fallback_id
             );
+            // Record the original display for potential restoration on wake.
+            // Only set if not already orphaned (preserve the first orphan source for multi-stage disconnects).
+            if window.orphaned_from.is_none() {
+                window.orphaned_from = Some(window.display_id);
+            }
             window.display_id = fallback_id;
             affected_displays.insert(fallback_id);
         }
@@ -215,6 +216,8 @@ pub fn send_to_output(state: &mut State, direction: OutputDirection) -> Option<S
         target_display_id
     );
     window.display_id = target_display_id;
+    // User intentionally moved the window - clear orphan state
+    window.orphaned_from = None;
     // Set frame to target display's position (will be overwritten by retile if visible,
     // or saved to saved_frame if hidden - either way, correct display context)
     window.frame.x = target_frame_x;

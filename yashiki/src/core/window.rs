@@ -25,6 +25,10 @@ pub struct Window {
     pub saved_frame: Option<Rect>,
     pub is_floating: bool,
     pub is_fullscreen: bool,
+    /// Display ID that this window was orphaned from during display disconnection.
+    /// Some(display_id): Window was orphaned due to display removal (remembers original display)
+    /// None: Window is on its intended display
+    pub orphaned_from: Option<DisplayId>,
 }
 
 impl Window {
@@ -48,6 +52,7 @@ impl Window {
             saved_frame: None,
             is_floating: false,
             is_fullscreen: false,
+            orphaned_from: None,
         }
     }
 
