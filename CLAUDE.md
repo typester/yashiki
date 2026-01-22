@@ -40,8 +40,10 @@ Future: `engawa/` (status bar), `yashiki-layout-rasen` (spiral), `yashiki-layout
 ### Virtual Workspaces (No SIP Required)
 
 Like AeroSpace, uses virtual workspaces instead of macOS native Spaces:
-- All windows on single macOS Space, workspace switching hides windows (position at screen's bottom-right)
+- All windows on single macOS Space, workspace switching hides windows (per-display corner positioning)
 - Only uses public Accessibility API, NSScreen visibleFrame for layout area
+
+**Why per-display hiding?** Native fullscreen moves a display to a separate macOS Space where Accessibility API cannot access windows. If windows were hidden to a global position (e.g., bottom-right of all displays), they would become inaccessible when any display enters fullscreen. Per-display hiding ensures each display's windows stay within its own bounds.
 
 ## Key Features
 
@@ -257,9 +259,28 @@ Examples of what is NOT approval:
 `NSScreen.visibleFrame` may not report menu bar on some external monitors. Workaround in `macos/display.rs`: detect menu bar via CGWindowList (Window Server, layer 24), apply adjustment when `visibleFrame == frame`.
 
 ### Window Management
-- Hidden windows: moved to screen's bottom-right corner, `saved_frame` stores original position
+- Hidden windows: moved to screen's corner (per-display), `saved_frame` stores original position
 - Auto tag switch: when external focus (Dock, Cmd+Tab) changes to hidden window, tag switches automatically
 - Per-tag layout: `tag-view` switches layout, `tag-toggle` maintains current, `tag-view-last` swaps with previous
+
+### Window Hiding Constraints
+
+1. **1px Visibility Rule**: At least 1x1 pixel of a window must remain within the display bounds. macOS will automatically reposition windows that are completely offscreen.
+
+2. **Per-Display Hiding**: When a display enters native fullscreen mode, it moves to a new macOS Space where windows cannot be accessed via Accessibility API. Each display must hide its windows independently within its own bounds.
+
+3. **Window Position Reference Point**: macOS window position is the top-left corner. The window body extends right and down from this point. To hide at non-bottom-right corners, the position must be offset by window dimensions:
+   - bottom-right: `(display_right - 1, display_bottom - 1)` - no offset needed
+   - bottom-left: `(display_left - window_width + 1, display_bottom - 1)`
+   - top-right: `(display_right - 1, display_top - window_height + 1)`
+   - top-left: `(display_left - window_width + 1, display_top - window_height + 1)`
+
+4. **Corner Selection**: Selects a safe corner where the window body won't extend into adjacent displays. Priority: bottom-right → bottom-left → top-right → top-left.
+
+**Why corner selection matters:** macOS window position is the top-left corner, and the window body extends **right and down**. If display A is to the left of display B and we hide A's window to bottom-right corner, the window body extends into display B and becomes visible there. By selecting a corner away from adjacent displays (e.g., bottom-left for A), we ensure hidden windows stay invisible.
+
+**Related code:**
+- `core/state/layout.rs`: `compute_hide_position_for_display()` - per-display hide position calculation
 
 ### Cursor Warp
 Three modes: Disabled (default), OnOutputChange, OnFocusChange. Uses `CGWarpMouseCursorPosition`.

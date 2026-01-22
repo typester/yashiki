@@ -1430,8 +1430,10 @@ mod tests {
         let mut state = State::new();
         state.sync_all(&ws);
 
-        let (x, y) = compute_hide_position_for_display(&state, 1);
+        // Test with 800x600 window
+        let (x, y) = compute_hide_position_for_display(&state, 1, 800, 600);
         // Bottom-right corner: (1920-1, 1080-1) = (1919, 1079)
+        // Window extends right & down from this point, staying off-screen
         assert_eq!(x, 1919);
         assert_eq!(y, 1079);
     }
@@ -1439,8 +1441,8 @@ mod tests {
     #[test]
     fn test_per_display_hide_position_horizontal_layout() {
         // Horizontal layout: display 1 (left), display 2 (right)
-        // Display 1: bottom-right corner overlaps with display 2, should use bottom-left
-        // Display 2: bottom-right corner is safe
+        // Display 1: has right-adjacent display, window at bottom-right would extend into display 2
+        // Display 2: no right-adjacent display, bottom-right is safe
         let ws = MockWindowSystem::new()
             .with_displays(vec![
                 create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
@@ -1451,14 +1453,16 @@ mod tests {
         let mut state = State::new();
         state.sync_all(&ws);
 
-        // Display 1 (left): bottom-right (1919, 1079) is at boundary but not inside display 2
-        // Display 2 starts at x=1920, so (1919, 1079) is NOT in display 2
-        let (x1, y1) = compute_hide_position_for_display(&state, 1);
-        assert_eq!(x1, 1919); // Bottom-right is safe (x < 1920)
-        assert_eq!(y1, 1079);
+        // Test with 800x600 window
+        // Display 1 (left): has right-adjacent, so bottom-right is unsafe
+        // Falls back to bottom-left: (0 - 800 + 1, 1079) = (-799, 1079)
+        // Window extends right from -799, so only 1px (at x=0) is visible on display
+        let (x1, y1) = compute_hide_position_for_display(&state, 1, 800, 600);
+        assert_eq!(x1, -799); // Bottom-left x with offset
+        assert_eq!(y1, 1079); // Bottom-left y
 
-        // Display 2 (right): bottom-right (3839, 1079) is safe
-        let (x2, y2) = compute_hide_position_for_display(&state, 2);
+        // Display 2 (right): no right-adjacent, bottom-right (3839, 1079) is safe
+        let (x2, y2) = compute_hide_position_for_display(&state, 2, 800, 600);
         assert_eq!(x2, 3839); // 1920 + 1920 - 1
         assert_eq!(y2, 1079);
     }
@@ -1466,6 +1470,8 @@ mod tests {
     #[test]
     fn test_per_display_hide_position_vertical_layout() {
         // Vertical layout: display 1 (top), display 2 (bottom)
+        // Display 1: has bottom-adjacent display, window at bottom corners would extend into display 2
+        // Display 2: no bottom-adjacent display, bottom-right is safe
         let ws = MockWindowSystem::new()
             .with_displays(vec![
                 create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
@@ -1476,14 +1482,16 @@ mod tests {
         let mut state = State::new();
         state.sync_all(&ws);
 
-        // Display 1 (top): bottom-right (1919, 1079) is at boundary but not inside display 2
-        // Display 2 starts at y=1080, so (1919, 1079) is NOT in display 2
-        let (x1, y1) = compute_hide_position_for_display(&state, 1);
-        assert_eq!(x1, 1919);
-        assert_eq!(y1, 1079);
+        // Test with 800x600 window
+        // Display 1 (top): has bottom-adjacent, so bottom-right and bottom-left are unsafe
+        // Falls back to top-right: (1919, 0 - 600 + 1) = (1919, -599)
+        // Window extends down from -599, so only 1px (at y=0) is visible on display
+        let (x1, y1) = compute_hide_position_for_display(&state, 1, 800, 600);
+        assert_eq!(x1, 1919); // Top-right x
+        assert_eq!(y1, -599); // Top-right y with offset
 
-        // Display 2 (bottom): bottom-right (1919, 2159) is safe
-        let (x2, y2) = compute_hide_position_for_display(&state, 2);
+        // Display 2 (bottom): no bottom-adjacent, bottom-right (1919, 2159) is safe
+        let (x2, y2) = compute_hide_position_for_display(&state, 2, 800, 600);
         assert_eq!(x2, 1919);
         assert_eq!(y2, 2159); // 1080 + 1080 - 1
     }
@@ -1491,6 +1499,7 @@ mod tests {
     #[test]
     fn test_per_display_hide_position_different_sizes() {
         // Main display (1920x1080), secondary display (1440x900) to the right
+        // y ranges overlap (0-1080 vs 0-900), so they are adjacent
         let ws = MockWindowSystem::new()
             .with_displays(vec![
                 create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
@@ -1501,14 +1510,15 @@ mod tests {
         let mut state = State::new();
         state.sync_all(&ws);
 
-        // Display 1: bottom-right (1919, 1079) - y=1079 is outside display 2's y range (0-899)
-        // So bottom-right is safe
-        let (x1, y1) = compute_hide_position_for_display(&state, 1);
-        assert_eq!(x1, 1919);
-        assert_eq!(y1, 1079);
+        // Test with 800x600 window
+        // Display 1: has right-adjacent (y ranges 0-1080 and 0-900 overlap)
+        // bottom-right is unsafe, falls back to bottom-left: (0 - 800 + 1, 1079) = (-799, 1079)
+        let (x1, y1) = compute_hide_position_for_display(&state, 1, 800, 600);
+        assert_eq!(x1, -799); // Bottom-left x with offset
+        assert_eq!(y1, 1079); // Bottom-left y
 
-        // Display 2: bottom-right (3359, 899) is safe
-        let (x2, y2) = compute_hide_position_for_display(&state, 2);
+        // Display 2: no right-adjacent, bottom-right (3359, 899) is safe
+        let (x2, y2) = compute_hide_position_for_display(&state, 2, 800, 600);
         assert_eq!(x2, 3359); // 1920 + 1440 - 1
         assert_eq!(y2, 899);
     }
@@ -1540,8 +1550,10 @@ mod tests {
         // Only window 100 should be hidden (it's on display 1)
         assert_eq!(moves.len(), 1);
         assert_eq!(moves[0].window_id, 100);
-        // Should be hidden to display 1's hide position (1919, 1079)
-        assert_eq!(moves[0].new_x, 1919);
+        // Should be hidden to display 1's hide position (-799, 1079) - bottom-left with offset
+        // because display 1 has right-adjacent display 2
+        // Window is 800x600, so offset x = 0 - 800 + 1 = -799
+        assert_eq!(moves[0].new_x, -799);
         assert_eq!(moves[0].new_y, 1079);
 
         // Switch display 2 to tag 2

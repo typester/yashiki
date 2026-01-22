@@ -48,7 +48,12 @@ fn detect_rehide_moves(
 
     for window in state.windows.values() {
         if let Some(info) = window_infos.iter().find(|i| i.window_id == window.id) {
-            let (hide_x, hide_y) = compute_hide_position_for_display(state, window.display_id);
+            let (hide_x, hide_y) = compute_hide_position_for_display(
+                state,
+                window.display_id,
+                window.frame.width,
+                window.frame.height,
+            );
             if let Some(mv) = check_window_rehide(
                 window,
                 info.bounds.x as i32,
@@ -264,10 +269,14 @@ pub fn sync_pid<W: WindowSystem>(
             let new_display_id = find_display_for_bounds(state, &info.bounds);
 
             // Compute hide position before mutable borrow
-            let hide_pos = state
-                .windows
-                .get(id)
-                .map(|w| compute_hide_position_for_display(state, w.display_id));
+            let hide_pos = state.windows.get(id).map(|w| {
+                compute_hide_position_for_display(
+                    state,
+                    w.display_id,
+                    w.frame.width,
+                    w.frame.height,
+                )
+            });
 
             if let Some(window) = state.windows.get_mut(id) {
                 let title_changed = window.title != new_title;
