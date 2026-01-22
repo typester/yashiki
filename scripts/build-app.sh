@@ -122,6 +122,9 @@ cp "${BUILD_DIR}/yashiki" "${APP_DIR}/Contents/MacOS/"
 cp "${BUILD_DIR}/yashiki-layout-tatami" "${APP_DIR}/Contents/Resources/layouts/"
 cp "${BUILD_DIR}/yashiki-layout-byobu" "${APP_DIR}/Contents/Resources/layouts/"
 
+# Copy assets
+cp "${PROJECT_ROOT}/resources/icon/Assets.car" "${APP_DIR}/Contents/Resources/"
+
 # Create launcher wrapper
 cat > "${APP_DIR}/Contents/MacOS/yashiki-launcher" << 'EOF'
 #!/bin/bash

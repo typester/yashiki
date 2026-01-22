@@ -20,5 +20,7 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>CFBundleIconName</key>
+    <string>yashiki</string>
 </dict>
 </plist>

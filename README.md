@@ -406,9 +406,14 @@ yashiki-layout-tatami/    # Master-stack layout engine
 yashiki-layout-byobu/     # Accordion layout engine
 ```
 
-## Acknowledgments
+## Credits
 
-Inspired by:
+### App Icon
+
+Designed by **[Yuta Okajima](https://www.linkedin.com/in/yutaok/)**
+
+### Inspiration
+
 - [river](https://codeberg.org/river/river) - External layout protocol, multi-monitor model
 - [AeroSpace](https://github.com/nikitabobko/AeroSpace) - Virtual workspaces approach, accordion layout
 - [dwm](https://dwm.suckless.org/) / [awesomewm](https://awesomewm.org/) - Tag-based workspaces
