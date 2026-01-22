@@ -17,6 +17,51 @@ pub fn compute_global_hide_position(state: &State) -> (i32, i32) {
     (max_x - 1, max_y - 1)
 }
 
+/// Compute per-display hide position to avoid cross-display interference.
+/// Selects a corner that doesn't overlap with other displays.
+/// Priority: bottom-right → bottom-left → top-right → top-left
+pub fn compute_hide_position_for_display(state: &State, display_id: DisplayId) -> (i32, i32) {
+    let Some(display) = state.displays.get(&display_id) else {
+        return compute_global_hide_position(state);
+    };
+
+    let frame = &display.frame;
+
+    // 4 corner candidates (keep 1px inside the screen)
+    let corners = [
+        (
+            frame.x + frame.width as i32 - 1,
+            frame.y + frame.height as i32 - 1,
+        ), // bottom-right
+        (frame.x, frame.y + frame.height as i32 - 1), // bottom-left
+        (frame.x + frame.width as i32 - 1, frame.y),  // top-right
+        (frame.x, frame.y),                           // top-left
+    ];
+
+    // Find a corner that doesn't overlap with other displays
+    for (x, y) in corners {
+        let overlaps = state.displays.values().any(|other| {
+            if other.id == display_id {
+                return false;
+            }
+            let ox = other.frame.x;
+            let oy = other.frame.y;
+            let ow = other.frame.width as i32;
+            let oh = other.frame.height as i32;
+            x >= ox && x < ox + ow && y >= oy && y < oy + oh
+        });
+        if !overlaps {
+            return (x, y);
+        }
+    }
+
+    // Fallback (shouldn't normally reach here)
+    (
+        frame.x + frame.width as i32 - 1,
+        frame.y + frame.height as i32 - 1,
+    )
+}
+
 pub fn compute_layout_changes_for_display(
     state: &mut State,
     display_id: DisplayId,
@@ -25,7 +70,7 @@ pub fn compute_layout_changes_for_display(
         return vec![];
     };
     let visible_tags = display.visible_tags;
-    let (hide_x, hide_y) = compute_global_hide_position(state);
+    let (hide_x, hide_y) = compute_hide_position_for_display(state, display_id);
 
     let mut moves = Vec::new();
 

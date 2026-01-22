@@ -185,7 +185,7 @@ fn compute_hide_for_window(state: &mut State, window_id: WindowId) -> Option<Win
     }
 
     let visible_tags = state.displays.get(&display_id)?.visible_tags;
-    let (hide_x, hide_y) = super::layout::compute_global_hide_position(state);
+    let (hide_x, hide_y) = super::layout::compute_hide_position_for_display(state, display_id);
 
     let should_be_visible = window_tags.intersects(visible_tags);
 

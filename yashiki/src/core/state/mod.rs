@@ -391,6 +391,7 @@ mod tests {
     use crate::platform::mock::{
         create_test_display, create_test_window, create_test_window_with_layer, MockWindowSystem,
     };
+    use layout::compute_hide_position_for_display;
     use yashiki_ipc::ExtendedWindowAttributes;
 
     fn setup_mock_system() -> MockWindowSystem {
@@ -1417,5 +1418,139 @@ mod tests {
 
         // Window should no longer be hidden
         assert!(!state.windows.get(&100).unwrap().is_hidden());
+    }
+
+    #[test]
+    fn test_per_display_hide_position_single_display() {
+        // Single display should use bottom-right corner
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        let (x, y) = compute_hide_position_for_display(&state, 1);
+        // Bottom-right corner: (1920-1, 1080-1) = (1919, 1079)
+        assert_eq!(x, 1919);
+        assert_eq!(y, 1079);
+    }
+
+    #[test]
+    fn test_per_display_hide_position_horizontal_layout() {
+        // Horizontal layout: display 1 (left), display 2 (right)
+        // Display 1: bottom-right corner overlaps with display 2, should use bottom-left
+        // Display 2: bottom-right corner is safe
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Display 1 (left): bottom-right (1919, 1079) is at boundary but not inside display 2
+        // Display 2 starts at x=1920, so (1919, 1079) is NOT in display 2
+        let (x1, y1) = compute_hide_position_for_display(&state, 1);
+        assert_eq!(x1, 1919); // Bottom-right is safe (x < 1920)
+        assert_eq!(y1, 1079);
+
+        // Display 2 (right): bottom-right (3839, 1079) is safe
+        let (x2, y2) = compute_hide_position_for_display(&state, 2);
+        assert_eq!(x2, 3839); // 1920 + 1920 - 1
+        assert_eq!(y2, 1079);
+    }
+
+    #[test]
+    fn test_per_display_hide_position_vertical_layout() {
+        // Vertical layout: display 1 (top), display 2 (bottom)
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 0.0, 1080.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Display 1 (top): bottom-right (1919, 1079) is at boundary but not inside display 2
+        // Display 2 starts at y=1080, so (1919, 1079) is NOT in display 2
+        let (x1, y1) = compute_hide_position_for_display(&state, 1);
+        assert_eq!(x1, 1919);
+        assert_eq!(y1, 1079);
+
+        // Display 2 (bottom): bottom-right (1919, 2159) is safe
+        let (x2, y2) = compute_hide_position_for_display(&state, 2);
+        assert_eq!(x2, 1919);
+        assert_eq!(y2, 2159); // 1080 + 1080 - 1
+    }
+
+    #[test]
+    fn test_per_display_hide_position_different_sizes() {
+        // Main display (1920x1080), secondary display (1440x900) to the right
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1440.0, 900.0),
+            ])
+            .with_windows(vec![]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Display 1: bottom-right (1919, 1079) - y=1079 is outside display 2's y range (0-899)
+        // So bottom-right is safe
+        let (x1, y1) = compute_hide_position_for_display(&state, 1);
+        assert_eq!(x1, 1919);
+        assert_eq!(y1, 1079);
+
+        // Display 2: bottom-right (3359, 899) is safe
+        let (x2, y2) = compute_hide_position_for_display(&state, 2);
+        assert_eq!(x2, 3359); // 1920 + 1440 - 1
+        assert_eq!(y2, 899);
+    }
+
+    #[test]
+    fn test_windows_hidden_to_their_own_display() {
+        // Windows on different displays should be hidden to their respective display's hide position
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Window 100 is on display 1, window 101 is on display 2
+        assert_eq!(state.windows.get(&100).unwrap().display_id, 1);
+        assert_eq!(state.windows.get(&101).unwrap().display_id, 2);
+
+        // Switch display 1 to tag 2 (windows have tag 1)
+        let moves = state.view_tags_on_display(2, 1);
+
+        // Only window 100 should be hidden (it's on display 1)
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0].window_id, 100);
+        // Should be hidden to display 1's hide position (1919, 1079)
+        assert_eq!(moves[0].new_x, 1919);
+        assert_eq!(moves[0].new_y, 1079);
+
+        // Switch display 2 to tag 2
+        let moves2 = state.view_tags_on_display(2, 2);
+
+        // Window 101 should be hidden to display 2's hide position (3839, 1079)
+        assert_eq!(moves2.len(), 1);
+        assert_eq!(moves2[0].window_id, 101);
+        assert_eq!(moves2[0].new_x, 3839);
+        assert_eq!(moves2[0].new_y, 1079);
     }
 }

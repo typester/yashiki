@@ -5,7 +5,9 @@ use crate::macos::DisplayId;
 use crate::platform::WindowSystem;
 
 use super::super::state::{State, WindowMove};
-use super::layout::{add_to_window_order, compute_global_hide_position, remove_from_window_order};
+use super::layout::{
+    add_to_window_order, compute_hide_position_for_display, remove_from_window_order,
+};
 use super::rules::{has_matching_non_ignore_rule, should_ignore_window_extended};
 
 /// Check if a hidden window needs to be re-hidden (returns Some if moved from hide position)
@@ -42,11 +44,11 @@ fn detect_rehide_moves(
     state: &State,
     window_infos: &[crate::macos::WindowInfo],
 ) -> Vec<WindowMove> {
-    let (hide_x, hide_y) = compute_global_hide_position(state);
     let mut rehide_moves = Vec::new();
 
     for window in state.windows.values() {
         if let Some(info) = window_infos.iter().find(|i| i.window_id == window.id) {
+            let (hide_x, hide_y) = compute_hide_position_for_display(state, window.display_id);
             if let Some(mv) = check_window_rehide(
                 window,
                 info.bounds.x as i32,
@@ -251,7 +253,6 @@ pub fn sync_pid<W: WindowSystem>(
         }
     }
 
-    let (hide_x, hide_y) = compute_global_hide_position(state);
     for id in current_ids.intersection(&new_ids) {
         if let Some(info) = pid_window_infos.iter().find(|w| w.window_id == *id) {
             let ext = ws.get_extended_attributes(info.window_id, info.pid, info.layer);
@@ -261,6 +262,12 @@ pub fn sync_pid<W: WindowSystem>(
                 .unwrap_or_else(|| info.name.clone().unwrap_or_default());
             let new_frame = Rect::from_bounds(&info.bounds);
             let new_display_id = find_display_for_bounds(state, &info.bounds);
+
+            // Compute hide position before mutable borrow
+            let hide_pos = state
+                .windows
+                .get(id)
+                .map(|w| compute_hide_position_for_display(state, w.display_id));
 
             if let Some(window) = state.windows.get_mut(id) {
                 let title_changed = window.title != new_title;
@@ -282,10 +289,15 @@ pub fn sync_pid<W: WindowSystem>(
                     );
                     window.title = new_title;
 
-                    if let Some(mv) =
-                        check_window_rehide(window, new_frame.x, new_frame.y, hide_x, hide_y)
-                    {
-                        rehide_moves.push(mv);
+                    if let Some((hide_x, hide_y)) = hide_pos {
+                        if let Some(mv) =
+                            check_window_rehide(window, new_frame.x, new_frame.y, hide_x, hide_y)
+                        {
+                            rehide_moves.push(mv);
+                        } else if !window.is_hidden() {
+                            window.frame = new_frame;
+                            window.display_id = new_display_id;
+                        }
                     } else if !window.is_hidden() {
                         window.frame = new_frame;
                         window.display_id = new_display_id;
