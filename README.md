@@ -1,6 +1,8 @@
-# Yashiki (屋敷)
+<h1><img src="resources/icon/icon-128.png" width="32" align="top"> Yashiki (屋敷)</h1>
 
 macOS tiling window manager written in Rust.
+
+<img src="resources/screenshots/demo.png" width="800">
 
 ## Features
 
