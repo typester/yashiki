@@ -78,6 +78,43 @@ pub fn process_new_windows<M: WindowManipulator>(
     }
 }
 
+/// Sync focused window with hint and process newly discovered windows.
+/// Returns whether the state changed (which may require retiling).
+pub fn sync_focused_and_process<W: WindowSystem, M: WindowManipulator>(
+    state: &RefCell<State>,
+    window_system: &W,
+    layout_engine_manager: &RefCell<LayoutEngineManager>,
+    manipulator: &M,
+    event_emitter: &EventEmitter,
+    observer_manager: &RefCell<ObserverManager>,
+    pid_hint: Option<i32>,
+) -> SyncResult {
+    // Ensure observer exists for this PID if provided
+    if let Some(pid) = pid_hint {
+        if !observer_manager.borrow().has_observer(pid) {
+            tracing::info!("Adding observer for pid {} during focused sync", pid);
+            if let Err(e) = observer_manager.borrow_mut().add_observer(pid) {
+                tracing::warn!("Failed to add observer for pid {}: {}", pid, e);
+            }
+        }
+    }
+
+    let (changed, new_window_ids) = state
+        .borrow_mut()
+        .sync_focused_window_with_hint(window_system, pid_hint);
+
+    // Apply rules to newly discovered windows and emit events
+    process_new_windows(
+        new_window_ids,
+        state,
+        layout_engine_manager,
+        manipulator,
+        event_emitter,
+    );
+
+    SyncResult { changed }
+}
+
 #[cfg(test)]
 mod tests {
     use std::ptr;

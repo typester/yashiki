@@ -352,6 +352,27 @@ The `orphaned_from` field in `Window` tracks the original display for restoratio
 - `core/window.rs`: `orphaned_from` field definition
 - `core/state/display.rs`: `handle_display_change()` - orphan/restore logic, `send_to_output()` - clear on user move
 
+### Window Sync Architecture
+
+**Principle:** All sync functions that can add windows must return new window IDs, and callers must apply rules. After rules are applied, callers must check if retile is needed.
+
+**Complete flow:** sync → apply rules → retile if changed
+
+- `sync_pid()`, `sync_all()`, `sync_with_window_infos()` return `(changed, new_window_ids, ...)` or `(Vec<WindowMove>, Vec<WindowId>)`
+- App-layer helpers (`sync_and_process_new_windows`, `sync_focused_and_process`) wrap sync + rule application
+- **Never call low-level sync functions directly from app.rs** - always use helpers from `sync_helper.rs`
+- Rule application (`apply_rules_to_new_window`) is handled by `process_new_windows()`
+- `SyncResult.changed` indicates windows were added/removed → typically requires retile
+- **Callers MUST check `SyncResult.changed` and call `do_retile()` if true**
+- Never ignore the return value from sync helpers
+
+**Why:** Multiple entry points for window addition (focus change, app launch, display change) previously led to inconsistent rule application and missing retiles. Unified helpers ensure rules are always applied, and checking the result ensures retile happens when needed.
+
+**Related code:**
+- `core/state/sync.rs`: `sync_all()`, `sync_pid()`, `sync_with_window_infos()`, `sync_focused_window_with_hint()`
+- `app/sync_helper.rs`: `sync_and_process_new_windows()`, `sync_focused_and_process()`, `process_new_windows()`
+- `core/state/display.rs`: `handle_display_change()` returns `DisplayChangeResult` with `new_window_ids`
+
 ## Testing
 
 Run: `cargo test --all`

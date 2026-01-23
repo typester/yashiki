@@ -30,6 +30,7 @@ pub struct DisplayChangeResult {
     pub displays_to_retile: Vec<DisplayId>,
     pub added: Vec<Display>,
     pub removed: Vec<DisplayId>,
+    pub new_window_ids: Vec<WindowId>,
 }
 
 /// Result of focus_output operation
@@ -214,7 +215,7 @@ impl State {
 
     // Sync operations - delegated to state/sync.rs
 
-    pub fn sync_all<W: WindowSystem>(&mut self, ws: &W) -> Vec<WindowMove> {
+    pub fn sync_all<W: WindowSystem>(&mut self, ws: &W) -> (Vec<WindowMove>, Vec<WindowId>) {
         sync_all(self, ws)
     }
 

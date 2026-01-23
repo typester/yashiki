@@ -68,7 +68,7 @@ fn detect_rehide_moves(
     rehide_moves
 }
 
-pub fn sync_all<W: WindowSystem>(state: &mut State, ws: &W) -> Vec<WindowMove> {
+pub fn sync_all<W: WindowSystem>(state: &mut State, ws: &W) -> (Vec<WindowMove>, Vec<WindowId>) {
     let display_infos = ws.get_all_displays();
     for info in &display_infos {
         state
@@ -96,7 +96,7 @@ pub fn sync_all<W: WindowSystem>(state: &mut State, ws: &W) -> Vec<WindowMove> {
     state.displays.retain(|id, _| current_ids.contains(id));
 
     let window_infos = ws.get_on_screen_windows();
-    let rehide_moves = sync_with_window_infos(state, ws, &window_infos);
+    let (rehide_moves, new_window_ids) = sync_with_window_infos(state, ws, &window_infos);
     sync_focused_window(state, ws);
 
     tracing::info!(
@@ -117,7 +117,7 @@ pub fn sync_all<W: WindowSystem>(state: &mut State, ws: &W) -> Vec<WindowMove> {
         );
     }
 
-    rehide_moves
+    (rehide_moves, new_window_ids)
 }
 
 pub fn sync_focused_window<W: WindowSystem>(state: &mut State, ws: &W) -> (bool, Vec<WindowId>) {
@@ -429,9 +429,10 @@ pub fn sync_with_window_infos<W: WindowSystem>(
     state: &mut State,
     ws: &W,
     window_infos: &[crate::macos::WindowInfo],
-) -> Vec<WindowMove> {
+) -> (Vec<WindowMove>, Vec<WindowId>) {
     let current_ids: HashSet<WindowId> = state.windows.keys().copied().collect();
     let new_ids: HashSet<WindowId> = window_infos.iter().map(|w| w.window_id).collect();
+    let mut added_window_ids = Vec::new();
 
     for id in current_ids.difference(&new_ids) {
         remove_from_window_order(state, *id);
@@ -444,6 +445,7 @@ pub fn sync_with_window_infos<W: WindowSystem>(
 
             if let Some(window) = try_create_window(state, ws, info, display_id) {
                 add_to_window_order(state, window.id, display_id);
+                added_window_ids.push(window.id);
                 state.windows.insert(window.id, window);
             }
         }
@@ -465,5 +467,5 @@ pub fn sync_with_window_infos<W: WindowSystem>(
         }
     }
 
-    detect_rehide_moves(state, window_infos)
+    (detect_rehide_moves(state, window_infos), added_window_ids)
 }

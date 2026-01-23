@@ -28,7 +28,7 @@ use channels::{create_channels, run_async, IpcCommandWithResponse, MainChannels,
 use dispatch::dispatch_command;
 use focus::{notify_layout_focus, switch_tag_for_focused_window};
 use retile::{do_retile, do_retile_display};
-use sync_helper::{process_new_windows, sync_and_process_new_windows};
+use sync_helper::{process_new_windows, sync_and_process_new_windows, sync_focused_and_process};
 
 use crate::core::State;
 use crate::event::Event;
@@ -142,7 +142,9 @@ impl App {
         let mut state = State::new();
         state.config.exec_path = build_initial_exec_path();
         // Initial sync has no hidden windows, so rehide_moves is always empty
-        let _ = state.sync_all(&window_system);
+        // Note: new_window_ids are not processed here - rules aren't loaded yet,
+        // ApplyRules command is sent after init script runs
+        let (_, _) = state.sync_all(&window_system);
 
         // Create layout engine manager (lazy spawning)
         let mut layout_engine_manager = LayoutEngineManager::new();
@@ -375,6 +377,15 @@ impl App {
                         .apply_window_moves(&result.window_moves);
                 }
 
+                // Apply rules to newly discovered windows
+                process_new_windows(
+                    result.new_window_ids,
+                    &ctx.state,
+                    &ctx.layout_engine_manager,
+                    &ctx.window_manipulator,
+                    &ctx.event_emitter,
+                );
+
                 // Retile affected displays
                 if !result.displays_to_retile.is_empty() {
                     for display_id in result.displays_to_retile {
@@ -469,9 +480,24 @@ impl App {
 
                         // Sync focused window in case we missed the ApplicationActivated event
                         // (can happen if the app was activated before the observer was ready)
-                        ctx.state
-                            .borrow_mut()
-                            .sync_focused_window_with_hint(&ctx.window_system, Some(pid));
+                        let focused_result = sync_focused_and_process(
+                            &ctx.state,
+                            &ctx.window_system,
+                            &ctx.layout_engine_manager,
+                            &ctx.window_manipulator,
+                            &ctx.event_emitter,
+                            &ctx.observer_manager,
+                            Some(pid),
+                        );
+
+                        if focused_result.changed {
+                            do_retile(
+                                &ctx.state,
+                                &ctx.layout_engine_manager,
+                                &ctx.window_manipulator,
+                            );
+                        }
+
                         ctx.event_emitter
                             .emit_window_focused(ctx.state.borrow().focused);
                     }
@@ -530,9 +556,24 @@ impl App {
                             }
 
                             // Sync focused window
-                            ctx.state
-                                .borrow_mut()
-                                .sync_focused_window_with_hint(&ctx.window_system, Some(pid));
+                            let focused_result = sync_focused_and_process(
+                                &ctx.state,
+                                &ctx.window_system,
+                                &ctx.layout_engine_manager,
+                                &ctx.window_manipulator,
+                                &ctx.event_emitter,
+                                &ctx.observer_manager,
+                                Some(pid),
+                            );
+
+                            if focused_result.changed {
+                                do_retile(
+                                    &ctx.state,
+                                    &ctx.layout_engine_manager,
+                                    &ctx.window_manipulator,
+                                );
+                            }
+
                             ctx.event_emitter
                                 .emit_window_focused(ctx.state.borrow().focused);
                         } else {

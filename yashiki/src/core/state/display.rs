@@ -20,7 +20,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
     let added_ids: HashSet<_> = current_ids.difference(&previous_ids).copied().collect();
 
     if removed_ids.is_empty() {
-        let rehide_moves = sync_all(state, ws);
+        let (rehide_moves, new_window_ids) = sync_all(state, ws);
         let mut displays_to_retile: HashSet<DisplayId> = added_ids.iter().copied().collect();
 
         // Restore orphaned windows to their original displays if those displays have returned
@@ -59,6 +59,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
             displays_to_retile: displays_to_retile.into_iter().collect(),
             added,
             removed: vec![],
+            new_window_ids,
         };
     }
 
@@ -77,6 +78,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
             displays_to_retile: vec![],
             added: vec![],
             removed: removed_ids,
+            new_window_ids: vec![],
         };
     };
 
@@ -115,7 +117,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
         state.displays.remove(id);
     }
 
-    let rehide_moves = sync_all(state, ws);
+    let (rehide_moves, new_window_ids) = sync_all(state, ws);
 
     let added: Vec<_> = state
         .displays
@@ -137,6 +139,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
         displays_to_retile,
         added,
         removed: removed_ids,
+        new_window_ids,
     }
 }
 
