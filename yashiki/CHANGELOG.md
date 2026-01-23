@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1](https://github.com/typester/yashiki/compare/yashiki-v0.9.0...yashiki-v0.9.1) - 2026-01-23
+
+### Added
+
+- add output_id to list-windows output ([#87](https://github.com/typester/yashiki/pull/87))
+
+### Fixed
+
+- use per-window hide position calculation with window size offset ([#86](https://github.com/typester/yashiki/pull/86))
+
 ## [0.9.0](https://github.com/typester/yashiki/compare/yashiki-v0.8.3...yashiki-v0.9.0) - 2026-01-22
 
 ### Fixed

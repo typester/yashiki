@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.9.0...yashiki-ipc-v0.9.1) - 2026-01-23
+
+### Added
+
+- add output_id to list-windows output ([#87](https://github.com/typester/yashiki/pull/87))
+
 ## [0.7.5](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.7.4...yashiki-ipc-v0.7.5) - 2026-01-20
 
 ### Added
