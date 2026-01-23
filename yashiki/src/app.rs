@@ -455,6 +455,7 @@ impl App {
                             &ctx.layout_engine_manager,
                             &ctx.window_manipulator,
                             &ctx.event_emitter,
+                            &ctx.observer_manager,
                             pid,
                         );
 
@@ -498,6 +499,44 @@ impl App {
                                 &ctx.layout_engine_manager,
                                 &ctx.window_manipulator,
                             );
+                        }
+                    }
+                    WorkspaceEvent::AppActivated { pid } => {
+                        // Only sync if we don't have an observer OR we don't have windows
+                        // This avoids redundant work when the app is already being tracked
+                        let needs_sync = !ctx.observer_manager.borrow().has_observer(pid)
+                            || !ctx.state.borrow().has_windows_for_pid(pid);
+
+                        if needs_sync {
+                            tracing::info!("App activated (needs sync), pid {}", pid);
+
+                            // sync_and_process_new_windows handles observer registration internally
+                            let result = sync_and_process_new_windows(
+                                &ctx.state,
+                                &ctx.window_system,
+                                &ctx.layout_engine_manager,
+                                &ctx.window_manipulator,
+                                &ctx.event_emitter,
+                                &ctx.observer_manager,
+                                pid,
+                            );
+
+                            if result.changed {
+                                do_retile(
+                                    &ctx.state,
+                                    &ctx.layout_engine_manager,
+                                    &ctx.window_manipulator,
+                                );
+                            }
+
+                            // Sync focused window
+                            ctx.state
+                                .borrow_mut()
+                                .sync_focused_window_with_hint(&ctx.window_system, Some(pid));
+                            ctx.event_emitter
+                                .emit_window_focused(ctx.state.borrow().focused);
+                        } else {
+                            tracing::debug!("App activated (already tracked), pid {}", pid);
                         }
                     }
                     WorkspaceEvent::DisplaysChanged => {
@@ -583,6 +622,7 @@ impl App {
                             &ctx.layout_engine_manager,
                             &ctx.window_manipulator,
                             &ctx.event_emitter,
+                            &ctx.observer_manager,
                             *pid,
                         );
 

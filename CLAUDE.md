@@ -10,7 +10,8 @@ macOS tiling window manager written in Rust.
   2. Run `jj status` to confirm current workspace state
 - All file edits must target files under the workspace root path
 - Update only this CLAUDE.md, not the root one
-- **jj write operations (commit, describe, new, etc.) are done by the user, not Claude**
+- **jj write operations (commit, describe, new, etc.) are done by the user, not Claude** (unless explicitly requested)
+  - When user explicitly asks (e.g., "jj describeして", "commitして"), execute the command
   - For PRs: output title and description text, let the user handle jj/git operations
 
 ## Project Structure

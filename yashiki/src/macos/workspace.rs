@@ -107,6 +107,7 @@ pub fn terminate_process(pid: u32) {
 pub enum WorkspaceEvent {
     AppLaunched { pid: i32 },
     AppTerminated { pid: i32 },
+    AppActivated { pid: i32 },
     DisplaysChanged,
 }
 
@@ -142,6 +143,18 @@ define_class!(
                 let tx = self.ivars().event_tx.borrow();
                 if let Some(sender) = tx.as_ref() {
                     let _: Result<(), _> = sender.send(WorkspaceEvent::AppTerminated { pid });
+                }
+                signal_runloop_source(&self.ivars().source_ptr);
+            }
+        }
+
+        #[unsafe(method(appActivated:))]
+        fn app_activated(&self, notification: &NSNotification) {
+            if let Some(pid) = get_pid_from_notification(notification) {
+                tracing::debug!("App activated: pid {}", pid);
+                let tx = self.ivars().event_tx.borrow();
+                if let Some(sender) = tx.as_ref() {
+                    let _: Result<(), _> = sender.send(WorkspaceEvent::AppActivated { pid });
                 }
                 signal_runloop_source(&self.ivars().source_ptr);
             }
@@ -228,6 +241,15 @@ impl WorkspaceWatcher {
                 observer_obj,
                 sel!(appTerminated:),
                 Some(&terminate_name),
+                None,
+            );
+
+            let activate_name = NSString::from_str("NSWorkspaceDidActivateApplicationNotification");
+
+            workspace_center.addObserver_selector_name_object(
+                observer_obj,
+                sel!(appActivated:),
+                Some(&activate_name),
                 None,
             );
 
