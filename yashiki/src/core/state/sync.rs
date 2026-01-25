@@ -221,18 +221,32 @@ pub fn sync_pid<W: WindowSystem>(
     let mut added_window_ids = Vec::new();
     let mut rehide_moves = Vec::new();
 
-    for id in current_ids.difference(&new_ids) {
-        if let Some(window) = state.windows.remove(id) {
-            tracing::info!(
-                "Window removed: [{}] {} ({})",
-                window.id,
-                window.title,
-                window.app_name
-            );
-            if state.focused == Some(*id) {
-                state.focused = None;
+    // Check if we should skip removal (AX API inaccessible means we might be on different Space)
+    let skip_removal = if !current_ids.is_empty() && current_ids.difference(&new_ids).count() > 0 {
+        !ws.can_access_ax_windows(pid)
+    } else {
+        false
+    };
+
+    if skip_removal {
+        tracing::info!(
+            "Skipping window removal for pid {}: AX API inaccessible (likely on different Space)",
+            pid
+        );
+    } else {
+        for id in current_ids.difference(&new_ids) {
+            if let Some(window) = state.windows.remove(id) {
+                tracing::info!(
+                    "Window removed: [{}] {} ({})",
+                    window.id,
+                    window.title,
+                    window.app_name
+                );
+                if state.focused == Some(*id) {
+                    state.focused = None;
+                }
+                changed = true;
             }
-            changed = true;
         }
     }
 
@@ -434,9 +448,39 @@ pub fn sync_with_window_infos<W: WindowSystem>(
     let new_ids: HashSet<WindowId> = window_infos.iter().map(|w| w.window_id).collect();
     let mut added_window_ids = Vec::new();
 
+    // Collect PIDs of windows to be removed and check AX accessibility
+    let pids_to_check: HashSet<i32> = current_ids
+        .difference(&new_ids)
+        .filter_map(|id| state.windows.get(id).map(|w| w.pid))
+        .collect();
+
+    let inaccessible_pids: HashSet<i32> = pids_to_check
+        .iter()
+        .filter(|&&pid| !ws.can_access_ax_windows(pid))
+        .copied()
+        .collect();
+
+    if !inaccessible_pids.is_empty() {
+        tracing::info!(
+            "Skipping window removal for PIDs with inaccessible AX API: {:?}",
+            inaccessible_pids
+        );
+    }
+
     for id in current_ids.difference(&new_ids) {
-        remove_from_window_order(state, *id);
-        state.windows.remove(id);
+        if let Some(window) = state.windows.get(id) {
+            if inaccessible_pids.contains(&window.pid) {
+                continue;
+            }
+            tracing::info!(
+                "Window removed: [{}] {} ({})",
+                window.id,
+                window.title,
+                window.app_name
+            );
+            remove_from_window_order(state, *id);
+            state.windows.remove(id);
+        }
     }
 
     for info in window_infos {

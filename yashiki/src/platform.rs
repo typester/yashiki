@@ -21,6 +21,9 @@ pub trait WindowSystem {
         pid: i32,
         layer: i32,
     ) -> ExtendedWindowAttributes;
+    /// Check if AX API can access windows for a given PID.
+    /// Returns true if accessible, false if AX API returns errors.
+    fn can_access_ax_windows(&self, pid: i32) -> bool;
 }
 
 /// macOS implementation of WindowSystem
@@ -89,6 +92,11 @@ impl WindowSystem for MacOSWindowSystem {
             window_level: layer,
             ..Default::default()
         }
+    }
+
+    fn can_access_ax_windows(&self, pid: i32) -> bool {
+        let app = AXUIElement::application(pid);
+        app.windows().is_ok()
     }
 }
 
@@ -499,14 +507,27 @@ impl Default for MacOSWindowManipulator {
 
 #[cfg(test)]
 pub mod mock {
+    use std::collections::HashSet;
+
     use super::*;
     use crate::macos::{Bounds, DisplayId};
 
-    #[derive(Default)]
     pub struct MockWindowSystem {
         pub windows: Vec<WindowInfo>,
         pub displays: Vec<DisplayInfo>,
         pub focused_window_id: Option<u32>,
+        pub ax_accessible_pids: HashSet<i32>,
+    }
+
+    impl Default for MockWindowSystem {
+        fn default() -> Self {
+            Self {
+                windows: Vec::new(),
+                displays: Vec::new(),
+                focused_window_id: None,
+                ax_accessible_pids: HashSet::from([1, 2, 3, 4, 5, 100, 1000, 1001, 1002]),
+            }
+        }
     }
 
     impl MockWindowSystem {
@@ -535,6 +556,14 @@ pub mod mock {
 
         pub fn remove_window(&mut self, window_id: u32) {
             self.windows.retain(|w| w.window_id != window_id);
+        }
+
+        pub fn set_ax_accessible(&mut self, pid: i32, accessible: bool) {
+            if accessible {
+                self.ax_accessible_pids.insert(pid);
+            } else {
+                self.ax_accessible_pids.remove(&pid);
+            }
         }
     }
 
@@ -567,6 +596,10 @@ pub mod mock {
                 zoom_button: ButtonInfo::new(true, Some(true)),
                 ..Default::default()
             }
+        }
+
+        fn can_access_ax_windows(&self, pid: i32) -> bool {
+            self.ax_accessible_pids.contains(&pid)
         }
     }
 

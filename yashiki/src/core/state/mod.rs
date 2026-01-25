@@ -646,6 +646,120 @@ mod tests {
     }
 
     #[test]
+    fn test_sync_pid_skips_removal_when_ax_inaccessible() {
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 0.0, 0.0, 800.0, 600.0),
+                create_test_window(101, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+            ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        assert_eq!(state.windows.len(), 2);
+
+        // Simulate window no longer appearing (e.g., on different Space)
+        ws.remove_window(101);
+        // Mark PID 1000 as AX inaccessible (like being on different macOS Space)
+        ws.set_ax_accessible(1000, false);
+
+        let (changed, new_ids, _) = state.sync_pid(&ws, 1000);
+
+        // Window should NOT be removed because AX API is inaccessible
+        assert!(!changed);
+        assert!(new_ids.is_empty());
+        assert_eq!(state.windows.len(), 2);
+        assert!(state.windows.contains_key(&100));
+        assert!(state.windows.contains_key(&101));
+    }
+
+    #[test]
+    fn test_sync_pid_removes_window_when_ax_accessible() {
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 0.0, 0.0, 800.0, 600.0),
+                create_test_window(101, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+            ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        assert_eq!(state.windows.len(), 2);
+
+        // Window is actually closed
+        ws.remove_window(101);
+        // AX API is accessible (default state in MockWindowSystem)
+        assert!(ws.ax_accessible_pids.contains(&1000));
+
+        let (changed, new_ids, _) = state.sync_pid(&ws, 1000);
+
+        // Window should be removed because AX API confirms window is gone
+        assert!(changed);
+        assert!(new_ids.is_empty());
+        assert_eq!(state.windows.len(), 1);
+        assert!(state.windows.contains_key(&100));
+        assert!(!state.windows.contains_key(&101));
+    }
+
+    #[test]
+    fn test_sync_with_window_infos_skips_removal_when_ax_inaccessible() {
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 0.0, 0.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 100.0, 100.0, 800.0, 600.0),
+            ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        assert_eq!(state.windows.len(), 2);
+
+        // Simulate both windows disappearing from get_on_screen_windows
+        // (e.g., we're viewing a fullscreen window on another Space)
+        ws.windows.clear();
+        // Mark both PIDs as AX inaccessible
+        ws.set_ax_accessible(1000, false);
+        ws.set_ax_accessible(1001, false);
+
+        let (_, new_window_ids) = state.sync_all(&ws);
+
+        // Windows should NOT be removed because AX API is inaccessible
+        assert!(new_window_ids.is_empty());
+        assert_eq!(state.windows.len(), 2);
+        assert!(state.windows.contains_key(&100));
+        assert!(state.windows.contains_key(&101));
+    }
+
+    #[test]
+    fn test_sync_with_window_infos_partial_removal_when_mixed_accessibility() {
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 0.0, 0.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 100.0, 100.0, 800.0, 600.0),
+            ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        assert_eq!(state.windows.len(), 2);
+
+        // Safari window disappears and is closed (AX accessible)
+        // Terminal window disappears but might be on another Space (AX inaccessible)
+        ws.windows.clear();
+        ws.set_ax_accessible(1001, false);
+        // Keep 1000 accessible (default)
+
+        let (_, new_window_ids) = state.sync_all(&ws);
+
+        // Only Safari (window 100) should be removed
+        // Terminal (window 101) should remain because its PID is AX inaccessible
+        assert!(new_window_ids.is_empty());
+        assert_eq!(state.windows.len(), 1);
+        assert!(!state.windows.contains_key(&100)); // Safari removed
+        assert!(state.windows.contains_key(&101)); // Terminal kept
+    }
+
+    #[test]
     fn test_visible_windows_on_display() {
         let ws = setup_mock_system();
         let mut state = State::new();
