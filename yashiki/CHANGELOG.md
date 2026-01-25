@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4](https://github.com/typester/yashiki/compare/yashiki-v0.9.3...yashiki-v0.9.4) - 2026-01-25
+
+### Fixed
+
+- prevent incorrect window deletion when AX API is inaccessible ([#97](https://github.com/typester/yashiki/pull/97))
+
 ## [0.9.3](https://github.com/typester/yashiki/compare/yashiki-v0.9.2...yashiki-v0.9.3) - 2026-01-23
 
 ### Fixed
