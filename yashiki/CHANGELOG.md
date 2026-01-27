@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5](https://github.com/typester/yashiki/compare/yashiki-v0.9.4...yashiki-v0.9.5) - 2026-01-27
+
+### Fixed
+
+- remove ghost windows on app termination ([#99](https://github.com/typester/yashiki/pull/99))
+
 ## [0.9.4](https://github.com/typester/yashiki/compare/yashiki-v0.9.3...yashiki-v0.9.4) - 2026-01-25
 
 ### Fixed
