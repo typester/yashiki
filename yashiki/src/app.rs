@@ -515,10 +515,9 @@ impl App {
                             }
                         }
 
-                        // Remove windows belonging to this PID from state
-                        // Note: rehide_moves is not needed here as windows are being removed
-                        let (changed, _, _) =
-                            ctx.state.borrow_mut().sync_pid(&ctx.window_system, pid);
+                        // Directly remove windows - no AX API check needed since
+                        // process termination is confirmed by NSWorkspace notification
+                        let changed = ctx.state.borrow_mut().remove_windows_for_pid(pid);
                         if changed {
                             do_retile(
                                 &ctx.state,

@@ -176,6 +176,32 @@ impl State {
         self.windows.values().any(|w| w.pid == pid)
     }
 
+    /// Remove all windows belonging to a terminated process.
+    /// Used when AppTerminated event is received - bypasses AX API checks since
+    /// the process is confirmed terminated via NSWorkspace notification.
+    pub fn remove_windows_for_pid(&mut self, pid: i32) -> bool {
+        let window_ids: Vec<WindowId> = self
+            .windows
+            .values()
+            .filter(|w| w.pid == pid)
+            .map(|w| w.id)
+            .collect();
+
+        if window_ids.is_empty() {
+            return false;
+        }
+
+        for id in &window_ids {
+            self.windows.remove(id);
+            remove_from_window_order(self, *id);
+            if self.focused == Some(*id) {
+                self.focused = None;
+            }
+        }
+
+        true
+    }
+
     pub fn resolve_output(&self, spec: &OutputSpecifier) -> Option<DisplayId> {
         match spec {
             OutputSpecifier::Id(id) => {
@@ -1934,5 +1960,94 @@ mod tests {
         // Window should be restored to display 3
         assert_eq!(state.windows.get(&100).unwrap().display_id, 3);
         assert_eq!(state.windows.get(&100).unwrap().orphaned_from, None);
+    }
+
+    #[test]
+    fn test_remove_windows_for_pid_removes_all_windows() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "App", 0.0, 0.0, 800.0, 600.0),
+                create_test_window(101, 1000, "App", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(102, 1001, "Other", 200.0, 200.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        assert_eq!(state.windows.len(), 3);
+
+        let changed = state.remove_windows_for_pid(1000);
+
+        assert!(changed);
+        assert_eq!(state.windows.len(), 1);
+        assert!(state.windows.contains_key(&102));
+        assert!(!state.windows.contains_key(&100));
+        assert!(!state.windows.contains_key(&101));
+    }
+
+    #[test]
+    fn test_remove_windows_for_pid_clears_focus() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "App", 0.0, 0.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        assert_eq!(state.focused, Some(100));
+
+        state.remove_windows_for_pid(1000);
+
+        assert_eq!(state.focused, None);
+    }
+
+    #[test]
+    fn test_remove_windows_for_pid_returns_false_when_no_windows() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "App", 0.0, 0.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        let changed = state.remove_windows_for_pid(9999);
+
+        assert!(!changed);
+        assert_eq!(state.windows.len(), 1);
+    }
+
+    #[test]
+    fn test_remove_windows_for_pid_updates_window_order() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "App", 0.0, 0.0, 800.0, 600.0),
+                create_test_window(101, 1000, "App", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(102, 1001, "Other", 200.0, 200.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Verify initial window order
+        let display = state.displays.get(&1).unwrap();
+        assert!(display.window_order.contains(&100));
+        assert!(display.window_order.contains(&101));
+        assert!(display.window_order.contains(&102));
+
+        state.remove_windows_for_pid(1000);
+
+        // Verify window order is updated
+        let display = state.displays.get(&1).unwrap();
+        assert!(!display.window_order.contains(&100));
+        assert!(!display.window_order.contains(&101));
+        assert!(display.window_order.contains(&102));
     }
 }
