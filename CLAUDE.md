@@ -394,6 +394,40 @@ The `orphaned_from` field in `Window` tracks the original display for restoratio
 - `core/window.rs`: `orphaned_from` field definition
 - `core/state/display.rs`: `handle_display_change()` - orphan/restore logic, `send_to_output()` - clear on user move
 
+### Display State Preservation (Sleep/Wake)
+
+Along with window orphan tracking, display state (`visible_tags`) is also preserved across sleep/wake cycles.
+
+**Why `display_id` is NOT updated by sync functions:**
+
+macOS may move windows to different positions during display reconfiguration (sleep/wake). If sync functions updated `display_id` based on window position, windows would be incorrectly reassigned to wrong displays.
+
+Since yashiki is a tiling WM:
+- Tiled windows can't be dragged by users (yashiki controls their position via retile)
+- `display_id` should only change via explicit yashiki operations:
+  1. New window creation (initial assignment based on position)
+  2. Orphan processing (display disconnected → fallback display)
+  3. Orphan restoration (display reconnected → original display)
+  4. `send-to-output` command
+
+**`saved_display_tags` mechanism:**
+- On display disconnect: `visible_tags` saved to `State.saved_display_tags`
+- On display reconnect: `visible_tags` restored from `saved_display_tags`
+- Prevents external monitors from resetting to tag 1 after sleep/wake
+
+**`handle_display_change` flow (two branches):**
+
+1. **Reconnect branch** (`removed_ids.is_empty()`):
+   - sync_all → restore visible_tags → restore orphaned windows → compute_layout_changes → retile all displays
+
+2. **Disconnect branch** (`!removed_ids.is_empty()`):
+   - orphan windows → save visible_tags → remove displays → sync_all → compute_layout_changes → retile affected displays
+
+**Related code:**
+- `core/state/mod.rs`: `State.saved_display_tags`
+- `core/state/display.rs`: `handle_display_change()` - save/restore logic
+- `core/state/sync.rs`: `sync_pid()`, `sync_with_window_infos()` - frame update only, no `display_id` update
+
 ### Window Sync Architecture
 
 **Principle:** All sync functions that can add windows must return new window IDs, and callers must apply rules. After rules are applied, callers must check if retile is needed.

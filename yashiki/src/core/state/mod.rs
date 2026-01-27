@@ -87,6 +87,8 @@ pub struct State {
     pub config: Config,
     /// Windows that were ignored by rule, tracked for re-evaluation when attributes change.
     pub ignored_windows: HashMap<WindowId, IgnoredWindowInfo>,
+    /// Saved visible_tags for disconnected displays, restored on reconnection.
+    pub saved_display_tags: HashMap<DisplayId, Tag>,
 }
 
 impl State {
@@ -103,6 +105,7 @@ impl State {
             tracked_processes: Vec::new(),
             config: Config::new(),
             ignored_windows: HashMap::new(),
+            saved_display_tags: HashMap::new(),
         }
     }
 
@@ -1836,6 +1839,51 @@ mod tests {
         // Both displays should be retiled
         assert!(result.displays_to_retile.contains(&1));
         assert!(result.displays_to_retile.contains(&2));
+    }
+
+    #[test]
+    fn test_visible_tags_restoration_on_display_return() {
+        // When a display returns, its visible_tags should be restored
+        let ws1 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![])
+            .with_focused(None);
+
+        let mut state = State::new();
+        state.sync_all(&ws1);
+
+        // Set display 2 to tag 4
+        state.displays.get_mut(&2).unwrap().visible_tags = Tag::new(3); // tag 3
+
+        // Remove display 2
+        let ws2 = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![])
+            .with_focused(None);
+
+        let _result = state.handle_display_change(&ws2);
+
+        // visible_tags should be saved
+        assert_eq!(state.saved_display_tags.get(&2), Some(&Tag::new(3)));
+
+        // Bring display 2 back
+        let ws3 = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![])
+            .with_focused(None);
+
+        let _result = state.handle_display_change(&ws3);
+
+        // visible_tags should be restored to tag 3
+        assert_eq!(state.displays.get(&2).unwrap().visible_tags, Tag::new(3));
+        // saved_display_tags should be cleared after restoration
+        assert!(state.saved_display_tags.get(&2).is_none());
     }
 
     #[test]
