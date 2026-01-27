@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use super::{Config, Display, RulesEngine, Tag, Window, WindowId};
 use crate::effect::Effect;
@@ -8,6 +9,15 @@ use crate::platform::WindowSystem;
 use yashiki_ipc::{
     Direction, OutputDirection, OutputSpecifier, RuleAction, RuleMatcher, WindowRule,
 };
+
+/// Information about a window that was ignored by rule, tracked for re-evaluation.
+#[derive(Debug, Clone)]
+pub struct IgnoredWindowInfo {
+    pub pid: i32,
+    /// When this window was added to the ignored list.
+    /// Used to protect managed windows during app transitions (e.g., native fullscreen).
+    pub added_at: Instant,
+}
 
 mod display;
 mod focus;
@@ -75,6 +85,8 @@ pub struct State {
     pub rules_engine: RulesEngine,
     pub tracked_processes: Vec<TrackedProcess>,
     pub config: Config,
+    /// Windows that were ignored by rule, tracked for re-evaluation when attributes change.
+    pub ignored_windows: HashMap<WindowId, IgnoredWindowInfo>,
 }
 
 impl State {
@@ -90,6 +102,7 @@ impl State {
             rules_engine: RulesEngine::new(),
             tracked_processes: Vec::new(),
             config: Config::new(),
+            ignored_windows: HashMap::new(),
         }
     }
 
@@ -187,8 +200,20 @@ impl State {
             .map(|w| w.id)
             .collect();
 
+        // Also remove from ignored_windows
+        let ignored_ids: Vec<WindowId> = self
+            .ignored_windows
+            .iter()
+            .filter(|(_, info)| info.pid == pid)
+            .map(|(id, _)| *id)
+            .collect();
+
+        for id in &ignored_ids {
+            self.ignored_windows.remove(id);
+        }
+
         if window_ids.is_empty() {
-            return false;
+            return !ignored_ids.is_empty();
         }
 
         for id in &window_ids {
@@ -414,12 +439,23 @@ impl Default for State {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::platform::mock::{
         create_test_display, create_test_window, create_test_window_with_layer, MockWindowSystem,
     };
     use layout::compute_hide_position_for_display;
-    use yashiki_ipc::ExtendedWindowAttributes;
+    use yashiki_ipc::{ButtonInfo, ExtendedWindowAttributes};
+
+    /// Age all ignored windows so they're no longer protected by the grace period.
+    /// Used in tests that need to verify window removal behavior.
+    fn age_ignored_windows(state: &mut State) {
+        let old_time = Instant::now() - Duration::from_secs(10);
+        for info in state.ignored_windows.values_mut() {
+            info.added_at = old_time;
+        }
+    }
 
     fn setup_mock_system() -> MockWindowSystem {
         MockWindowSystem::new()
@@ -2049,5 +2085,641 @@ mod tests {
         assert!(!display.window_order.contains(&100));
         assert!(!display.window_order.contains(&101));
         assert!(display.window_order.contains(&102));
+    }
+
+    #[test]
+    fn test_ignored_window_becomes_managed_when_attributes_change() {
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        // Setup: window with subrole=None matches ignore rule
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0,
+            )]);
+
+        // Set extended attributes with subrole=None to match ignore rule
+        ws.set_extended_attributes(
+            100,
+            ExtendedWindowAttributes {
+                ax_id: None,
+                subrole: None,
+                window_level: 0,
+                close_button: ButtonInfo::new(true, Some(true)),
+                fullscreen_button: ButtonInfo::new(true, Some(true)),
+                minimize_button: ButtonInfo::new(true, Some(true)),
+                zoom_button: ButtonInfo::new(true, Some(true)),
+                ..Default::default()
+            },
+        );
+
+        let mut state = State::new();
+
+        // Add rule: ignore Firefox windows with subrole=none
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Firefox")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: Some(GlobPattern::new("none")),
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Ignore,
+        });
+
+        // Initial sync - window should be ignored
+        state.sync_all(&ws);
+
+        assert!(state.windows.is_empty());
+        assert!(state.ignored_windows.contains_key(&100));
+
+        // Now change attributes - subrole becomes AXStandardWindow
+        ws.set_extended_attributes(
+            100,
+            ExtendedWindowAttributes {
+                ax_id: None,
+                subrole: Some("AXStandardWindow".to_string()),
+                window_level: 0,
+                close_button: ButtonInfo::new(true, Some(true)),
+                fullscreen_button: ButtonInfo::new(true, Some(true)),
+                minimize_button: ButtonInfo::new(true, Some(true)),
+                zoom_button: ButtonInfo::new(true, Some(true)),
+                ..Default::default()
+            },
+        );
+
+        // Sync again - window should now be managed
+        let (changed, new_ids, _) = state.sync_pid(&ws, 1000);
+
+        assert!(changed);
+        assert!(new_ids.contains(&100));
+        assert!(state.windows.contains_key(&100));
+        assert!(!state.ignored_windows.contains_key(&100));
+    }
+
+    #[test]
+    fn test_ignored_window_stays_ignored_if_rule_still_matches() {
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0,
+            )]);
+
+        ws.set_extended_attributes(
+            100,
+            ExtendedWindowAttributes {
+                ax_id: None,
+                subrole: None,
+                window_level: 0,
+                ..Default::default()
+            },
+        );
+
+        let mut state = State::new();
+
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Firefox")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: Some(GlobPattern::new("none")),
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Ignore,
+        });
+
+        state.sync_all(&ws);
+
+        assert!(state.windows.is_empty());
+        assert!(state.ignored_windows.contains_key(&100));
+
+        // Sync again without changing attributes
+        let (changed, new_ids, _) = state.sync_pid(&ws, 1000);
+
+        assert!(!changed);
+        assert!(new_ids.is_empty());
+        assert!(state.windows.is_empty());
+        assert!(state.ignored_windows.contains_key(&100));
+    }
+
+    #[test]
+    fn test_ignored_window_removed_when_closed() {
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0,
+            )]);
+
+        ws.set_extended_attributes(
+            100,
+            ExtendedWindowAttributes {
+                ax_id: None,
+                subrole: None,
+                window_level: 0,
+                ..Default::default()
+            },
+        );
+
+        let mut state = State::new();
+
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Firefox")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: Some(GlobPattern::new("none")),
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Ignore,
+        });
+
+        state.sync_all(&ws);
+        assert!(state.ignored_windows.contains_key(&100));
+
+        // Age the ignored window past the grace period
+        age_ignored_windows(&mut state);
+
+        // Remove the window
+        ws.remove_window(100);
+
+        // Sync - ignored window should be removed
+        let (changed, _, _) = state.sync_pid(&ws, 1000);
+
+        assert!(!changed); // No managed windows changed
+        assert!(state.ignored_windows.is_empty());
+    }
+
+    #[test]
+    fn test_recently_ignored_window_protects_managed_window() {
+        // Reproduces Firefox fullscreen transition issue:
+        // 1. Firefox has a managed window (238)
+        // 2. Fullscreen creates a new ignored window (8277) matching ignore rule
+        // 3. On 2nd sync, managed window (238) disappears but ignored window still recent
+        // 4. Managed window should NOT be removed (PID has recent ignored window)
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        // Setup: managed window and ignored window for same PID
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(238, 3902, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(8277, 3902, "Firefox", 0.0, 0.0, 1920.0, 1080.0),
+            ]);
+
+        // Window 238 has normal attributes (managed)
+        ws.set_extended_attributes(
+            238,
+            ExtendedWindowAttributes {
+                ax_id: Some("standard".to_string()),
+                subrole: Some("AXStandardWindow".to_string()),
+                window_level: 0,
+                ..Default::default()
+            },
+        );
+
+        // Window 8277 matches ignore rule (fullscreen window during transition)
+        ws.set_extended_attributes(
+            8277,
+            ExtendedWindowAttributes {
+                ax_id: None,
+                subrole: None,
+                window_level: 0,
+                ..Default::default()
+            },
+        );
+
+        let mut state = State::new();
+
+        // Add Firefox ignore rule for windows without ax_id and subrole
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Firefox")),
+                app_id: None,
+                title: None,
+                ax_id: Some(GlobPattern::new("none")),
+                subrole: Some(GlobPattern::new("none")),
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Ignore,
+        });
+
+        // First sync: window 238 becomes managed, window 8277 becomes ignored
+        state.sync_all(&ws);
+        assert!(state.windows.contains_key(&238));
+        assert!(state.ignored_windows.contains_key(&8277));
+
+        // Simulate 2nd sync where managed window 238 disappears (fullscreen transition)
+        // but ignored window 8277 is still recent (within grace period)
+        ws.remove_window(238);
+
+        // Sync - managed window 238 should NOT be removed because:
+        // PID 3902 has a recently added ignored window (8277)
+        let (changed, _, _) = state.sync_pid(&ws, 3902);
+
+        // Window 238 should still exist (protected by grace period)
+        assert!(state.windows.contains_key(&238));
+        assert!(!changed); // No windows actually removed
+    }
+
+    #[test]
+    fn test_ignored_window_not_removed_when_ax_inaccessible() {
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0,
+            )]);
+
+        ws.set_extended_attributes(
+            100,
+            ExtendedWindowAttributes {
+                ax_id: None,
+                subrole: None,
+                window_level: 0,
+                ..Default::default()
+            },
+        );
+
+        let mut state = State::new();
+
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Firefox")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: Some(GlobPattern::new("none")),
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Ignore,
+        });
+
+        state.sync_all(&ws);
+        assert!(state.ignored_windows.contains_key(&100));
+
+        // Window disappears but AX is inaccessible (fullscreen transition)
+        ws.remove_window(100);
+        ws.set_ax_accessible(1000, false);
+
+        // Sync - ignored window should NOT be removed
+        let (_, _, _) = state.sync_pid(&ws, 1000);
+
+        assert!(state.ignored_windows.contains_key(&100));
+    }
+
+    #[test]
+    fn test_ignored_window_not_removed_when_ax_only() {
+        // Window exists in AX API but not in get_on_screen_windows (transitioning)
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0,
+            )]);
+
+        ws.set_extended_attributes(
+            100,
+            ExtendedWindowAttributes {
+                ax_id: None,
+                subrole: None,
+                window_level: 0,
+                ..Default::default()
+            },
+        );
+
+        let mut state = State::new();
+
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Firefox")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: Some(GlobPattern::new("none")),
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Ignore,
+        });
+
+        state.sync_all(&ws);
+        assert!(state.ignored_windows.contains_key(&100));
+
+        // Window disappears from on-screen list but still exists in AX API (transitioning)
+        ws.remove_window(100);
+        ws.add_ax_only_window(100, 1000);
+
+        // Sync - ignored window should NOT be removed (exists in AX)
+        let (_, _, _) = state.sync_pid(&ws, 1000);
+
+        assert!(state.ignored_windows.contains_key(&100));
+    }
+
+    #[test]
+    fn test_ignored_window_removed_when_truly_gone() {
+        // Window does not exist in AX API and not in get_on_screen_windows (truly closed)
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0,
+            )]);
+
+        ws.set_extended_attributes(
+            100,
+            ExtendedWindowAttributes {
+                ax_id: None,
+                subrole: None,
+                window_level: 0,
+                ..Default::default()
+            },
+        );
+
+        let mut state = State::new();
+
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Firefox")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: Some(GlobPattern::new("none")),
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Ignore,
+        });
+
+        state.sync_all(&ws);
+        assert!(state.ignored_windows.contains_key(&100));
+
+        // Age the ignored window past the grace period
+        age_ignored_windows(&mut state);
+
+        // Window disappears from both on-screen list and AX API (truly closed)
+        ws.remove_window(100);
+        // Not adding to ax_only_windows - window is truly gone
+
+        // Sync - ignored window should be removed
+        let (_, _, _) = state.sync_pid(&ws, 1000);
+
+        assert!(!state.ignored_windows.contains_key(&100));
+    }
+
+    #[test]
+    fn test_sync_with_window_infos_respects_window_level_ax_check_for_ignored() {
+        // Test that sync_with_window_infos also respects window-level AX check for ignored windows
+        use sync::sync_with_window_infos;
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Firefox", 200.0, 200.0, 800.0, 600.0),
+            ]);
+
+        // Both windows will be ignored
+        ws.set_extended_attributes(
+            100,
+            ExtendedWindowAttributes {
+                ax_id: None,
+                subrole: None,
+                window_level: 0,
+                ..Default::default()
+            },
+        );
+        ws.set_extended_attributes(
+            101,
+            ExtendedWindowAttributes {
+                ax_id: None,
+                subrole: None,
+                window_level: 0,
+                ..Default::default()
+            },
+        );
+
+        let mut state = State::new();
+
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Firefox")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: Some(GlobPattern::new("none")),
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Ignore,
+        });
+
+        state.sync_all(&ws);
+        assert!(state.ignored_windows.contains_key(&100));
+        assert!(state.ignored_windows.contains_key(&101));
+
+        // Age ignored windows past the grace period
+        age_ignored_windows(&mut state);
+
+        // Window 100 disappears but exists in AX, window 101 is truly closed
+        ws.remove_window(100);
+        ws.remove_window(101);
+        ws.add_ax_only_window(100, 1000);
+
+        // Get fresh window infos (empty now)
+        let window_infos = ws.get_on_screen_windows();
+        let (_, _) = sync_with_window_infos(&mut state, &ws, &window_infos);
+
+        // Window 100 should remain (in AX), window 101 should be removed
+        assert!(state.ignored_windows.contains_key(&100));
+        assert!(!state.ignored_windows.contains_key(&101));
+    }
+
+    #[test]
+    fn test_remove_windows_for_pid_also_removes_ignored() {
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1000, "Firefox", 200.0, 200.0, 800.0, 600.0),
+            ]);
+
+        // Window 100 will be ignored, window 101 will be managed
+        ws.set_extended_attributes(
+            100,
+            ExtendedWindowAttributes {
+                ax_id: None,
+                subrole: None,
+                window_level: 0,
+                ..Default::default()
+            },
+        );
+        ws.set_extended_attributes(
+            101,
+            ExtendedWindowAttributes {
+                ax_id: None,
+                subrole: Some("AXStandardWindow".to_string()),
+                window_level: 0,
+                ..Default::default()
+            },
+        );
+
+        let mut state = State::new();
+
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Firefox")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: Some(GlobPattern::new("none")),
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Ignore,
+        });
+
+        state.sync_all(&ws);
+
+        assert_eq!(state.windows.len(), 1);
+        assert!(state.windows.contains_key(&101));
+        assert_eq!(state.ignored_windows.len(), 1);
+        assert!(state.ignored_windows.contains_key(&100));
+
+        // Process termination removes both
+        let changed = state.remove_windows_for_pid(1000);
+
+        assert!(changed);
+        assert!(state.windows.is_empty());
+        assert!(state.ignored_windows.is_empty());
+    }
+
+    #[test]
+    fn test_window_not_removed_when_exists_in_ax_api() {
+        // Simulates fullscreen transition: window disappears from on-screen list
+        // but still exists in AX API
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0,
+            )]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        assert_eq!(state.windows.len(), 1);
+        assert!(state.windows.contains_key(&100));
+
+        // Window disappears from on-screen list but still exists in AX API
+        ws.remove_window(100);
+        ws.add_ax_only_window(100, 1000);
+
+        // Sync - window should NOT be removed (exists in AX API)
+        let (changed, _, _) = state.sync_pid(&ws, 1000);
+
+        assert!(!changed);
+        assert!(state.windows.contains_key(&100));
+    }
+
+    #[test]
+    fn test_window_removed_when_not_in_ax_api() {
+        // Window truly closed: disappears from both on-screen list and AX API
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0,
+            )]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        assert_eq!(state.windows.len(), 1);
+        assert!(state.windows.contains_key(&100));
+
+        // Window disappears from both on-screen list and AX API (truly closed)
+        ws.remove_window(100);
+        // Not adding to ax_only_windows - window is truly gone
+
+        // Sync - window should be removed
+        let (changed, _, _) = state.sync_pid(&ws, 1000);
+
+        assert!(changed);
+        assert!(state.windows.is_empty());
+    }
+
+    #[test]
+    fn test_sync_with_window_infos_respects_window_level_ax_check() {
+        use sync::sync_with_window_infos;
+
+        // Test that sync_with_window_infos also respects window-level AX check
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Safari", 200.0, 200.0, 800.0, 600.0),
+            ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        assert_eq!(state.windows.len(), 2);
+
+        // Firefox window disappears but exists in AX, Safari window truly closed
+        ws.remove_window(100);
+        ws.remove_window(101);
+        ws.add_ax_only_window(100, 1000);
+
+        // Get fresh window infos (empty now)
+        let window_infos = ws.get_on_screen_windows();
+        let (_, _) = sync_with_window_infos(&mut state, &ws, &window_infos);
+
+        // Firefox should remain (in AX), Safari should be removed
+        assert_eq!(state.windows.len(), 1);
+        assert!(state.windows.contains_key(&100));
+        assert!(!state.windows.contains_key(&101));
     }
 }

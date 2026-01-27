@@ -194,6 +194,12 @@ Key crates: argh, core-foundation, core-foundation-sys, core-graphics, objc2, ob
 - Prefer Actor model - single thread data operations, avoid Mutex
 - DRY principle - extract helpers for 3+ occurrences
 
+### Avoiding Duplication
+
+- When implementing similar logic in multiple places, extract a helper function immediately
+- When adding a new check/feature to existing code, search for similar patterns elsewhere that need the same change
+- Don't blindly follow a plan - if you notice duplication while implementing, stop and refactor first
+
 ### Use Statement Ordering
 
 1. **std crates** - `std::`, `core::`, `alloc::`
@@ -315,6 +321,42 @@ Managed by daemon (not layout engines), applied to all layouts including fullscr
 
 ### Popup Filtering
 Use `ignore` rule with subrole/ax-id matching. Example: `--subrole AXUnknown ignore`
+
+### Ignored Window Re-evaluation
+
+Windows matched by `ignore` rules are tracked in `State.ignored_windows` for re-evaluation on each sync.
+This handles cases where window attributes change (e.g., Firefox fullscreen transition changes subrole).
+
+**`try_create_window` Return Type:**
+- `None`: Window should not be tracked at all (Control Center, non-normal layer without rule)
+- `Some(Ok(window))`: Window created successfully, should be managed
+- `Some(Err(IgnoredWindowInfo))`: Window ignored by rule, tracked for re-evaluation
+
+**Rationale:** Three distinct states with clear semantic meaning. Judgment logic stays in `try_create_window`, callers just handle results.
+
+**AX Accessibility Check for Ignored Windows:**
+When removing ignored windows that are no longer on screen, the same AX accessibility check is applied as for managed windows. If AX API is inaccessible (e.g., during fullscreen transition), ignored windows are NOT removed. This prevents losing track of windows that temporarily disappear during state transitions.
+
+**Related code:**
+- `core/state/mod.rs`: `IgnoredWindowInfo`, `State.ignored_windows`
+- `core/state/sync.rs`: `try_create_window()`, `sync_pid()`, `sync_with_window_infos()`
+
+### Window Removal Safety
+
+Both managed and ignored windows use the same two-level safety check before removal:
+
+1. **Process-level check** (`can_access_ax_windows`): Skip removal if entire process is AX inaccessible (window might be on different macOS Space)
+2. **Window-level check** (`window_exists_in_ax`): Skip removal if specific window still exists in AX API (window is transitioning, not truly gone)
+
+The `should_remove_window` helper in `core/state/sync.rs` encapsulates both checks and is used for both managed and ignored windows in `sync_pid` and `sync_with_window_infos`.
+
+**Why both checks are needed:**
+- Process-level: Handles apps on different macOS Spaces (entire process inaccessible)
+- Window-level: Handles transitioning windows (process accessible, specific window temporarily invisible to CGWindowList but still in AX)
+
+**Related code:**
+- `platform.rs`: `WindowSystem::window_exists_in_ax()` trait method
+- `core/state/sync.rs`: `should_remove_window()`, `sync_pid()`, `sync_with_window_infos()`
 
 ### Orphan Tracking (Sleep/Wake Window Restoration)
 

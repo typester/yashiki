@@ -1,14 +1,88 @@
 use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 use super::super::{Display, Rect, Window, WindowId};
 use crate::macos::DisplayId;
 use crate::platform::WindowSystem;
 
-use super::super::state::{State, WindowMove};
+use super::super::state::{IgnoredWindowInfo, State, WindowMove};
+
 use super::layout::{
     add_to_window_order, compute_hide_position_for_display, remove_from_window_order,
 };
 use super::rules::{has_matching_non_ignore_rule, should_ignore_window_extended};
+
+/// Grace period during which recently ignored windows protect managed windows from removal.
+/// This handles Firefox-style fullscreen transitions where a new ignored window appears
+/// while the original managed window temporarily disappears.
+const TRANSITION_GRACE_PERIOD: Duration = Duration::from_secs(2);
+
+/// Get PIDs that have ignored windows added within the grace period.
+/// These PIDs are considered to be in a transition state (e.g., Firefox fullscreen).
+fn pids_with_recent_ignored_windows(state: &State) -> HashSet<i32> {
+    let now = Instant::now();
+    state
+        .ignored_windows
+        .values()
+        .filter(|info| now.duration_since(info.added_at) < TRANSITION_GRACE_PERIOD)
+        .map(|info| info.pid)
+        .collect()
+}
+
+/// Check if a window should be removed from tracking.
+/// Returns true if:
+/// - Process is accessible via AX API (window is not on different Space)
+/// - Window does NOT exist in AX API (window is truly gone, not transitioning)
+fn should_remove_window<W: WindowSystem>(
+    ws: &W,
+    window_id: WindowId,
+    pid: i32,
+    ax_accessible: bool,
+) -> bool {
+    // Process-level check: don't remove if entire process is AX inaccessible
+    if !ax_accessible {
+        return false;
+    }
+    // Window-level check: don't remove if window exists in AX API (transitioning)
+    if ws.window_exists_in_ax(window_id, pid) {
+        tracing::info!(
+            "Skipping removal for [{}]: exists in AX API (transitioning)",
+            window_id
+        );
+        return false;
+    }
+    true
+}
+
+/// Check if a window should be removed, considering fullscreen transitions.
+///
+/// Some apps (notably Firefox) create entirely new windows during fullscreen transitions.
+/// When this happens:
+/// 1. The original window disappears from CGWindowList
+/// 2. AX API immediately returns only the new window (not the original)
+/// 3. `should_remove_window` would return true (window not in AX)
+/// 4. The original window gets incorrectly removed
+///
+/// To handle this, we skip removal when the same PID has new windows appearing,
+/// which indicates a transition is in progress. The window will be properly
+/// cleaned up once the transition completes.
+fn should_remove_window_if_not_transitioning<W: WindowSystem>(
+    ws: &W,
+    window_id: WindowId,
+    pid: i32,
+    ax_accessible: bool,
+    pids_with_new_windows: &HashSet<i32>,
+) -> bool {
+    if pids_with_new_windows.contains(&pid) {
+        tracing::debug!(
+            "Skipping removal for [{}]: PID {} has new windows (transitioning)",
+            window_id,
+            pid
+        );
+        return false;
+    }
+    should_remove_window(ws, window_id, pid, ax_accessible)
+}
 
 /// Check if a hidden window needs to be re-hidden (returns Some if moved from hide position)
 fn check_window_rehide(
@@ -215,64 +289,163 @@ pub fn sync_pid<W: WindowSystem>(
         .filter(|w| w.pid == pid)
         .map(|w| w.id)
         .collect();
-    let new_ids: HashSet<WindowId> = pid_window_infos.iter().map(|w| w.window_id).collect();
+    let on_screen_ids: HashSet<WindowId> = pid_window_infos.iter().map(|w| w.window_id).collect();
+
+    // Collect ignored window IDs for this pid
+    let current_ignored_ids: HashSet<WindowId> = state
+        .ignored_windows
+        .iter()
+        .filter(|(_, info)| info.pid == pid)
+        .map(|(id, _)| *id)
+        .collect();
 
     let mut changed = false;
     let mut added_window_ids = Vec::new();
     let mut rehide_moves = Vec::new();
 
-    // Check if we should skip removal (AX API inaccessible means we might be on different Space)
-    let skip_removal = if !current_ids.is_empty() && current_ids.difference(&new_ids).count() > 0 {
-        !ws.can_access_ax_windows(pid)
-    } else {
-        false
-    };
+    // Check AX accessibility for this process
+    let ax_accessible = ws.can_access_ax_windows(pid);
 
-    if skip_removal {
-        tracing::info!(
-            "Skipping window removal for pid {}: AX API inaccessible (likely on different Space)",
-            pid
-        );
-    } else {
-        for id in current_ids.difference(&new_ids) {
-            if let Some(window) = state.windows.remove(id) {
-                tracing::info!(
-                    "Window removed: [{}] {} ({})",
-                    window.id,
-                    window.title,
-                    window.app_name
-                );
-                if state.focused == Some(*id) {
-                    state.focused = None;
+    // Check if there are new windows for this PID (indicates transition like fullscreen)
+    // New window = on screen but not managed and not ignored
+    // Also include PIDs that have recently added ignored windows (within grace period)
+    let pids_with_recent_ignored = pids_with_recent_ignored_windows(state);
+    let has_new_untracked = on_screen_ids
+        .difference(&current_ids)
+        .any(|id| !current_ignored_ids.contains(id));
+    let pids_with_new_windows: HashSet<i32> =
+        if has_new_untracked || pids_with_recent_ignored.contains(&pid) {
+            HashSet::from([pid])
+        } else {
+            HashSet::new()
+        };
+
+    // Remove managed windows that are no longer on screen
+    for id in current_ids.difference(&on_screen_ids) {
+        if !should_remove_window_if_not_transitioning(
+            ws,
+            *id,
+            pid,
+            ax_accessible,
+            &pids_with_new_windows,
+        ) {
+            continue;
+        }
+
+        if let Some(window) = state.windows.remove(id) {
+            tracing::info!(
+                "Window removed: [{}] {} ({})",
+                window.id,
+                window.title,
+                window.app_name
+            );
+            if state.focused == Some(*id) {
+                state.focused = None;
+            }
+            changed = true;
+        }
+    }
+
+    // Remove ignored windows that are no longer on screen
+    let ignored_to_check: Vec<WindowId> = current_ignored_ids
+        .iter()
+        .filter(|id| !on_screen_ids.contains(id))
+        .copied()
+        .collect();
+
+    for id in ignored_to_check {
+        if !should_remove_window_if_not_transitioning(
+            ws,
+            id,
+            pid,
+            ax_accessible,
+            &pids_with_new_windows,
+        ) {
+            continue;
+        }
+        state.ignored_windows.remove(&id);
+        tracing::debug!("Ignored window removed (no longer on screen): [{}]", id);
+    }
+
+    // Re-evaluate ignored windows that are still on screen
+    let ignored_on_screen: Vec<WindowId> = current_ignored_ids
+        .iter()
+        .filter(|id| on_screen_ids.contains(id))
+        .copied()
+        .collect();
+
+    for id in ignored_on_screen {
+        if let Some(info) = pid_window_infos.iter().find(|w| w.window_id == id) {
+            let display_id = find_display_for_bounds(state, &info.bounds);
+
+            match try_create_window(state, ws, info, display_id) {
+                Some(Ok(window)) => {
+                    // Window is now managed (attributes changed, no longer matches ignore rule)
+                    tracing::info!(
+                        "Previously ignored window now managed: [{}] {} ({}) on display {} [ax_id={:?}, subrole={:?}, level={}]",
+                        window.id,
+                        window.title,
+                        window.app_name,
+                        display_id,
+                        window.ax_id,
+                        window.subrole,
+                        window.window_level
+                    );
+                    state.ignored_windows.remove(&id);
+                    state.windows.insert(window.id, window);
+                    added_window_ids.push(id);
+                    changed = true;
                 }
-                changed = true;
+                Some(Err(_)) => {
+                    // Still ignored, nothing to do
+                }
+                None => {
+                    // No longer tracked at all (e.g., became non-normal layer without rule)
+                    state.ignored_windows.remove(&id);
+                    tracing::debug!("Previously ignored window no longer tracked: [{}]", id);
+                }
             }
         }
     }
 
-    for id in new_ids.difference(&current_ids) {
+    // Process new windows (not currently managed or ignored)
+    for id in on_screen_ids.difference(&current_ids) {
+        // Skip if already in ignored_windows
+        if state.ignored_windows.contains_key(id) {
+            continue;
+        }
+
         if let Some(info) = pid_window_infos.iter().find(|w| w.window_id == *id) {
             let display_id = find_display_for_bounds(state, &info.bounds);
 
-            if let Some(window) = try_create_window(state, ws, info, display_id) {
-                tracing::info!(
-                    "Window added: [{}] {} ({}) on display {} [ax_id={:?}, subrole={:?}, level={}]",
-                    window.id,
-                    window.title,
-                    window.app_name,
-                    display_id,
-                    window.ax_id,
-                    window.subrole,
-                    window.window_level
-                );
-                state.windows.insert(window.id, window);
-                added_window_ids.push(*id);
-                changed = true;
+            match try_create_window(state, ws, info, display_id) {
+                Some(Ok(window)) => {
+                    tracing::info!(
+                        "Window added: [{}] {} ({}) on display {} [ax_id={:?}, subrole={:?}, level={}]",
+                        window.id,
+                        window.title,
+                        window.app_name,
+                        display_id,
+                        window.ax_id,
+                        window.subrole,
+                        window.window_level
+                    );
+                    state.windows.insert(window.id, window);
+                    added_window_ids.push(*id);
+                    changed = true;
+                }
+                Some(Err(ignored_info)) => {
+                    // Track as ignored for re-evaluation
+                    state.ignored_windows.insert(*id, ignored_info);
+                }
+                None => {
+                    // Not tracked at all
+                }
             }
         }
     }
 
-    for id in current_ids.intersection(&new_ids) {
+    for id in current_ids.intersection(&on_screen_ids) {
         if let Some(info) = pid_window_infos.iter().find(|w| w.window_id == *id) {
             let ext = ws.get_extended_attributes(info.window_id, info.pid, info.layer);
             let new_title = ext
@@ -355,12 +528,16 @@ pub fn find_display_for_bounds(state: &State, bounds: &crate::macos::Bounds) -> 
     }
 }
 
+/// Result of try_create_window:
+/// - `None`: Window should not be tracked at all (Control Center, non-normal layer without rule)
+/// - `Some(Ok(window))`: Window created successfully, should be managed
+/// - `Some(Err(info))`: Window was ignored by rule, should be tracked for re-evaluation
 pub fn try_create_window<W: WindowSystem>(
     state: &State,
     ws: &W,
     info: &crate::macos::WindowInfo,
     display_id: DisplayId,
-) -> Option<Window> {
+) -> Option<Result<Window, IgnoredWindowInfo>> {
     let app_name = &info.owner_name;
     let app_id = info.bundle_id.as_deref();
 
@@ -395,6 +572,7 @@ pub fn try_create_window<W: WindowSystem>(
         ext.zoom_button
     );
 
+    // Non-normal layer windows without matching rule: not tracked at all
     if ext.window_level != 0 && !has_matching_non_ignore_rule(state, app_name, app_id, &title, &ext)
     {
         tracing::debug!(
@@ -407,6 +585,7 @@ pub fn try_create_window<W: WindowSystem>(
         return None;
     }
 
+    // Window ignored by rule: track for re-evaluation
     if should_ignore_window_extended(state, app_name, app_id, &title, &ext) {
         tracing::info!(
             "Window ignored by rule: [{}] {} ({}) [ax_id={:?}, subrole={:?}, level={}]",
@@ -417,7 +596,10 @@ pub fn try_create_window<W: WindowSystem>(
             ext.subrole,
             ext.window_level
         );
-        return None;
+        return Some(Err(IgnoredWindowInfo {
+            pid: info.pid,
+            added_at: Instant::now(),
+        }));
     }
 
     let initial_tag = state
@@ -436,7 +618,7 @@ pub fn try_create_window<W: WindowSystem>(
     window.minimize_button = ext.minimize_button;
     window.zoom_button = ext.zoom_button;
 
-    Some(window)
+    Some(Ok(window))
 }
 
 pub fn sync_with_window_infos<W: WindowSystem>(
@@ -445,16 +627,38 @@ pub fn sync_with_window_infos<W: WindowSystem>(
     window_infos: &[crate::macos::WindowInfo],
 ) -> (Vec<WindowMove>, Vec<WindowId>) {
     let current_ids: HashSet<WindowId> = state.windows.keys().copied().collect();
-    let new_ids: HashSet<WindowId> = window_infos.iter().map(|w| w.window_id).collect();
+    let on_screen_ids: HashSet<WindowId> = window_infos.iter().map(|w| w.window_id).collect();
+    let current_ignored_ids: HashSet<WindowId> = state.ignored_windows.keys().copied().collect();
+    let all_current_ids: HashSet<WindowId> =
+        current_ids.union(&current_ignored_ids).copied().collect();
     let mut added_window_ids = Vec::new();
 
-    // Collect PIDs of windows to be removed and check AX accessibility
-    let pids_to_check: HashSet<i32> = current_ids
-        .difference(&new_ids)
+    // Collect PIDs that have new windows (indicates transition like fullscreen)
+    // Also include PIDs that have recently added ignored windows (within grace period)
+    let pids_with_recent_ignored = pids_with_recent_ignored_windows(state);
+    let mut pids_with_new_windows: HashSet<i32> = on_screen_ids
+        .difference(&all_current_ids)
+        .filter_map(|id| {
+            window_infos
+                .iter()
+                .find(|w| w.window_id == *id)
+                .map(|w| w.pid)
+        })
+        .collect();
+    pids_with_new_windows.extend(pids_with_recent_ignored);
+
+    // Collect PIDs and check AX accessibility for windows to be removed
+    let all_pids_to_check: HashSet<i32> = current_ids
+        .difference(&on_screen_ids)
         .filter_map(|id| state.windows.get(id).map(|w| w.pid))
+        .chain(
+            current_ignored_ids
+                .difference(&on_screen_ids)
+                .filter_map(|id| state.ignored_windows.get(id).map(|info| info.pid)),
+        )
         .collect();
 
-    let inaccessible_pids: HashSet<i32> = pids_to_check
+    let inaccessible_pids: HashSet<i32> = all_pids_to_check
         .iter()
         .filter(|&&pid| !ws.can_access_ax_windows(pid))
         .copied()
@@ -467,11 +671,20 @@ pub fn sync_with_window_infos<W: WindowSystem>(
         );
     }
 
-    for id in current_ids.difference(&new_ids) {
+    // Remove managed windows that are no longer on screen
+    for id in current_ids.difference(&on_screen_ids) {
         if let Some(window) = state.windows.get(id) {
-            if inaccessible_pids.contains(&window.pid) {
+            let ax_accessible = !inaccessible_pids.contains(&window.pid);
+            if !should_remove_window_if_not_transitioning(
+                ws,
+                *id,
+                window.pid,
+                ax_accessible,
+                &pids_with_new_windows,
+            ) {
                 continue;
             }
+
             tracing::info!(
                 "Window removed: [{}] {} ({})",
                 window.id,
@@ -483,18 +696,90 @@ pub fn sync_with_window_infos<W: WindowSystem>(
         }
     }
 
-    for info in window_infos {
-        if !state.windows.contains_key(&info.window_id) {
+    // Remove ignored windows that are no longer on screen
+    let ignored_to_check: Vec<(WindowId, i32)> = current_ignored_ids
+        .difference(&on_screen_ids)
+        .filter_map(|id| state.ignored_windows.get(id).map(|info| (*id, info.pid)))
+        .collect();
+
+    for (id, pid) in ignored_to_check {
+        let ax_accessible = !inaccessible_pids.contains(&pid);
+        if !should_remove_window_if_not_transitioning(
+            ws,
+            id,
+            pid,
+            ax_accessible,
+            &pids_with_new_windows,
+        ) {
+            continue;
+        }
+        state.ignored_windows.remove(&id);
+        tracing::debug!("Ignored window removed (no longer on screen): [{}]", id);
+    }
+
+    // Re-evaluate ignored windows that are still on screen
+    let ignored_on_screen: Vec<WindowId> = current_ignored_ids
+        .iter()
+        .filter(|id| on_screen_ids.contains(id))
+        .copied()
+        .collect();
+
+    for id in ignored_on_screen {
+        if let Some(info) = window_infos.iter().find(|w| w.window_id == id) {
             let display_id = find_display_for_bounds(state, &info.bounds);
 
-            if let Some(window) = try_create_window(state, ws, info, display_id) {
-                add_to_window_order(state, window.id, display_id);
-                added_window_ids.push(window.id);
-                state.windows.insert(window.id, window);
+            match try_create_window(state, ws, info, display_id) {
+                Some(Ok(window)) => {
+                    // Window is now managed
+                    tracing::info!(
+                        "Previously ignored window now managed: [{}] {} ({}) on display {}",
+                        window.id,
+                        window.title,
+                        window.app_name,
+                        display_id
+                    );
+                    state.ignored_windows.remove(&id);
+                    add_to_window_order(state, window.id, display_id);
+                    added_window_ids.push(window.id);
+                    state.windows.insert(window.id, window);
+                }
+                Some(Err(_)) => {
+                    // Still ignored
+                }
+                None => {
+                    // No longer tracked at all
+                    state.ignored_windows.remove(&id);
+                }
             }
         }
     }
 
+    // Process new windows
+    for info in window_infos {
+        if state.windows.contains_key(&info.window_id)
+            || state.ignored_windows.contains_key(&info.window_id)
+        {
+            continue;
+        }
+
+        let display_id = find_display_for_bounds(state, &info.bounds);
+
+        match try_create_window(state, ws, info, display_id) {
+            Some(Ok(window)) => {
+                add_to_window_order(state, window.id, display_id);
+                added_window_ids.push(window.id);
+                state.windows.insert(window.id, window);
+            }
+            Some(Err(ignored_info)) => {
+                state.ignored_windows.insert(info.window_id, ignored_info);
+            }
+            None => {
+                // Not tracked at all
+            }
+        }
+    }
+
+    // Update existing managed windows
     for info in window_infos {
         let new_display_id = find_display_for_bounds(state, &info.bounds);
         if let Some(window) = state.windows.get_mut(&info.window_id) {

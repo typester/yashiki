@@ -24,6 +24,10 @@ pub trait WindowSystem {
     /// Check if AX API can access windows for a given PID.
     /// Returns true if accessible, false if AX API returns errors.
     fn can_access_ax_windows(&self, pid: i32) -> bool;
+    /// Check if a specific window exists in the AX API.
+    /// Used for window-level checks during transitions (e.g., fullscreen).
+    /// Returns true if the window is found via AX API.
+    fn window_exists_in_ax(&self, window_id: u32, pid: i32) -> bool;
 }
 
 /// macOS implementation of WindowSystem
@@ -97,6 +101,31 @@ impl WindowSystem for MacOSWindowSystem {
     fn can_access_ax_windows(&self, pid: i32) -> bool {
         let app = AXUIElement::application(pid);
         app.windows().is_ok()
+    }
+
+    fn window_exists_in_ax(&self, window_id: u32, pid: i32) -> bool {
+        let app = AXUIElement::application(pid);
+        match app.windows() {
+            Ok(windows) => {
+                let ax_window_ids: Vec<Option<u32>> =
+                    windows.iter().map(|w| w.window_id()).collect();
+                let found = ax_window_ids.contains(&Some(window_id));
+                let has_none = ax_window_ids.iter().any(|id| id.is_none());
+                tracing::debug!(
+                    "window_exists_in_ax: looking for {} in pid {}, ax_windows={:?}, found={}, has_none={}",
+                    window_id,
+                    pid,
+                    ax_window_ids,
+                    found,
+                    has_none
+                );
+                found
+            }
+            Err(e) => {
+                tracing::debug!("window_exists_in_ax: AX error for pid {}: {:?}", pid, e);
+                false
+            }
+        }
     }
 }
 
@@ -507,7 +536,7 @@ impl Default for MacOSWindowManipulator {
 
 #[cfg(test)]
 pub mod mock {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     use super::*;
     use crate::macos::{Bounds, DisplayId};
@@ -517,6 +546,12 @@ pub mod mock {
         pub displays: Vec<DisplayInfo>,
         pub focused_window_id: Option<u32>,
         pub ax_accessible_pids: HashSet<i32>,
+        /// Custom extended attributes for specific windows (window_id -> attributes)
+        pub custom_extended_attributes: HashMap<u32, ExtendedWindowAttributes>,
+        /// Windows that exist only in AX API (not in get_on_screen_windows).
+        /// Used to simulate transitioning windows during fullscreen.
+        /// Stored as (window_id, pid).
+        pub ax_only_windows: HashSet<(u32, i32)>,
     }
 
     impl Default for MockWindowSystem {
@@ -526,6 +561,8 @@ pub mod mock {
                 displays: Vec::new(),
                 focused_window_id: None,
                 ax_accessible_pids: HashSet::from([1, 2, 3, 4, 5, 100, 1000, 1001, 1002]),
+                custom_extended_attributes: HashMap::new(),
+                ax_only_windows: HashSet::new(),
             }
         }
     }
@@ -565,6 +602,16 @@ pub mod mock {
                 self.ax_accessible_pids.remove(&pid);
             }
         }
+
+        pub fn set_extended_attributes(&mut self, window_id: u32, attrs: ExtendedWindowAttributes) {
+            self.custom_extended_attributes.insert(window_id, attrs);
+        }
+
+        /// Add a window that exists only in AX API (not in get_on_screen_windows).
+        /// Used to simulate windows transitioning during fullscreen.
+        pub fn add_ax_only_window(&mut self, window_id: u32, pid: i32) {
+            self.ax_only_windows.insert((window_id, pid));
+        }
     }
 
     impl WindowSystem for MockWindowSystem {
@@ -583,10 +630,15 @@ pub mod mock {
 
         fn get_extended_attributes(
             &self,
-            _window_id: u32,
+            window_id: u32,
             _pid: i32,
             layer: i32,
         ) -> ExtendedWindowAttributes {
+            // Return custom attributes if set, otherwise default
+            if let Some(attrs) = self.custom_extended_attributes.get(&window_id) {
+                return attrs.clone();
+            }
+
             // In tests, return default extended attributes with provided layer
             ExtendedWindowAttributes {
                 window_level: layer,
@@ -600,6 +652,14 @@ pub mod mock {
 
         fn can_access_ax_windows(&self, pid: i32) -> bool {
             self.ax_accessible_pids.contains(&pid)
+        }
+
+        fn window_exists_in_ax(&self, window_id: u32, pid: i32) -> bool {
+            // Window exists if it's in on-screen windows OR in ax_only_windows
+            self.windows
+                .iter()
+                .any(|w| w.window_id == window_id && w.pid == pid)
+                || self.ax_only_windows.contains(&(window_id, pid))
         }
     }
 
