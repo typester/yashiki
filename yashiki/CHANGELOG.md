@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.6](https://github.com/typester/yashiki/compare/yashiki-v0.9.5...yashiki-v0.9.6) - 2026-01-27
+
+### Fixed
+
+- protect managed windows during native fullscreen transition ([#102](https://github.com/typester/yashiki/pull/102))
+
 ## [0.9.5](https://github.com/typester/yashiki/compare/yashiki-v0.9.4...yashiki-v0.9.5) - 2026-01-27
 
 ### Fixed
