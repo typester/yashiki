@@ -1,7 +1,12 @@
 [workspace]
 changelog_update = true
-git_release_enable = true
+git_release_enable = false
 git_release_draft = false
+
+# yashiki creates GitHub release
+[[package]]
+name = "yashiki"
+git_release_enable = true
 
 # yashiki-ipc is internal crate, skip semver check
 [[package]]
