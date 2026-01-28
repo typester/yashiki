@@ -12,6 +12,7 @@ This page documents known issues with specific applications and their workaround
 - [Ghostty](#ghostty)
 - [IINA](#iina)
 - [Generic Popup/Palette Windows](#generic-popuppalette-windows)
+- [FortiClient](#forticlient)
 - [Debugging Window Issues](#debugging-window-issues)
 
 ## JankyBorders
@@ -112,3 +113,20 @@ yashiki rule-add --fullscreen-button none float
 # Ignore windows without close button (likely popups/tooltips)
 yashiki rule-add --close-button none ignore
 ```
+
+## FortiClient
+
+FortiClient is a VPN client that does not support macOS Accessibility notifications (`kAXErrorNotificationUnsupported`). This means yashiki cannot detect when FortiClient windows are created or closed.
+
+**Symptoms:**
+- Window creation is not detected (window doesn't get managed until app is activated via Dock)
+- Window close is not detected (ghost window remains in yashiki's state)
+- Window cannot be resized (fixed-size window)
+
+Since FortiClient windows cannot be resized and events cannot be tracked, it's best to ignore them entirely:
+
+```sh
+yashiki rule-add --app-id com.fortinet.FortiClient ignore
+```
+
+**Note:** This is a limitation of FortiClient's implementation, not yashiki. Some enterprise/security applications intentionally disable Accessibility features.
