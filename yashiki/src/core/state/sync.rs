@@ -813,3 +813,33 @@ pub fn sync_with_window_infos<W: WindowSystem>(
 
     (detect_rehide_moves(state, window_infos), added_window_ids)
 }
+
+/// Sync all windows on a display, removing stale windows.
+/// Returns (changed, new_window_ids, rehide_moves).
+pub fn sync_windows_for_display<W: WindowSystem>(
+    state: &mut State,
+    ws: &W,
+    display_id: DisplayId,
+) -> (bool, Vec<WindowId>, Vec<WindowMove>) {
+    let pids: HashSet<i32> = state
+        .windows
+        .values()
+        .filter(|w| w.display_id == display_id)
+        .map(|w| w.pid)
+        .collect();
+
+    let mut any_changed = false;
+    let mut all_new_window_ids = Vec::new();
+    let mut all_rehide_moves = Vec::new();
+
+    for pid in pids {
+        let (changed, new_ids, rehide_moves) = sync_pid(state, ws, pid);
+        if changed {
+            any_changed = true;
+        }
+        all_new_window_ids.extend(new_ids);
+        all_rehide_moves.extend(rehide_moves);
+    }
+
+    (any_changed, all_new_window_ids, all_rehide_moves)
+}

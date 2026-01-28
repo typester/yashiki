@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use crate::core::{State, WindowId};
 use crate::event_emitter::EventEmitter;
 use crate::layout::LayoutEngineManager;
-use crate::macos::ObserverManager;
+use crate::macos::{DisplayId, ObserverManager};
 use crate::platform::{WindowManipulator, WindowSystem};
 
 use super::effects::execute_effects;
@@ -104,6 +104,54 @@ pub fn sync_focused_and_process<W: WindowSystem, M: WindowManipulator>(
         .sync_focused_window_with_hint(window_system, pid_hint);
 
     // Apply rules to newly discovered windows and emit events
+    process_new_windows(
+        new_window_ids,
+        state,
+        layout_engine_manager,
+        manipulator,
+        event_emitter,
+    );
+
+    SyncResult { changed }
+}
+
+/// Sync all windows on a display and process newly discovered windows.
+/// Used before tag-view commands to remove stale windows and apply rules to new ones.
+pub fn sync_display_and_process_new_windows<W: WindowSystem, M: WindowManipulator>(
+    state: &RefCell<State>,
+    window_system: &W,
+    layout_engine_manager: &RefCell<LayoutEngineManager>,
+    manipulator: &M,
+    event_emitter: &EventEmitter,
+    observer_manager: &RefCell<ObserverManager>,
+    display_id: DisplayId,
+) -> SyncResult {
+    // Collect PIDs on this display and ensure observers exist
+    let pids: Vec<i32> = state
+        .borrow()
+        .windows
+        .values()
+        .filter(|w| w.display_id == display_id)
+        .map(|w| w.pid)
+        .collect();
+
+    for pid in &pids {
+        if !observer_manager.borrow().has_observer(*pid) {
+            tracing::info!("Adding observer for pid {} during display sync", pid);
+            if let Err(e) = observer_manager.borrow_mut().add_observer(*pid) {
+                tracing::warn!("Failed to add observer for pid {}: {}", pid, e);
+            }
+        }
+    }
+
+    let (changed, new_window_ids, rehide_moves) = state
+        .borrow_mut()
+        .sync_windows_for_display(window_system, display_id);
+
+    if !rehide_moves.is_empty() {
+        manipulator.apply_window_moves(&rehide_moves);
+    }
+
     process_new_windows(
         new_window_ids,
         state,
