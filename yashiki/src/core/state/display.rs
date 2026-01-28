@@ -279,7 +279,7 @@ pub fn send_to_output(state: &mut State, direction: OutputDirection) -> Option<S
     // Compute visibility changes for target display
     let moves = compute_layout_changes_for_display(state, target_display_id);
 
-    state.focused_display = target_display_id;
+    // Note: focused_display is NOT changed (River-style: focus stays on source display)
 
     Some(SendToOutputResult {
         source_display_id,
