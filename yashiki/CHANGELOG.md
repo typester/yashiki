@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.7](https://github.com/typester/yashiki/compare/yashiki-v0.9.6...yashiki-v0.9.7) - 2026-01-28
+
+### Fixed
+
+- prevent window migration between displays on sleep/wake ([#104](https://github.com/typester/yashiki/pull/104))
+
 ## [0.9.6](https://github.com/typester/yashiki/compare/yashiki-v0.9.5...yashiki-v0.9.6) - 2026-01-27
 
 ### Fixed
