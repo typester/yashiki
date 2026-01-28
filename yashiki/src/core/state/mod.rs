@@ -107,6 +107,14 @@ impl FocusIntent {
     }
 }
 
+/// State for auto-raise (focus follows mouse) feature.
+/// Tracks which window the cursor is hovering over and when hover started.
+#[derive(Debug, Clone, Default)]
+pub struct AutoRaiseState {
+    pub last_hovered: Option<WindowId>,
+    pub hover_start: Option<Instant>,
+}
+
 pub struct State {
     pub windows: HashMap<WindowId, Window>,
     pub displays: HashMap<DisplayId, Display>,
@@ -124,6 +132,8 @@ pub struct State {
     pub saved_display_tags: HashMap<DisplayId, Tag>,
     /// Tracks the last intentional focus operation to suppress spurious macOS focus changes.
     pub focus_intent: Option<FocusIntent>,
+    /// State for auto-raise (focus follows mouse) feature.
+    pub auto_raise_state: AutoRaiseState,
 }
 
 impl State {
@@ -142,6 +152,7 @@ impl State {
             ignored_windows: HashMap::new(),
             saved_display_tags: HashMap::new(),
             focus_intent: None,
+            auto_raise_state: AutoRaiseState::default(),
         }
     }
 
@@ -226,6 +237,30 @@ impl State {
 
     pub fn has_windows_for_pid(&self, pid: i32) -> bool {
         self.windows.values().any(|w| w.pid == pid)
+    }
+
+    /// Find the topmost visible window at the given screen coordinates.
+    /// Returns (window_id, pid) if a window is found.
+    pub fn find_window_at_point(&self, x: i32, y: i32) -> Option<(WindowId, i32)> {
+        // Find the display containing this point
+        let display = self.displays.values().find(|d| {
+            let f = &d.frame;
+            x >= f.x && x < f.x + f.width as i32 && y >= f.y && y < f.y + f.height as i32
+        })?;
+
+        // Find visible windows on this display that contain the point
+        self.windows
+            .values()
+            .filter(|w| {
+                w.display_id == display.id
+                    && w.tags.intersects(display.visible_tags)
+                    && !w.is_hidden()
+            })
+            .find(|w| {
+                let f = &w.frame;
+                x >= f.x && x < f.x + f.width as i32 && y >= f.y && y < f.y + f.height as i32
+            })
+            .map(|w| (w.id, w.pid))
     }
 
     /// Set the focus intent when intentionally focusing a window.

@@ -36,7 +36,8 @@ use crate::event_emitter::{create_snapshot, EventEmitter};
 use crate::layout::LayoutEngineManager;
 use crate::macos;
 use crate::macos::{
-    DisplayReconfigEvent, HotkeyManager, ObserverManager, WorkspaceEvent, WorkspaceWatcher,
+    DisplayReconfigEvent, HotkeyManager, MousePosition, MouseTracker, ObserverManager,
+    WorkspaceEvent, WorkspaceWatcher,
 };
 use crate::pid;
 use crate::platform::{MacOSWindowManipulator, MacOSWindowSystem, WindowManipulator};
@@ -45,6 +46,7 @@ use yashiki_ipc::Command;
 struct RunLoopContext {
     ipc_cmd_rx: std_mpsc::Receiver<IpcCommandWithResponse>,
     hotkey_cmd_rx: std_mpsc::Receiver<Command>,
+    mouse_event_rx: std_mpsc::Receiver<MousePosition>,
     observer_event_rx: std_mpsc::Receiver<Event>,
     workspace_event_rx: std_mpsc::Receiver<WorkspaceEvent>,
     snapshot_request_rx: std_mpsc::Receiver<SnapshotRequest>,
@@ -55,6 +57,7 @@ struct RunLoopContext {
     state: RefCell<State>,
     layout_engine_manager: RefCell<LayoutEngineManager>,
     hotkey_manager: RefCell<HotkeyManager>,
+    mouse_tracker: RefCell<MouseTracker>,
     window_system: MacOSWindowSystem,
     window_manipulator: MacOSWindowManipulator,
     ns_app: Retained<NSApplication>,
@@ -175,10 +178,19 @@ impl App {
             tracing::warn!("Failed to start hotkey tap: {}", e);
         }
 
+        // Create shared pointer for mouse CFRunLoopSource
+        let mouse_source_ptr = Arc::new(AtomicPtr::new(ptr::null_mut()));
+        let mouse_source_clone = Arc::clone(&mouse_source_ptr);
+
+        // Create mouse tracker (initially stopped, will be started via IPC)
+        let (mouse_event_tx, mouse_event_rx) = std_mpsc::channel::<MousePosition>();
+        let mouse_tracker = MouseTracker::new(mouse_event_tx, mouse_source_clone);
+
         // Create shared context for IPC/hotkey/display sources
         let context = Box::new(RunLoopContext {
             ipc_cmd_rx,
             hotkey_cmd_rx,
+            mouse_event_rx,
             observer_event_rx,
             workspace_event_rx,
             snapshot_request_rx,
@@ -189,6 +201,7 @@ impl App {
             state,
             layout_engine_manager,
             hotkey_manager: RefCell::new(hotkey_manager),
+            mouse_tracker: RefCell::new(mouse_tracker),
             window_system,
             window_manipulator,
             ns_app: ns_app.clone(),
@@ -248,6 +261,27 @@ impl App {
             // Apply pending hotkey binding changes
             if let Err(e) = ctx.hotkey_manager.borrow_mut().ensure_tap() {
                 tracing::error!("Failed to update hotkey tap: {}", e);
+            }
+
+            // Sync mouse tracker state with auto-raise config
+            {
+                use yashiki_ipc::AutoRaiseMode;
+                let mode = ctx.state.borrow().config.auto_raise_mode;
+                let mut tracker = ctx.mouse_tracker.borrow_mut();
+                match mode {
+                    AutoRaiseMode::Enabled => {
+                        if !tracker.is_running() {
+                            if let Err(e) = tracker.start() {
+                                tracing::error!("Failed to start mouse tracker: {}", e);
+                            }
+                        }
+                    }
+                    AutoRaiseMode::Disabled => {
+                        if tracker.is_running() {
+                            tracker.stop();
+                        }
+                    }
+                }
             }
         }
 
@@ -332,6 +366,102 @@ impl App {
             // Store source pointer for hotkey tap to signal
             hotkey_source_ptr.store(hotkey_source as *mut std::ffi::c_void, Ordering::Release);
             tracing::info!("Hotkey CFRunLoopSource created and registered");
+        }
+
+        // Create CFRunLoopSource for mouse events (auto-raise)
+        extern "C" fn mouse_source_callback(info: *const std::ffi::c_void) {
+            let ctx = unsafe { &*(info as *const RunLoopContext) };
+
+            use std::time::Instant;
+            use yashiki_ipc::AutoRaiseMode;
+
+            // Process all pending mouse events
+            while let Ok(pos) = ctx.mouse_event_rx.try_recv() {
+                // Check if auto-raise is enabled
+                let mode = ctx.state.borrow().config.auto_raise_mode;
+                if mode == AutoRaiseMode::Disabled {
+                    continue;
+                }
+
+                let delay_ms = ctx.state.borrow().config.auto_raise_delay_ms;
+
+                // Find window at cursor position
+                let window_info = ctx.state.borrow().find_window_at_point(pos.x, pos.y);
+
+                match window_info {
+                    Some((window_id, pid)) => {
+                        let mut state = ctx.state.borrow_mut();
+                        let auto_raise = &mut state.auto_raise_state;
+
+                        if auto_raise.last_hovered == Some(window_id) {
+                            // Same window - check if delay has elapsed
+                            if let Some(start) = auto_raise.hover_start {
+                                if start.elapsed().as_millis() >= delay_ms as u128 {
+                                    // Delay elapsed - check if already focused
+                                    if state.focused != Some(window_id) {
+                                        // Set focus intent before focusing
+                                        state.set_focus_intent(window_id, pid);
+                                        drop(state); // Release borrow before manipulator call
+                                        tracing::debug!(
+                                            "Auto-raise: focusing window {} at ({}, {})",
+                                            window_id,
+                                            pos.x,
+                                            pos.y
+                                        );
+                                        ctx.window_manipulator.focus_window(window_id, pid);
+                                        ctx.state.borrow_mut().set_focused(Some(window_id));
+                                        ctx.event_emitter.emit_window_focused(Some(window_id));
+                                        // Clear hover state after focusing
+                                        ctx.state.borrow_mut().auto_raise_state.hover_start = None;
+                                    }
+                                }
+                            }
+                        } else {
+                            // Different window - record new hover
+                            auto_raise.last_hovered = Some(window_id);
+                            auto_raise.hover_start = Some(Instant::now());
+                        }
+                    }
+                    None => {
+                        // No window under cursor - clear hover state
+                        let mut state = ctx.state.borrow_mut();
+                        state.auto_raise_state.last_hovered = None;
+                        state.auto_raise_state.hover_start = None;
+                    }
+                }
+            }
+        }
+
+        let mut mouse_source_context = CFRunLoopSourceContext {
+            version: 0,
+            info: context_ptr,
+            retain: None,
+            release: None,
+            copyDescription: None,
+            equal: None,
+            hash: None,
+            schedule: None,
+            cancel: None,
+            perform: mouse_source_callback,
+        };
+
+        let mouse_source =
+            unsafe { CFRunLoopSourceCreate(ptr::null(), 0, &mut mouse_source_context) };
+        if mouse_source.is_null() {
+            tracing::error!("Failed to create CFRunLoopSource for mouse");
+        } else {
+            // Register source with main RunLoop
+            let run_loop = CFRunLoop::get_current();
+            unsafe {
+                CFRunLoopAddSource(
+                    run_loop.as_concrete_TypeRef(),
+                    mouse_source,
+                    kCFRunLoopDefaultMode,
+                );
+            }
+            // Store source pointer for mouse tracker to signal
+            mouse_source_ptr.store(mouse_source as *mut std::ffi::c_void, Ordering::Release);
+            tracing::info!("Mouse CFRunLoopSource created and registered");
         }
 
         // Create CFRunLoopSource for display reconfiguration events

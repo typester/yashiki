@@ -549,6 +549,24 @@ pub fn process_command(
             mode: state.config.cursor_warp,
         }),
 
+        // Auto-raise
+        Command::SetAutoRaise { mode, delay_ms } => {
+            use yashiki_ipc::AutoRaiseMode;
+            tracing::info!("Set auto-raise mode: {:?}, delay: {}ms", mode, delay_ms);
+            state.config.auto_raise_mode = *mode;
+            state.config.auto_raise_delay_ms = *delay_ms;
+            // Clear auto-raise state when disabled
+            if *mode == AutoRaiseMode::Disabled {
+                state.auto_raise_state = Default::default();
+            }
+            // MouseTracker start/stop is handled in ipc_source_callback after command processing
+            CommandResult::ok()
+        }
+        Command::GetAutoRaise => CommandResult::with_response(Response::AutoRaise {
+            mode: state.config.auto_raise_mode,
+            delay_ms: state.config.auto_raise_delay_ms,
+        }),
+
         // Outer gap
         Command::SetOuterGap { values } => match OuterGap::from_args(values) {
             Some(gap) => {
