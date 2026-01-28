@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/typester/yashiki/compare/yashiki-v0.9.7...yashiki-v0.10.0) - 2026-01-28
+
+### Added
+
+- [**breaking**] output-send keeps focus on source display (River-style) ([#106](https://github.com/typester/yashiki/pull/106))
+
+### Fixed
+
+- suppress spurious focus changes for multi-window apps ([#107](https://github.com/typester/yashiki/pull/107))
+
 ## [0.9.7](https://github.com/typester/yashiki/compare/yashiki-v0.9.6...yashiki-v0.9.7) - 2026-01-28
 
 ### Fixed
