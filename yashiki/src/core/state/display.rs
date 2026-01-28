@@ -11,6 +11,15 @@ use super::layout::{
 };
 use super::sync::sync_all;
 
+/// Handle display configuration changes (connection/disconnection).
+///
+/// Two branches with different processing order:
+/// - **Reconnect** (`removed_ids.is_empty()`): sync_all → restore visible_tags → restore orphans → layout
+/// - **Disconnect** (`!removed_ids.is_empty()`): orphan windows → save visible_tags → remove displays → sync_all → layout
+///
+/// The order difference is intentional:
+/// - On reconnect: must sync first to create Display entries, then restore saved state
+/// - On disconnect: must save state before removing displays
 pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> DisplayChangeResult {
     let display_infos = ws.get_all_displays();
     let current_ids: HashSet<_> = display_infos.iter().map(|d| d.id).collect();
@@ -19,9 +28,27 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
     let removed_ids: Vec<_> = previous_ids.difference(&current_ids).copied().collect();
     let added_ids: HashSet<_> = current_ids.difference(&previous_ids).copied().collect();
 
+    // === Reconnect branch: no displays removed, possibly some added ===
     if removed_ids.is_empty() {
         let (rehide_moves, new_window_ids) = sync_all(state, ws);
-        let mut displays_to_retile: HashSet<DisplayId> = added_ids.iter().copied().collect();
+        // Retile all displays when configuration changes, not just added ones.
+        // Existing displays may have shifted coordinates during the disconnection period.
+        let mut displays_to_retile: HashSet<DisplayId> = current_ids.clone();
+        let mut window_moves = rehide_moves;
+
+        // Restore saved visible_tags for reconnected displays
+        for &display_id in &added_ids {
+            if let Some(saved_tags) = state.saved_display_tags.remove(&display_id) {
+                if let Some(display) = state.displays.get_mut(&display_id) {
+                    tracing::info!(
+                        "Restoring visible_tags for display {}: {:?}",
+                        display_id,
+                        saved_tags
+                    );
+                    display.visible_tags = saved_tags;
+                }
+            }
+        }
 
         // Restore orphaned windows to their original displays if those displays have returned
         for window in state.windows.values_mut() {
@@ -47,6 +74,13 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
             }
         }
 
+        // Compute visibility changes for all displays to ensure window visibility
+        // is correctly set (clear saved_frame for windows that should be visible)
+        for &display_id in &displays_to_retile {
+            let moves = compute_layout_changes_for_display(state, display_id);
+            window_moves.extend(moves);
+        }
+
         let added: Vec<_> = state
             .displays
             .values()
@@ -55,7 +89,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
             .collect();
 
         return DisplayChangeResult {
-            window_moves: rehide_moves,
+            window_moves,
             displays_to_retile: displays_to_retile.into_iter().collect(),
             added,
             removed: vec![],
@@ -63,6 +97,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
         };
     }
 
+    // === Disconnect branch: some displays removed ===
     tracing::info!("Displays disconnected: {:?}", removed_ids);
 
     let fallback_display = display_infos
@@ -113,7 +148,11 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
         state.focused_display = fallback_id;
     }
 
+    // Save visible_tags before removing displays for restoration on reconnect
     for id in &removed_ids {
+        if let Some(display) = state.displays.get(id) {
+            state.saved_display_tags.insert(*id, display.visible_tags);
+        }
         state.displays.remove(id);
     }
 

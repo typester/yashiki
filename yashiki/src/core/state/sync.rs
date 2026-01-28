@@ -453,7 +453,6 @@ pub fn sync_pid<W: WindowSystem>(
                 .clone()
                 .unwrap_or_else(|| info.name.clone().unwrap_or_default());
             let new_frame = Rect::from_bounds(&info.bounds);
-            let new_display_id = find_display_for_bounds(state, &info.bounds);
 
             // Compute hide position before mutable borrow
             let hide_pos = state.windows.get(id).map(|w| {
@@ -492,11 +491,11 @@ pub fn sync_pid<W: WindowSystem>(
                             rehide_moves.push(mv);
                         } else if !window.is_hidden() {
                             window.frame = new_frame;
-                            window.display_id = new_display_id;
+                            // Don't update display_id based on position - let orphan handling manage it
                         }
                     } else if !window.is_hidden() {
                         window.frame = new_frame;
-                        window.display_id = new_display_id;
+                        // Don't update display_id based on position - let orphan handling manage it
                     }
                 }
             }
@@ -781,7 +780,6 @@ pub fn sync_with_window_infos<W: WindowSystem>(
 
     // Update existing managed windows
     for info in window_infos {
-        let new_display_id = find_display_for_bounds(state, &info.bounds);
         if let Some(window) = state.windows.get_mut(&info.window_id) {
             let ext = ws.get_extended_attributes(info.window_id, info.pid, info.layer);
             let new_title = ext
@@ -791,7 +789,7 @@ pub fn sync_with_window_infos<W: WindowSystem>(
             window.title = new_title;
             if !window.is_hidden() {
                 window.frame = Rect::from_bounds(&info.bounds);
-                window.display_id = new_display_id;
+                // Don't update display_id based on position - let orphan handling manage it
             }
         }
     }
