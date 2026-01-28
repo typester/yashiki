@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3](https://github.com/typester/yashiki/compare/yashiki-layout-byobu-v0.10.2...yashiki-layout-byobu-v0.10.3) - 2026-01-28
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.7.3](https://github.com/typester/yashiki/compare/yashiki-layout-byobu-v0.7.2...yashiki-layout-byobu-v0.7.3) - 2026-01-20
 
 ### Other
