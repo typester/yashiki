@@ -1601,6 +1601,32 @@ mod tests {
     }
 
     #[test]
+    fn test_send_to_output_does_not_change_focused_display() {
+        // send_to_output should NOT change focused_display (River-style)
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        state.focused_display = 1;
+
+        let result = state.send_to_output(OutputDirection::Next);
+        assert!(result.is_some());
+
+        // Window moved to display 2
+        assert_eq!(state.windows.get(&100).unwrap().display_id, 2);
+        // But focused_display should remain on display 1
+        assert_eq!(state.focused_display, 1);
+    }
+
+    #[test]
     fn test_per_display_hide_position_single_display() {
         // Single display should use bottom-right corner
         let ws = MockWindowSystem::new()
