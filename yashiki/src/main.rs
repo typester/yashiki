@@ -15,8 +15,8 @@ use tracing_subscriber::EnvFilter;
 
 use ipc::IpcClient;
 use yashiki_ipc::{
-    ButtonInfo, ButtonState, Command, CursorWarpMode, Direction, EventFilter, GlobPattern,
-    OutputDirection, OutputSpecifier, Response, RuleAction, RuleMatcher, WindowLevel,
+    AutoRaiseMode, ButtonInfo, ButtonState, Command, CursorWarpMode, Direction, EventFilter,
+    GlobPattern, OutputDirection, OutputSpecifier, Response, RuleAction, RuleMatcher, WindowLevel,
     WindowLevelName, WindowLevelOther, WindowRule, WindowStatus,
 };
 
@@ -68,6 +68,8 @@ enum SubCommand {
     ListRules(ListRulesCmd),
     SetCursorWarp(SetCursorWarpCmd),
     GetCursorWarp(GetCursorWarpCmd),
+    SetAutoRaise(SetAutoRaiseCmd),
+    GetAutoRaise(GetAutoRaiseCmd),
     SetOuterGap(SetOuterGapCmd),
     GetOuterGap(GetOuterGapCmd),
     Subscribe(SubscribeCmd),
@@ -442,6 +444,23 @@ struct SetCursorWarpCmd {
 #[argh(subcommand, name = "get-cursor-warp")]
 struct GetCursorWarpCmd {}
 
+/// Set auto-raise mode (focus follows mouse)
+#[derive(FromArgs)]
+#[argh(subcommand, name = "set-auto-raise")]
+struct SetAutoRaiseCmd {
+    /// mode: disabled, enabled
+    #[argh(positional)]
+    mode: String,
+    /// delay in milliseconds before raising window (default: 0)
+    #[argh(option)]
+    delay: Option<u64>,
+}
+
+/// Get current auto-raise mode
+#[derive(FromArgs)]
+#[argh(subcommand, name = "get-auto-raise")]
+struct GetAutoRaiseCmd {}
+
 /// Set the outer gap (gap between windows and screen edges)
 #[derive(FromArgs)]
 #[argh(subcommand, name = "set-outer-gap")]
@@ -676,6 +695,17 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
             };
             println!("{}", mode_str);
         }
+        Response::AutoRaise { mode, delay_ms } => {
+            let mode_str = match mode {
+                AutoRaiseMode::Disabled => "disabled",
+                AutoRaiseMode::Enabled => "enabled",
+            };
+            if delay_ms > 0 {
+                println!("{} (delay: {}ms)", mode_str, delay_ms);
+            } else {
+                println!("{}", mode_str);
+            }
+        }
         Response::OuterGap { outer_gap } => {
             println!("{}", outer_gap);
         }
@@ -878,6 +908,12 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             Ok(Command::SetCursorWarp { mode })
         }
         SubCommand::GetCursorWarp(_) => Ok(Command::GetCursorWarp),
+        SubCommand::SetAutoRaise(cmd) => {
+            let mode = parse_auto_raise_mode(&cmd.mode)?;
+            let delay_ms = cmd.delay.unwrap_or(0);
+            Ok(Command::SetAutoRaise { mode, delay_ms })
+        }
+        SubCommand::GetAutoRaise(_) => Ok(Command::GetAutoRaise),
         SubCommand::SetOuterGap(cmd) => {
             if cmd.values.is_empty() {
                 bail!("set-outer-gap requires at least one value");
@@ -1158,6 +1194,13 @@ fn parse_command(args: &[String]) -> Result<Command> {
             Ok(Command::SetCursorWarp { mode })
         }
         "get-cursor-warp" => Ok(Command::GetCursorWarp),
+        "set-auto-raise" => {
+            let cmd: SetAutoRaiseCmd = from_argh(cmd_name, &cmd_args)?;
+            let mode = parse_auto_raise_mode(&cmd.mode)?;
+            let delay_ms = cmd.delay.unwrap_or(0);
+            Ok(Command::SetAutoRaise { mode, delay_ms })
+        }
+        "get-auto-raise" => Ok(Command::GetAutoRaise),
         "set-outer-gap" => {
             let cmd: SetOuterGapCmd = from_argh(cmd_name, &cmd_args)?;
             if cmd.values.is_empty() {
@@ -1209,6 +1252,14 @@ fn parse_cursor_warp_mode(s: &str) -> Result<CursorWarpMode> {
             "Unknown cursor warp mode: {} (use disabled, on-output-change, on-focus-change)",
             s
         ),
+    }
+}
+
+fn parse_auto_raise_mode(s: &str) -> Result<AutoRaiseMode> {
+    match s.to_lowercase().as_str() {
+        "disabled" => Ok(AutoRaiseMode::Disabled),
+        "enabled" => Ok(AutoRaiseMode::Enabled),
+        _ => bail!("Unknown auto-raise mode: {} (use disabled, enabled)", s),
     }
 }
 

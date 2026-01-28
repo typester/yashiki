@@ -11,6 +11,7 @@ macOS tiling window manager written in Rust.
 - **Multi-monitor support** - Each display has independent tags
 - **Window rules** - Automatically configure windows by app name, bundle identifier, or title
 - **Cursor warp** - Mouse follows focus (configurable: disabled, on-output-change, on-focus-change)
+- **Auto-raise** - Focus follows mouse with optional delay (focus window when cursor enters)
 - **State streaming** - Real-time events for status bars and external tools
 - **No SIP disable required** - Uses only public Accessibility API
 - **Shell script configuration** - Config is just a shell script (`~/.config/yashiki/init`)
@@ -238,6 +239,17 @@ yashiki set-cursor-warp disabled          # Don't move cursor (default)
 yashiki set-cursor-warp on-output-change  # Move cursor when switching displays
 yashiki set-cursor-warp on-focus-change   # Always move cursor to focused window
 yashiki get-cursor-warp                   # Get current mode
+```
+
+### Auto-Raise
+
+Focus follows mouse - automatically focus windows when the cursor enters them.
+
+```sh
+yashiki set-auto-raise disabled           # Don't auto-focus (default)
+yashiki set-auto-raise enabled            # Focus window immediately when cursor enters
+yashiki set-auto-raise enabled --delay 100  # Wait 100ms before focusing (useful when moving across windows)
+yashiki get-auto-raise                    # Get current mode and delay
 ```
 
 ### Outer Gap

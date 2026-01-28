@@ -32,6 +32,14 @@ _yashiki_cursor_warp_modes() {
     _describe -t modes 'mode' modes
 }
 
+_yashiki_auto_raise_modes() {
+    local modes=(
+        'disabled:Do not auto-focus windows on hover'
+        'enabled:Focus window when cursor enters'
+    )
+    _describe -t modes 'mode' modes
+}
+
 _yashiki_layouts() {
     local layouts=(
         'tatami:Master-stack layout'
@@ -124,6 +132,8 @@ _yashiki_subcommands() {
         'list-rules:List all window rules'
         'set-cursor-warp:Set cursor warp mode'
         'get-cursor-warp:Get current cursor warp mode'
+        'set-auto-raise:Set auto-raise mode (focus follows mouse)'
+        'get-auto-raise:Get current auto-raise mode'
         'set-outer-gap:Set outer gap'
         'get-outer-gap:Get current outer gap'
         'subscribe:Subscribe to state change events'
@@ -183,7 +193,7 @@ _yashiki() {
     case $state in
         args)
             case $line[1] in
-                start|version|list-bindings|tag-view-last|window-toggle-fullscreen|window-toggle-float|window-close|list-outputs|get-state|focused-window|exec-path|list-rules|get-cursor-warp|get-outer-gap|quit)
+                start|version|list-bindings|tag-view-last|window-toggle-fullscreen|window-toggle-float|window-close|list-outputs|get-state|focused-window|exec-path|list-rules|get-cursor-warp|get-auto-raise|get-outer-gap|quit)
                     # No arguments
                     ;;
                 bind)
@@ -260,6 +270,11 @@ _yashiki() {
                     ;;
                 set-cursor-warp)
                     _arguments '1:mode:_yashiki_cursor_warp_modes'
+                    ;;
+                set-auto-raise)
+                    _arguments \
+                        '--delay=[Delay in milliseconds before raising]:delay (ms):' \
+                        '1:mode:_yashiki_auto_raise_modes'
                     ;;
                 set-outer-gap)
                     _arguments '*:gap value:'

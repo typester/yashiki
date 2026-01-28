@@ -356,6 +356,9 @@ yashiki layout-cmd --layout tatami set-inner-gap 10
 # Cursor warp (mouse follows focus)
 yashiki set-cursor-warp on-focus-change
 
+# Auto-raise (focus follows mouse) - with 100ms delay to avoid accidental focus changes
+yashiki set-auto-raise enabled --delay 100
+
 # Tags
 for i in 1 2 3 4 5 6 7 8 9; do
   yashiki bind "alt-$i" tag-view "$((1<<(i-1)))"
@@ -406,6 +409,9 @@ yashiki layout-cmd --layout byobu set-padding 40
 
 # Cursor warp
 yashiki set-cursor-warp on-focus-change
+
+# Auto-raise (focus follows mouse)
+yashiki set-auto-raise enabled --delay 100
 
 # Tags (all 9 tags)
 for i in 1 2 3 4 5 6 7 8 9; do

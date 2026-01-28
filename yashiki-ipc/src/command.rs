@@ -12,6 +12,15 @@ pub enum CursorWarpMode {
     OnFocusChange,
 }
 
+/// Auto-raise mode - controls focus follows mouse behavior
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoRaiseMode {
+    #[default]
+    Disabled,
+    Enabled,
+}
+
 /// Window status - indicates whether a window is managed or ignored
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -694,6 +703,13 @@ pub enum Command {
     },
     GetCursorWarp,
 
+    // Auto-raise (focus follows mouse)
+    SetAutoRaise {
+        mode: AutoRaiseMode,
+        delay_ms: u64,
+    },
+    GetAutoRaise,
+
     // Outer gap
     SetOuterGap {
         values: Vec<String>,
@@ -743,6 +759,7 @@ pub enum Response {
     Layout { layout: String },
     ExecPath { path: String },
     CursorWarp { mode: CursorWarpMode },
+    AutoRaise { mode: AutoRaiseMode, delay_ms: u64 },
     OuterGap { outer_gap: OuterGap },
 }
 

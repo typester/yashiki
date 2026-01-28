@@ -55,6 +55,7 @@ Like AeroSpace, uses virtual workspaces instead of macOS native Spaces:
 - **River-style configuration** - shell script (`~/.config/yashiki/init`), CLI commands
 - **Window rules** (riverctl-style) - glob patterns, actions: ignore, float, tags, output, position, dimensions
 - **Cursor warp** - `disabled`, `on-output-change`, `on-focus-change`
+- **Auto-raise** (focus follows mouse) - `disabled`, `enabled` with optional delay
 - **State streaming** - real-time events via `/tmp/yashiki-events.sock`
 
 ## Layout Protocol
@@ -119,6 +120,8 @@ yashiki rule-add --app-name|--app-id|--title|--ax-id|--subrole|--window-level|--
 yashiki rule-del <matcher> <action>
 yashiki list-rules
 yashiki set-cursor-warp disabled|on-output-change|on-focus-change
+yashiki set-auto-raise disabled|enabled [--delay ms]
+yashiki get-auto-raise
 yashiki set-outer-gap <all>|<v h>|<t r b l>
 yashiki subscribe [--snapshot] [--filter events]
 yashiki quit
@@ -131,6 +134,7 @@ yashiki quit
 # ~/.config/yashiki/init
 yashiki add-exec-path /opt/homebrew/bin
 yashiki set-cursor-warp on-focus-change
+yashiki set-auto-raise enabled --delay 100  # Focus follows mouse with 100ms delay
 yashiki layout-set-default tatami
 yashiki layout-set --tags 4 byobu
 
@@ -155,7 +159,7 @@ yashiki rule-add --subrole AXUnknown ignore
 ## Implementation Status
 
 ### Core Modules
-- **macos/** - Platform bindings: accessibility.rs (AXUIElement), display.rs (CGWindowList, NSScreen), observer.rs (AXObserver), workspace.rs (NSWorkspace), hotkey.rs (CGEventTap)
+- **macos/** - Platform bindings: accessibility.rs (AXUIElement), display.rs (CGWindowList, NSScreen), observer.rs (AXObserver), workspace.rs (NSWorkspace), hotkey.rs (CGEventTap), mouse_tracker.rs (auto-raise)
 - **core/** - State management: state/mod.rs, window.rs, display.rs, tag.rs, config.rs, rules_engine.rs
 - **ipc/** - server.rs, client.rs, event_server.rs
 - **app.rs** - Main event loop (CFRunLoop), effect pattern
@@ -308,6 +312,21 @@ Each group sorted alphabetically, blank lines between groups.
 
 ### Cursor Warp
 Three modes: Disabled (default), OnOutputChange, OnFocusChange. Uses `CGWarpMouseCursorPosition`.
+
+### Auto-Raise (Focus Follows Mouse)
+Two modes: Disabled (default), Enabled. Uses `CGEventTap` to monitor `MouseMoved` events.
+- Optional delay (in ms) before raising window - useful when moving cursor across windows
+- Integrates with FocusIntent to suppress spurious macOS focus changes (Firefox multi-window fix)
+- CGEventTap only runs when enabled (no overhead when disabled)
+- Throttled to 5px movement threshold to reduce CPU usage
+
+**Known limitations:**
+- Overlapping floating windows: `find_window_at_point()` doesn't consider z-order. Will be addressed when implementing "floating windows always on top" feature.
+
+**Related code:**
+- `macos/mouse_tracker.rs`: MouseTracker using CGEventTap
+- `core/state/mod.rs`: `AutoRaiseState`, `find_window_at_point()`
+- `app.rs`: `mouse_source_callback` for processing mouse events
 
 ### Window Rules
 - Default tag: new windows inherit display's `visible_tags`
