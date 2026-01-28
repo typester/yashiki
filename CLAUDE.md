@@ -449,6 +449,47 @@ Since yashiki is a tiling WM:
 - `app/sync_helper.rs`: `sync_and_process_new_windows()`, `sync_focused_and_process()`, `process_new_windows()`
 - `core/state/display.rs`: `handle_display_change()` returns `DisplayChangeResult` with `new_window_ids`
 
+### Focus Intent (Multi-Window App Focus Protection)
+
+When yashiki focuses a window, macOS may redirect focus to a different window of the same app.
+This commonly happens with multi-window apps like Firefox across multiple displays.
+
+**Problem scenario:**
+1. output2 has Firefox window A (tag 2, visible)
+2. output3 has Firefox window B (tag 2, visible after tag switch)
+3. yashiki focuses window B via `focus_visible_window_if_needed()`
+4. macOS activates Firefox and decides to focus window A instead
+5. Focus unexpectedly jumps to output2
+
+**FocusIntent mechanism:**
+- `set_focus_intent(window_id, pid)` records the intended focus target with timestamp
+- `check_spurious_focus_change()` detects and suppresses unwanted focus changes
+- 200ms suppression window (short enough to not block intentional user clicks)
+
+**Suppression rules:**
+
+1. **Focus change suppression**: Within the suppression window, any focus change to a **different window of the same app** is considered spurious and refocused to the intended window.
+
+2. **Re-hide suppression**: Within the suppression window, hidden windows of the same app are not re-hidden when macOS moves them. This prevents focus operations from triggering unnecessary window movements.
+
+**Design principles:**
+- Single source of truth: `FocusIntent` lives in `State`
+- Unified call sites: `set_focus_intent()` called in `Effect::FocusWindow` and `focus_visible_window_if_needed()`
+- Conservative approach: Only suppress same-PID focus changes to avoid interfering with cross-app focus
+
+**Trade-off:**
+If user clicks a different window of the same app within 200ms of a yashiki focus command, that click will be suppressed. This is acceptable because:
+1. 200ms is very short
+2. This scenario is rare in practice
+3. The alternative (focus jumping between displays) is much worse UX
+
+**Related code:**
+- `core/state/mod.rs`: `FocusIntent`, `set_focus_intent()`, `should_suppress_rehide()`, `check_spurious_focus_change()`
+- `core/state/sync.rs`: `detect_rehide_moves()` - uses `should_suppress_rehide()` to skip re-hide
+- `app/effects.rs`: `Effect::FocusWindow` - calls `set_focus_intent()`
+- `app/focus.rs`: `focus_visible_window_if_needed()` - calls `set_focus_intent()`
+- `app.rs`: `observer_source_callback` - calls `check_spurious_focus_change()`
+
 ## Testing
 
 Run: `cargo test --all`

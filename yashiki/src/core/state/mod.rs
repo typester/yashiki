@@ -74,6 +74,39 @@ pub struct TrackedProcess {
     pub _command: String,
 }
 
+/// Tracks intentional focus operations to suppress spurious macOS focus changes.
+/// When we intentionally focus a window, macOS may trigger unwanted focus changes
+/// to other windows of the same app. This struct helps detect and suppress those.
+#[derive(Debug, Clone)]
+pub struct FocusIntent {
+    pub window_id: WindowId,
+    pub pid: i32,
+    pub timestamp: Instant,
+}
+
+impl FocusIntent {
+    /// Duration to suppress re-hide and external focus changes for the same app
+    pub const SUPPRESSION_DURATION_MS: u128 = 200;
+
+    pub fn new(window_id: WindowId, pid: i32) -> Self {
+        Self {
+            window_id,
+            pid,
+            timestamp: Instant::now(),
+        }
+    }
+
+    /// Check if this intent is still active (within suppression window)
+    pub fn is_active(&self) -> bool {
+        self.timestamp.elapsed().as_millis() < Self::SUPPRESSION_DURATION_MS
+    }
+
+    /// Check if a given pid matches this intent and is still active
+    pub fn should_suppress_for_pid(&self, pid: i32) -> bool {
+        self.pid == pid && self.is_active()
+    }
+}
+
 pub struct State {
     pub windows: HashMap<WindowId, Window>,
     pub displays: HashMap<DisplayId, Display>,
@@ -89,6 +122,8 @@ pub struct State {
     pub ignored_windows: HashMap<WindowId, IgnoredWindowInfo>,
     /// Saved visible_tags for disconnected displays, restored on reconnection.
     pub saved_display_tags: HashMap<DisplayId, Tag>,
+    /// Tracks the last intentional focus operation to suppress spurious macOS focus changes.
+    pub focus_intent: Option<FocusIntent>,
 }
 
 impl State {
@@ -106,6 +141,7 @@ impl State {
             config: Config::new(),
             ignored_windows: HashMap::new(),
             saved_display_tags: HashMap::new(),
+            focus_intent: None,
         }
     }
 
@@ -190,6 +226,53 @@ impl State {
 
     pub fn has_windows_for_pid(&self, pid: i32) -> bool {
         self.windows.values().any(|w| w.pid == pid)
+    }
+
+    /// Set the focus intent when intentionally focusing a window.
+    /// This helps suppress spurious macOS focus changes to other windows of the same app.
+    pub fn set_focus_intent(&mut self, window_id: WindowId, pid: i32) {
+        self.focus_intent = Some(FocusIntent::new(window_id, pid));
+    }
+
+    /// Check if re-hide should be suppressed for a window of the given pid.
+    /// Returns true if we recently focused a window of this app.
+    pub fn should_suppress_rehide(&self, pid: i32) -> bool {
+        self.focus_intent
+            .as_ref()
+            .map(|intent| intent.should_suppress_for_pid(pid))
+            .unwrap_or(false)
+    }
+
+    /// Check if an external focus change should be suppressed.
+    /// Returns the intended window_id to refocus if suppression is needed.
+    ///
+    /// Suppresses focus change when:
+    /// - FocusIntent is active (within 200ms)
+    /// - New focused window is same PID as intended
+    /// - New focused window is NOT the intended window
+    pub fn check_spurious_focus_change(&self, new_focused_id: WindowId) -> Option<WindowId> {
+        let intent = self.focus_intent.as_ref()?;
+        if !intent.is_active() {
+            return None;
+        }
+
+        // Different app - not spurious
+        let new_window = self.windows.get(&new_focused_id)?;
+        if new_window.pid != intent.pid {
+            return None;
+        }
+
+        // Same app but different window - suppress
+        if new_focused_id != intent.window_id {
+            tracing::debug!(
+                "Detected spurious focus change: {} (intended: {})",
+                new_focused_id,
+                intent.window_id
+            );
+            return Some(intent.window_id);
+        }
+
+        None
     }
 
     /// Remove all windows belonging to a terminated process.

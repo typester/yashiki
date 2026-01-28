@@ -1,7 +1,9 @@
 use core_graphics::geometry::{CGPoint, CGSize};
 
 use crate::core::{Rect, WindowMove};
-use crate::macos::{activate_application, AXUIElement, DisplayId, DisplayInfo, WindowInfo};
+use crate::macos::{
+    activate_application, get_frontmost_app_pid, AXUIElement, DisplayId, DisplayInfo, WindowInfo,
+};
 use yashiki_ipc::{ButtonInfo, ExtendedWindowAttributes, WindowGeometry};
 
 pub struct FocusedWindowInfo {
@@ -298,8 +300,6 @@ impl WindowManipulator for MacOSWindowManipulator {
     }
 
     fn focus_window(&self, window_id: u32, pid: i32) {
-        activate_application(pid);
-
         let app = AXUIElement::application(pid);
         let ax_windows = match app.windows() {
             Ok(w) => w,
@@ -309,13 +309,30 @@ impl WindowManipulator for MacOSWindowManipulator {
             }
         };
 
+        // Check if this app is already frontmost - if so, skip activate to avoid
+        // macOS re-evaluating which window should be focused
+        let is_frontmost = get_frontmost_app_pid() == Some(pid);
+
         for ax_win in &ax_windows {
             if let Some(wid) = ax_win.window_id() {
                 if wid == window_id {
-                    if let Err(e) = ax_win.raise() {
-                        tracing::warn!("Failed to raise window {}: {}", window_id, e);
+                    // Set as main window first (tells macOS which window to focus)
+                    match ax_win.set_main(true) {
+                        Ok(()) => tracing::debug!("Set main window {} (pid {})", window_id, pid),
+                        Err(e) => tracing::warn!("Failed to set main window {}: {}", window_id, e),
+                    }
+                    // Raise window
+                    match ax_win.raise() {
+                        Ok(()) => tracing::debug!("Raised window {} (pid {})", window_id, pid),
+                        Err(e) => tracing::warn!("Failed to raise window {}: {}", window_id, e),
+                    }
+                    // Only activate application if it's not already frontmost
+                    // This prevents macOS from re-evaluating which window to focus
+                    if !is_frontmost {
+                        activate_application(pid);
+                        tracing::debug!("Activated application pid {}", pid);
                     } else {
-                        tracing::debug!("Raised window {} (pid {})", window_id, pid);
+                        tracing::debug!("Skipped activate for pid {} (already frontmost)", pid);
                     }
                     return;
                 }

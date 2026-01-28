@@ -97,6 +97,7 @@ mod attr {
     pub const POSITION: &str = "AXPosition";
     pub const SIZE: &str = "AXSize";
     pub const MINIMIZED: &str = "AXMinimized";
+    pub const MAIN: &str = "AXMain";
     pub const CLOSE_BUTTON: &str = "AXCloseButton";
     pub const SUBROLE: &str = "AXSubrole";
     pub const IDENTIFIER: &str = "AXIdentifier";
@@ -280,6 +281,15 @@ impl AXUIElement {
             CFBoolean::false_value()
         };
         self.set_attribute(attr::MINIMIZED, value.as_CFTypeRef())
+    }
+
+    pub fn set_main(&self, value: bool) -> Result<(), AXError> {
+        let cf_value = if value {
+            CFBoolean::true_value()
+        } else {
+            CFBoolean::false_value()
+        };
+        self.set_attribute(attr::MAIN, cf_value.as_CFTypeRef())
     }
 
     pub fn windows(&self) -> Result<Vec<AXUIElement>, AXError> {

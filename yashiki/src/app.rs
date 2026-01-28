@@ -698,6 +698,35 @@ impl App {
                 // On external focus change, notify layout engine and switch tag if focused window is hidden
                 if is_focus_event {
                     let focused_id = ctx.state.borrow().focused;
+
+                    // Check if this is a spurious focus change caused by macOS
+                    // (focus jumped to hidden window of same app we just focused)
+                    if let Some(focused_id) = focused_id {
+                        // Get intended_id and pid before mutable borrow
+                        let refocus_info = ctx
+                            .state
+                            .borrow()
+                            .check_spurious_focus_change(focused_id)
+                            .and_then(|intended_id| {
+                                ctx.state
+                                    .borrow()
+                                    .windows
+                                    .get(&intended_id)
+                                    .map(|w| (intended_id, w.pid))
+                            });
+
+                        if let Some((intended_id, pid)) = refocus_info {
+                            tracing::info!(
+                                "Suppressing spurious focus change, refocusing window {}",
+                                intended_id
+                            );
+                            ctx.window_manipulator.focus_window(intended_id, pid);
+                            ctx.state.borrow_mut().set_focused(Some(intended_id));
+                            // Skip further focus handling - don't switch tags
+                            continue;
+                        }
+                    }
+
                     // Emit focus change event
                     ctx.event_emitter.emit_window_focused(focused_id);
 

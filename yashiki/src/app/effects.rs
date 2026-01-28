@@ -26,6 +26,9 @@ pub fn execute_effects<M: WindowManipulator>(
                 pid,
                 is_output_change,
             } => {
+                // Set focus intent BEFORE focusing to suppress spurious macOS focus changes
+                state.borrow_mut().set_focus_intent(window_id, pid);
+
                 manipulator.focus_window(window_id, pid);
 
                 // Update state.focused immediately after focusing

@@ -121,6 +121,11 @@ fn detect_rehide_moves(
     let mut rehide_moves = Vec::new();
 
     for window in state.windows.values() {
+        // Skip re-hide for windows of the app we just focused (prevents focus jumping)
+        if state.should_suppress_rehide(window.pid) {
+            continue;
+        }
+
         if let Some(info) = window_infos.iter().find(|i| i.window_id == window.id) {
             let (hide_x, hide_y) = compute_hide_position_for_display(
                 state,
@@ -454,14 +459,16 @@ pub fn sync_pid<W: WindowSystem>(
                 .unwrap_or_else(|| info.name.clone().unwrap_or_default());
             let new_frame = Rect::from_bounds(&info.bounds);
 
-            // Compute hide position before mutable borrow
-            let hide_pos = state.windows.get(id).map(|w| {
-                compute_hide_position_for_display(
+            // Compute hide position and suppress_rehide check before mutable borrow
+            let (hide_pos, suppress_rehide) = state.windows.get(id).map_or((None, false), |w| {
+                let hide = compute_hide_position_for_display(
                     state,
                     w.display_id,
                     w.frame.width,
                     w.frame.height,
-                )
+                );
+                let suppress = state.should_suppress_rehide(w.pid);
+                (Some(hide), suppress)
             });
 
             if let Some(window) = state.windows.get_mut(id) {
@@ -485,10 +492,20 @@ pub fn sync_pid<W: WindowSystem>(
                     window.title = new_title;
 
                     if let Some((hide_x, hide_y)) = hide_pos {
-                        if let Some(mv) =
-                            check_window_rehide(window, new_frame.x, new_frame.y, hide_x, hide_y)
-                        {
-                            rehide_moves.push(mv);
+                        // Skip re-hide for windows of the app we just focused (prevents focus jumping)
+                        if !suppress_rehide {
+                            if let Some(mv) = check_window_rehide(
+                                window,
+                                new_frame.x,
+                                new_frame.y,
+                                hide_x,
+                                hide_y,
+                            ) {
+                                rehide_moves.push(mv);
+                            } else if !window.is_hidden() {
+                                window.frame = new_frame;
+                                // Don't update display_id based on position - let orphan handling manage it
+                            }
                         } else if !window.is_hidden() {
                             window.frame = new_frame;
                             // Don't update display_id based on position - let orphan handling manage it

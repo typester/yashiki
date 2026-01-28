@@ -56,6 +56,10 @@ pub fn focus_visible_window_if_needed<M: WindowManipulator>(
 
     if let Some((window_id, pid, (cx, cy))) = window_to_focus {
         tracing::info!("Focusing visible window {} after tag switch", window_id);
+
+        // Set focus intent BEFORE focusing to suppress spurious macOS focus changes
+        state.borrow_mut().set_focus_intent(window_id, pid);
+
         manipulator.focus_window(window_id, pid);
 
         // Update internal state immediately after focusing
