@@ -230,6 +230,7 @@ impl App {
                     &ctx.window_system,
                     &ctx.window_manipulator,
                     &ctx.event_emitter,
+                    &ctx.observer_manager,
                 );
                 let _ = resp_tx.blocking_send(response);
 
@@ -332,6 +333,7 @@ impl App {
                     &ctx.window_system,
                     &ctx.window_manipulator,
                     &ctx.event_emitter,
+                    &ctx.observer_manager,
                 );
             }
         }

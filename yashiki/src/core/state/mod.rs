@@ -411,6 +411,14 @@ impl State {
         sync_pid(self, ws, pid)
     }
 
+    pub fn sync_windows_for_display<W: WindowSystem>(
+        &mut self,
+        ws: &W,
+        display_id: DisplayId,
+    ) -> (bool, Vec<WindowId>, Vec<WindowMove>) {
+        sync_windows_for_display(self, ws, display_id)
+    }
+
     pub fn handle_event<W: WindowSystem>(
         &mut self,
         ws: &W,
