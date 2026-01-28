@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.10.0...yashiki-ipc-v0.10.1) - 2026-01-28
+
+### Added
+
+- add auto-raise (focus follows mouse) feature ([#109](https://github.com/typester/yashiki/pull/109))
+
 ## [0.9.1](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.9.0...yashiki-ipc-v0.9.1) - 2026-01-23
 
 ### Added
