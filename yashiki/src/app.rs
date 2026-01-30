@@ -377,6 +377,8 @@ impl App {
             use std::time::Instant;
             use yashiki_ipc::AutoRaiseMode;
 
+            use crate::core::WindowAtPoint;
+
             // Process all pending mouse events
             while let Ok(pos) = ctx.mouse_event_rx.try_recv() {
                 // Check if auto-raise is enabled
@@ -387,8 +389,14 @@ impl App {
 
                 let delay_ms = ctx.state.borrow().config.auto_raise_delay_ms;
 
-                // Find window at cursor position
-                let window_info = ctx.state.borrow().find_window_at_point(pos.x, pos.y);
+                // Find topmost window at cursor position (managed or ignored)
+                let window_at_point = ctx.state.borrow().find_window_at_point(pos.x, pos.y);
+
+                // Extract window_id and pid from WindowAtPoint (both variants handled the same)
+                let window_info = window_at_point.map(|w| match w {
+                    WindowAtPoint::Managed { window_id, pid } => (window_id, pid),
+                    WindowAtPoint::Ignored { window_id, pid } => (window_id, pid),
+                });
 
                 match window_info {
                     Some((window_id, pid)) => {

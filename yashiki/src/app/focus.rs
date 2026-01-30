@@ -41,11 +41,11 @@ pub fn focus_visible_window_if_needed<M: WindowManipulator>(
             return;
         }
 
-        // Focus the first visible window (prefer tiled, then fullscreen, then floating)
+        // Focus the first visible window (prefer fullscreen, then tiled, then floating)
         let window = all_visible
             .iter()
-            .find(|w| w.is_tiled())
-            .or_else(|| all_visible.iter().find(|w| w.is_fullscreen))
+            .find(|w| w.is_fullscreen)
+            .or_else(|| all_visible.iter().find(|w| w.is_tiled()))
             .or_else(|| all_visible.first());
 
         match window {

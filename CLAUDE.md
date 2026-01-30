@@ -373,6 +373,9 @@ The `should_remove_window` helper in `core/state/sync.rs` encapsulates both chec
 - Process-level: Handles apps on different macOS Spaces (entire process inaccessible)
 - Window-level: Handles transitioning windows (process accessible, specific window temporarily invisible to CGWindowList but still in AX)
 
+**Non-normal layer windows (`level != 0`):**
+System dialogs (File Picker, etc.) are not included in `AXWindows` attribute, so `window_exists_in_ax` check is skipped for these windows. They are removed only when they disappear from CGWindowList.
+
 **Related code:**
 - `platform.rs`: `WindowSystem::window_exists_in_ax()` trait method
 - `core/state/sync.rs`: `should_remove_window()`, `sync_pid()`, `sync_with_window_infos()`

@@ -17,6 +17,24 @@ use super::rules::{has_matching_non_ignore_rule, should_ignore_window_extended};
 /// while the original managed window temporarily disappears.
 const TRANSITION_GRACE_PERIOD: Duration = Duration::from_secs(2);
 
+/// Update the z-order cache from window_infos.
+/// Includes both managed and ignored windows, preserving front-to-back order.
+fn update_z_order_cache(state: &mut State, window_infos: &[crate::macos::WindowInfo]) {
+    state.window_z_order = window_infos
+        .iter()
+        .filter_map(|info| {
+            // Include both managed and ignored windows
+            if state.windows.contains_key(&info.window_id)
+                || state.ignored_windows.contains_key(&info.window_id)
+            {
+                Some(info.window_id)
+            } else {
+                None
+            }
+        })
+        .collect();
+}
+
 /// Get PIDs that have ignored windows added within the grace period.
 /// These PIDs are considered to be in a transition state (e.g., Firefox fullscreen).
 fn pids_with_recent_ignored_windows(state: &State) -> HashSet<i32> {
@@ -33,16 +51,27 @@ fn pids_with_recent_ignored_windows(state: &State) -> HashSet<i32> {
 /// Returns true if:
 /// - Process is accessible via AX API (window is not on different Space)
 /// - Window does NOT exist in AX API (window is truly gone, not transitioning)
+///
+/// For non-normal layer windows (level != 0), the AX check is skipped because
+/// system dialogs (File Picker, etc.) are not included in AXWindows attribute.
 fn should_remove_window<W: WindowSystem>(
     ws: &W,
     window_id: WindowId,
     pid: i32,
     ax_accessible: bool,
+    window_level: i32,
 ) -> bool {
     // Process-level check: don't remove if entire process is AX inaccessible
     if !ax_accessible {
         return false;
     }
+
+    // Non-normal layer windows are not included in AXWindows attribute,
+    // so skip the AX check - remove when they disappear from CGWindowList
+    if window_level != 0 {
+        return true;
+    }
+
     // Window-level check: don't remove if window exists in AX API (transitioning)
     if ws.window_exists_in_ax(window_id, pid) {
         tracing::info!(
@@ -72,6 +101,7 @@ fn should_remove_window_if_not_transitioning<W: WindowSystem>(
     pid: i32,
     ax_accessible: bool,
     pids_with_new_windows: &HashSet<i32>,
+    window_level: i32,
 ) -> bool {
     if pids_with_new_windows.contains(&pid) {
         tracing::debug!(
@@ -81,7 +111,7 @@ fn should_remove_window_if_not_transitioning<W: WindowSystem>(
         );
         return false;
     }
-    should_remove_window(ws, window_id, pid, ax_accessible)
+    should_remove_window(ws, window_id, pid, ax_accessible, window_level)
 }
 
 /// Check if a hidden window needs to be re-hidden (returns Some if moved from hide position)
@@ -211,10 +241,11 @@ pub fn sync_focused_window_with_hint<W: WindowSystem>(
     if let Some(focused_info) = ws.get_focused_window() {
         let window_id = focused_info.window_id;
 
-        // Window exists - just update focus
+        // Window exists - just update focus and z-order
         if let Some(window) = state.windows.get(&window_id) {
             let display_id = window.display_id;
             state.set_focused(Some(window_id));
+            state.move_to_front_in_z_order(window_id);
             if state.focused_display != display_id {
                 tracing::info!(
                     "Focused display changed: {} -> {}",
@@ -327,12 +358,14 @@ pub fn sync_pid<W: WindowSystem>(
 
     // Remove managed windows that are no longer on screen
     for id in current_ids.difference(&on_screen_ids) {
+        let window_level = state.windows.get(id).map(|w| w.window_level).unwrap_or(0);
         if !should_remove_window_if_not_transitioning(
             ws,
             *id,
             pid,
             ax_accessible,
             &pids_with_new_windows,
+            window_level,
         ) {
             continue;
         }
@@ -352,19 +385,25 @@ pub fn sync_pid<W: WindowSystem>(
     }
 
     // Remove ignored windows that are no longer on screen
-    let ignored_to_check: Vec<WindowId> = current_ignored_ids
+    let ignored_to_check: Vec<(WindowId, i32)> = current_ignored_ids
         .iter()
         .filter(|id| !on_screen_ids.contains(id))
-        .copied()
+        .filter_map(|id| {
+            state
+                .ignored_windows
+                .get(id)
+                .map(|info| (*id, info.window_level))
+        })
         .collect();
 
-    for id in ignored_to_check {
+    for (id, window_level) in ignored_to_check {
         if !should_remove_window_if_not_transitioning(
             ws,
             id,
             pid,
             ax_accessible,
             &pids_with_new_windows,
+            window_level,
         ) {
             continue;
         }
@@ -401,8 +440,13 @@ pub fn sync_pid<W: WindowSystem>(
                     added_window_ids.push(id);
                     changed = true;
                 }
-                Some(Err(_)) => {
-                    // Still ignored, nothing to do
+                Some(Err(new_info)) => {
+                    // Still ignored - update frame, display_id, and window_level for auto-raise hit testing
+                    if let Some(ignored_info) = state.ignored_windows.get_mut(&id) {
+                        ignored_info.frame = new_info.frame;
+                        ignored_info.display_id = new_info.display_id;
+                        ignored_info.window_level = new_info.window_level;
+                    }
                 }
                 None => {
                     // No longer tracked at all (e.g., became non-normal layer without rule)
@@ -519,6 +563,9 @@ pub fn sync_pid<W: WindowSystem>(
         }
     }
 
+    // Update z-order cache (use full window_infos, not just pid_window_infos)
+    update_z_order_cache(state, &window_infos);
+
     (changed, added_window_ids, rehide_moves)
 }
 
@@ -615,6 +662,9 @@ pub fn try_create_window<W: WindowSystem>(
         return Some(Err(IgnoredWindowInfo {
             pid: info.pid,
             added_at: Instant::now(),
+            frame: Rect::from_bounds(&info.bounds),
+            display_id,
+            window_level: ext.window_level,
         }));
     }
 
@@ -697,6 +747,7 @@ pub fn sync_with_window_infos<W: WindowSystem>(
                 window.pid,
                 ax_accessible,
                 &pids_with_new_windows,
+                window.window_level,
             ) {
                 continue;
             }
@@ -713,12 +764,17 @@ pub fn sync_with_window_infos<W: WindowSystem>(
     }
 
     // Remove ignored windows that are no longer on screen
-    let ignored_to_check: Vec<(WindowId, i32)> = current_ignored_ids
+    let ignored_to_check: Vec<(WindowId, i32, i32)> = current_ignored_ids
         .difference(&on_screen_ids)
-        .filter_map(|id| state.ignored_windows.get(id).map(|info| (*id, info.pid)))
+        .filter_map(|id| {
+            state
+                .ignored_windows
+                .get(id)
+                .map(|info| (*id, info.pid, info.window_level))
+        })
         .collect();
 
-    for (id, pid) in ignored_to_check {
+    for (id, pid, window_level) in ignored_to_check {
         let ax_accessible = !inaccessible_pids.contains(&pid);
         if !should_remove_window_if_not_transitioning(
             ws,
@@ -726,6 +782,7 @@ pub fn sync_with_window_infos<W: WindowSystem>(
             pid,
             ax_accessible,
             &pids_with_new_windows,
+            window_level,
         ) {
             continue;
         }
@@ -759,8 +816,13 @@ pub fn sync_with_window_infos<W: WindowSystem>(
                     added_window_ids.push(window.id);
                     state.windows.insert(window.id, window);
                 }
-                Some(Err(_)) => {
-                    // Still ignored
+                Some(Err(new_info)) => {
+                    // Still ignored - update frame, display_id, and window_level for auto-raise hit testing
+                    if let Some(ignored_info) = state.ignored_windows.get_mut(&id) {
+                        ignored_info.frame = new_info.frame;
+                        ignored_info.display_id = new_info.display_id;
+                        ignored_info.window_level = new_info.window_level;
+                    }
                 }
                 None => {
                     // No longer tracked at all
@@ -810,6 +872,9 @@ pub fn sync_with_window_infos<W: WindowSystem>(
             }
         }
     }
+
+    // Update z-order cache
+    update_z_order_cache(state, window_infos);
 
     (detect_rehide_moves(state, window_infos), added_window_ids)
 }

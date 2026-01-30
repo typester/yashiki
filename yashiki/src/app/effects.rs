@@ -33,8 +33,13 @@ pub fn execute_effects<M: WindowManipulator>(
 
                 // Update state.focused immediately after focusing
                 // This ensures consecutive focus commands work correctly
-                // even if accessibility events are delayed or missing
-                state.borrow_mut().set_focused(Some(window_id));
+                // even if accessibility events are delayed or missing.
+                // Also update z-order cache to reflect the new front window.
+                {
+                    let mut s = state.borrow_mut();
+                    s.set_focused(Some(window_id));
+                    s.move_to_front_in_z_order(window_id);
+                }
 
                 // Warp cursor based on cursor_warp mode
                 let cursor_warp_mode = state.borrow().config.cursor_warp;

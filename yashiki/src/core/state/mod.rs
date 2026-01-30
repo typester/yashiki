@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use super::{Config, Display, RulesEngine, Tag, Window, WindowId};
+use super::{Config, Display, Rect, RulesEngine, Tag, Window, WindowId};
 use crate::effect::Effect;
 use crate::event::Event;
 use crate::macos::DisplayId;
@@ -17,6 +17,20 @@ pub struct IgnoredWindowInfo {
     /// When this window was added to the ignored list.
     /// Used to protect managed windows during app transitions (e.g., native fullscreen).
     pub added_at: Instant,
+    /// Window frame from CGWindowList, used for auto-raise hit testing.
+    pub frame: Rect,
+    /// Display ID where this window is located, used for hit-test optimization.
+    pub display_id: DisplayId,
+    /// Window layer level. Non-zero level windows (system dialogs, etc.) are not included
+    /// in AXWindows attribute, so window_exists_in_ax check is skipped for them.
+    pub window_level: i32,
+}
+
+/// Result of find_window_at_point, indicating whether the window is managed or ignored.
+#[derive(Debug, Clone, Copy)]
+pub enum WindowAtPoint {
+    Managed { window_id: WindowId, pid: i32 },
+    Ignored { window_id: WindowId, pid: i32 },
 }
 
 mod display;
@@ -134,6 +148,9 @@ pub struct State {
     pub focus_intent: Option<FocusIntent>,
     /// State for auto-raise (focus follows mouse) feature.
     pub auto_raise_state: AutoRaiseState,
+    /// Cached window z-order from CGWindowList (front-to-back).
+    /// Updated on every sync operation. Contains both managed and ignored window IDs.
+    pub window_z_order: Vec<WindowId>,
 }
 
 impl State {
@@ -153,6 +170,7 @@ impl State {
             saved_display_tags: HashMap::new(),
             focus_intent: None,
             auto_raise_state: AutoRaiseState::default(),
+            window_z_order: Vec::new(),
         }
     }
 
@@ -240,33 +258,66 @@ impl State {
     }
 
     /// Find the topmost visible window at the given screen coordinates.
-    /// Returns (window_id, pid) if a window is found.
-    pub fn find_window_at_point(&self, x: i32, y: i32) -> Option<(WindowId, i32)> {
+    /// Uses cached z-order (front-to-back) to return the window that is visually on top.
+    /// Returns WindowAtPoint indicating whether the window is managed or ignored.
+    pub fn find_window_at_point(&self, x: i32, y: i32) -> Option<WindowAtPoint> {
         // Find the display containing this point
         let display = self.displays.values().find(|d| {
             let f = &d.frame;
             x >= f.x && x < f.x + f.width as i32 && y >= f.y && y < f.y + f.height as i32
         })?;
 
-        // Find visible windows on this display that contain the point
-        self.windows
-            .values()
-            .filter(|w| {
-                w.display_id == display.id
-                    && w.tags.intersects(display.visible_tags)
-                    && !w.is_hidden()
-            })
-            .find(|w| {
-                let f = &w.frame;
-                x >= f.x && x < f.x + f.width as i32 && y >= f.y && y < f.y + f.height as i32
-            })
-            .map(|w| (w.id, w.pid))
+        // Iterate in z-order (front-to-back) to find topmost window at point
+        for &window_id in &self.window_z_order {
+            // Check if it's a managed window
+            if let Some(window) = self.windows.get(&window_id) {
+                if window.display_id == display.id
+                    && window.tags.intersects(display.visible_tags)
+                    && !window.is_hidden()
+                {
+                    let f = &window.frame;
+                    if x >= f.x && x < f.x + f.width as i32 && y >= f.y && y < f.y + f.height as i32
+                    {
+                        return Some(WindowAtPoint::Managed {
+                            window_id: window.id,
+                            pid: window.pid,
+                        });
+                    }
+                }
+                continue;
+            }
+
+            // Check if it's an ignored window
+            if let Some(info) = self.ignored_windows.get(&window_id) {
+                if info.display_id == display.id {
+                    let f = &info.frame;
+                    if x >= f.x && x < f.x + f.width as i32 && y >= f.y && y < f.y + f.height as i32
+                    {
+                        return Some(WindowAtPoint::Ignored {
+                            window_id,
+                            pid: info.pid,
+                        });
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Set the focus intent when intentionally focusing a window.
     /// This helps suppress spurious macOS focus changes to other windows of the same app.
     pub fn set_focus_intent(&mut self, window_id: WindowId, pid: i32) {
         self.focus_intent = Some(FocusIntent::new(window_id, pid));
+    }
+
+    /// Move a window to the front of the z-order cache.
+    /// Called when yashiki intentionally focuses a window, to keep cache in sync with actual z-order.
+    pub fn move_to_front_in_z_order(&mut self, window_id: WindowId) {
+        if let Some(pos) = self.window_z_order.iter().position(|&id| id == window_id) {
+            self.window_z_order.remove(pos);
+            self.window_z_order.insert(0, window_id);
+        }
     }
 
     /// Check if re-hide should be suppressed for a window of the given pid.
