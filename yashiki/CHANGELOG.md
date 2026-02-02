@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3](https://github.com/typester/yashiki/compare/yashiki-v0.10.2...yashiki-v0.10.3) - 2026-02-02
+
+### Fixed
+
+- skip AX check for non-normal layer windows in removal logic ([#116](https://github.com/typester/yashiki/pull/116))
+
 ## [0.10.2](https://github.com/typester/yashiki/compare/yashiki-v0.10.1...yashiki-v0.10.2) - 2026-01-28
 
 ### Other
