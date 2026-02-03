@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.4](https://github.com/typester/yashiki/compare/yashiki-v0.10.3...yashiki-v0.10.4) - 2026-02-03
+
+### Other
+
+- Refactor attribute handling to centralize CFString runtime checks in … ([#114](https://github.com/typester/yashiki/pull/114))
+
 ## [0.10.3](https://github.com/typester/yashiki/compare/yashiki-v0.10.2...yashiki-v0.10.3) - 2026-02-02
 
 ### Fixed
