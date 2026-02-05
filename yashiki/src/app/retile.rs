@@ -37,32 +37,66 @@ fn retile_single_display<M: WindowManipulator>(
     display_id: DisplayId,
 ) {
     // First, handle any fullscreen windows on this display
-    {
+    let fullscreen_data = {
         let state = state.borrow();
         let outer_gap = state.config.outer_gap;
-        if let Some(display) = state.displays.get(&display_id) {
-            let fullscreen_windows: Vec<_> = state
-                .windows
-                .values()
-                .filter(|w| {
-                    w.display_id == display_id
-                        && w.is_fullscreen
-                        && w.tags.intersects(display.visible_tags)
-                        && !w.is_hidden()
-                })
-                .map(|w| (w.id, w.pid))
-                .collect();
+        let Some(display) = state.displays.get(&display_id) else {
+            return;
+        };
+        let fullscreen_windows: Vec<_> = state
+            .windows
+            .values()
+            .filter(|w| {
+                w.display_id == display_id
+                    && w.is_fullscreen
+                    && w.tags.intersects(display.visible_tags)
+                    && !w.is_hidden()
+            })
+            .map(|w| (w.id, w.pid))
+            .collect();
 
-            // Apply fullscreen with outer gap
-            for (window_id, pid) in fullscreen_windows {
-                manipulator.set_window_frame(
-                    window_id,
-                    pid,
-                    display.frame.x + outer_gap.left as i32,
-                    display.frame.y + outer_gap.top as i32,
-                    display.frame.width.saturating_sub(outer_gap.horizontal()),
-                    display.frame.height.saturating_sub(outer_gap.vertical()),
-                );
+        if fullscreen_windows.is_empty() {
+            None
+        } else {
+            let frame_x = display.frame.x + outer_gap.left as i32;
+            let frame_y = display.frame.y + outer_gap.top as i32;
+            let frame_width = display.frame.width.saturating_sub(outer_gap.horizontal());
+            let frame_height = display.frame.height.saturating_sub(outer_gap.vertical());
+            Some((
+                fullscreen_windows,
+                frame_x,
+                frame_y,
+                frame_width,
+                frame_height,
+            ))
+        }
+    };
+
+    if let Some((fullscreen_windows, frame_x, frame_y, frame_width, frame_height)) = fullscreen_data
+    {
+        // Apply fullscreen with outer gap
+        for (window_id, pid) in &fullscreen_windows {
+            manipulator.set_window_frame(
+                *window_id,
+                *pid,
+                frame_x,
+                frame_y,
+                frame_width,
+                frame_height,
+            );
+        }
+
+        // Update State window frames for fullscreen windows
+        let mut state_mut = state.borrow_mut();
+        for (window_id, _) in fullscreen_windows {
+            if let Some(window) = state_mut.windows.get_mut(&window_id) {
+                let frame = crate::core::Rect {
+                    x: frame_x,
+                    y: frame_y,
+                    width: frame_width,
+                    height: frame_height,
+                };
+                window.update_frame_if_visible(frame);
             }
         }
     }
@@ -114,6 +148,22 @@ fn retile_single_display<M: WindowManipulator>(
                 .collect();
             // Apply layout using manipulator
             manipulator.apply_layout(display_id, &display_frame, &adjusted_geometries);
+
+            // Update State window frames to match applied layout
+            {
+                let mut state = state.borrow_mut();
+                for geom in &adjusted_geometries {
+                    if let Some(window) = state.windows.get_mut(&geom.id) {
+                        let frame = crate::core::Rect {
+                            x: display_frame.x + geom.x,
+                            y: display_frame.y + geom.y,
+                            width: geom.width,
+                            height: geom.height,
+                        };
+                        window.update_frame_if_visible(frame);
+                    }
+                }
+            }
         }
         Err(e) => {
             tracing::error!("Layout request failed for display {}: {}", display_id, e);
