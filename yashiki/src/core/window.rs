@@ -72,6 +72,17 @@ impl Window {
         self.saved_frame.is_some()
     }
 
+    /// Updates the window frame if the window is visible (not hidden).
+    /// Hidden windows should keep their hide position.
+    /// Returns true if the frame was updated.
+    pub fn update_frame_if_visible(&mut self, frame: Rect) -> bool {
+        if self.is_hidden() {
+            return false;
+        }
+        self.frame = frame;
+        true
+    }
+
     /// Get extended window attributes for rule matching
     pub fn extended_attributes(&self) -> yashiki_ipc::ExtendedWindowAttributes {
         yashiki_ipc::ExtendedWindowAttributes {
