@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.5](https://github.com/typester/yashiki/compare/yashiki-v0.10.4...yashiki-v0.10.5) - 2026-02-05
+
+### Fixed
+
+- update window frame in State after retile ([#119](https://github.com/typester/yashiki/pull/119))
+
 ## [0.10.4](https://github.com/typester/yashiki/compare/yashiki-v0.10.3...yashiki-v0.10.4) - 2026-02-03
 
 ### Other
