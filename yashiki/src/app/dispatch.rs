@@ -52,7 +52,7 @@ fn get_tag_view_display(cmd: &Command, state: &State) -> Option<DisplayId> {
         Command::TagView { output, .. } | Command::TagToggle { output, .. } => {
             state.get_target_display(output.as_ref()).ok()
         }
-        Command::TagViewLast => Some(state.focused_display),
+        Command::TagViewLast => Some(state.effective_focused_display()),
         _ => None,
     }
 }

@@ -505,8 +505,11 @@ If user clicks a different window of the same app within 200ms of a yashiki focu
 2. This scenario is rare in practice
 3. The alternative (focus jumping between displays) is much worse UX
 
+**Command Display Resolution:**
+`effective_focused_display()` returns `focus_intent.display_id` during the cross-display suppression window (500ms), falling back to `focused_display`. Used by `get_target_display()`, `focus_output()`, `view_tags_last()`, and `get_tag_view_display()` to prevent spurious macOS focus redirects from misdirecting commands.
+
 **Related code:**
-- `core/state/mod.rs`: `FocusIntent`, `set_focus_intent()`, `should_suppress_rehide()`, `check_spurious_focus_change()`
+- `core/state/mod.rs`: `FocusIntent`, `set_focus_intent()`, `should_suppress_rehide()`, `check_spurious_focus_change()`, `effective_focused_display()`, `get_target_display()`
 - `core/state/sync.rs`: `detect_rehide_moves()` - uses `should_suppress_rehide()` to skip re-hide
 - `app/effects.rs`: `Effect::FocusWindow` - calls `set_focus_intent()`
 - `app/focus.rs`: `focus_visible_window_if_needed()` - calls `set_focus_intent()`
