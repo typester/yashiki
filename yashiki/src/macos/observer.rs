@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc as std_mpsc;
@@ -18,7 +18,8 @@ use crate::macos::accessibility::{
 use crate::macos::display::get_on_screen_windows;
 
 pub struct ObserverManager {
-    observers: HashMap<i32, AXObserver>,
+    observers: HashMap<i32, (AXObserver, *mut c_void)>,
+    incomplete_observers: HashSet<i32>,
     event_tx: std_mpsc::Sender<Event>,
     source_ptr: Arc<AtomicPtr<c_void>>,
 }
@@ -33,6 +34,7 @@ impl ObserverManager {
     pub fn new(event_tx: std_mpsc::Sender<Event>, source_ptr: Arc<AtomicPtr<c_void>>) -> Self {
         Self {
             observers: HashMap::new(),
+            incomplete_observers: HashSet::new(),
             event_tx,
             source_ptr,
         }
@@ -82,6 +84,7 @@ impl ObserverManager {
             notification::APPLICATION_SHOWN,
         ];
 
+        let mut has_failure = false;
         for notif in notifications {
             if let Err(e) = observer.add_notification(&app, notif, refcon) {
                 tracing::debug!(
@@ -90,6 +93,7 @@ impl ObserverManager {
                     pid,
                     e
                 );
+                has_failure = true;
             }
         }
 
@@ -97,20 +101,38 @@ impl ObserverManager {
         let source = observer.run_loop_source();
         run_loop.add_source(&source, unsafe { kCFRunLoopDefaultMode });
 
-        self.observers.insert(pid, observer);
-        tracing::debug!("Added observer for pid {}", pid);
+        self.observers.insert(pid, (observer, refcon));
+
+        if has_failure {
+            self.incomplete_observers.insert(pid);
+            tracing::debug!("Added observer for pid {} (incomplete)", pid);
+        } else {
+            self.incomplete_observers.remove(&pid);
+            tracing::debug!("Added observer for pid {}", pid);
+        }
 
         Ok(())
     }
 
     pub fn remove_observer(&mut self, pid: i32) {
-        if self.observers.remove(&pid).is_some() {
+        if let Some((_observer, refcon)) = self.observers.remove(&pid) {
+            unsafe { drop(Box::from_raw(refcon as *mut CallbackContext)) };
+            self.incomplete_observers.remove(&pid);
             tracing::debug!("Removed observer for pid {}", pid);
         }
     }
 
     pub fn has_observer(&self, pid: i32) -> bool {
         self.observers.contains_key(&pid)
+    }
+
+    pub fn has_incomplete_observer(&self, pid: i32) -> bool {
+        self.incomplete_observers.contains(&pid)
+    }
+
+    pub fn reregister_observer(&mut self, pid: i32) -> Result<(), i32> {
+        self.remove_observer(pid);
+        self.add_observer(pid)
     }
 }
 
