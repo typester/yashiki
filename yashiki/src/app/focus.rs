@@ -49,16 +49,21 @@ pub fn focus_visible_window_if_needed<M: WindowManipulator>(
             .or_else(|| all_visible.first());
 
         match window {
-            Some(w) => (Some((w.id, w.pid, w.center())), state.config.cursor_warp),
+            Some(w) => (
+                Some((w.id, w.pid, w.display_id, w.center())),
+                state.config.cursor_warp,
+            ),
             None => return,
         }
     };
 
-    if let Some((window_id, pid, (cx, cy))) = window_to_focus {
+    if let Some((window_id, pid, display_id, (cx, cy))) = window_to_focus {
         tracing::info!("Focusing visible window {} after tag switch", window_id);
 
         // Set focus intent BEFORE focusing to suppress spurious macOS focus changes
-        state.borrow_mut().set_focus_intent(window_id, pid);
+        state
+            .borrow_mut()
+            .set_focus_intent(window_id, pid, display_id);
 
         manipulator.focus_window(window_id, pid);
 
@@ -85,6 +90,20 @@ pub fn switch_tag_for_focused_window(state: &RefCell<State>) -> Option<Vec<Windo
             window.is_hidden(),
         )
     };
+
+    // Check for cross-display spurious focus redirect
+    // This happens when yashiki focuses a window on one display and macOS redirects
+    // focus to a different window of the same app on another display
+    if state
+        .borrow()
+        .should_suppress_cross_display_tag_switch(focused_id)
+    {
+        tracing::info!(
+            "Skipping tag switch for window {} - detected cross-display focus redirect",
+            focused_id
+        );
+        return None;
+    }
 
     // Check if window is visible on its display's current visible tags
     let is_visible = {

@@ -27,7 +27,12 @@ pub fn execute_effects<M: WindowManipulator>(
                 is_output_change,
             } => {
                 // Set focus intent BEFORE focusing to suppress spurious macOS focus changes
-                state.borrow_mut().set_focus_intent(window_id, pid);
+                let display_id = state.borrow().windows.get(&window_id).map(|w| w.display_id);
+                if let Some(display_id) = display_id {
+                    state
+                        .borrow_mut()
+                        .set_focus_intent(window_id, pid, display_id);
+                }
 
                 manipulator.focus_window(window_id, pid);
 
@@ -154,4 +159,45 @@ pub fn execute_effects<M: WindowManipulator>(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::mock::{
+        create_test_display, create_test_window, MockWindowManipulator, MockWindowSystem,
+    };
+
+    #[test]
+    fn test_focus_window_effect_sets_focus_intent() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        let state = RefCell::new(state);
+        let layout_engine_manager = RefCell::new(LayoutEngineManager::new());
+        let manipulator = MockWindowManipulator::new();
+
+        let effects = vec![Effect::FocusWindow {
+            window_id: 100,
+            pid: 1000,
+            is_output_change: false,
+        }];
+
+        // This should not panic due to RefCell borrow conflict
+        execute_effects(effects, &state, &layout_engine_manager, &manipulator).unwrap();
+
+        // Verify focus_intent was set
+        assert!(state.borrow().focus_intent.is_some());
+        let intent = state.borrow().focus_intent.clone().unwrap();
+        assert_eq!(intent.window_id, 100);
+        assert_eq!(intent.pid, 1000);
+        assert_eq!(intent.display_id, 1);
+    }
 }

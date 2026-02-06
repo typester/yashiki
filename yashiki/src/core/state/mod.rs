@@ -95,17 +95,22 @@ pub struct TrackedProcess {
 pub struct FocusIntent {
     pub window_id: WindowId,
     pub pid: i32,
+    pub display_id: DisplayId,
     pub timestamp: Instant,
 }
 
 impl FocusIntent {
     /// Duration to suppress re-hide and external focus changes for the same app
     pub const SUPPRESSION_DURATION_MS: u128 = 200;
+    /// Duration to suppress cross-display tag switches (longer, since cross-display
+    /// focus redirect within this window is almost certainly spurious macOS behavior)
+    pub const CROSS_DISPLAY_SUPPRESSION_DURATION_MS: u128 = 500;
 
-    pub fn new(window_id: WindowId, pid: i32) -> Self {
+    pub fn new(window_id: WindowId, pid: i32, display_id: DisplayId) -> Self {
         Self {
             window_id,
             pid,
+            display_id,
             timestamp: Instant::now(),
         }
     }
@@ -113,6 +118,11 @@ impl FocusIntent {
     /// Check if this intent is still active (within suppression window)
     pub fn is_active(&self) -> bool {
         self.timestamp.elapsed().as_millis() < Self::SUPPRESSION_DURATION_MS
+    }
+
+    /// Check if this intent is still active for cross-display suppression (longer window)
+    pub fn is_active_for_cross_display(&self) -> bool {
+        self.timestamp.elapsed().as_millis() < Self::CROSS_DISPLAY_SUPPRESSION_DURATION_MS
     }
 
     /// Check if a given pid matches this intent and is still active
@@ -307,8 +317,8 @@ impl State {
 
     /// Set the focus intent when intentionally focusing a window.
     /// This helps suppress spurious macOS focus changes to other windows of the same app.
-    pub fn set_focus_intent(&mut self, window_id: WindowId, pid: i32) {
-        self.focus_intent = Some(FocusIntent::new(window_id, pid));
+    pub fn set_focus_intent(&mut self, window_id: WindowId, pid: i32, display_id: DisplayId) {
+        self.focus_intent = Some(FocusIntent::new(window_id, pid, display_id));
     }
 
     /// Move a window to the front of the z-order cache.
@@ -359,6 +369,45 @@ impl State {
         }
 
         None
+    }
+
+    /// Check if automatic tag switching should be suppressed for cross-display focus redirect.
+    /// Returns true if:
+    /// - FocusIntent is active (within 500ms for cross-display)
+    /// - New focused window has same PID as intended
+    /// - New focused window is on a DIFFERENT display than intended
+    ///
+    /// This handles cases where macOS redirects focus to a different window of the same app
+    /// on a different display, which would otherwise trigger unwanted tag switching.
+    pub fn should_suppress_cross_display_tag_switch(&self, new_focused_id: WindowId) -> bool {
+        let Some(intent) = self.focus_intent.as_ref() else {
+            return false;
+        };
+        if !intent.is_active_for_cross_display() {
+            return false;
+        }
+
+        let Some(new_window) = self.windows.get(&new_focused_id) else {
+            return false;
+        };
+
+        // Different app - not spurious
+        if new_window.pid != intent.pid {
+            return false;
+        }
+
+        // Same app but different display - suppress tag switch
+        if new_window.display_id != intent.display_id {
+            tracing::debug!(
+                "Suppressing cross-display tag switch: window {} on display {} (intended: display {})",
+                new_focused_id,
+                new_window.display_id,
+                intent.display_id
+            );
+            return true;
+        }
+
+        false
     }
 
     /// Remove all windows belonging to a terminated process.
@@ -2972,5 +3021,304 @@ mod tests {
         assert_eq!(state.windows.len(), 1);
         assert!(state.windows.contains_key(&100));
         assert!(!state.windows.contains_key(&101));
+    }
+
+    // FocusIntent tests
+
+    impl FocusIntent {
+        /// Create FocusIntent with a specified elapsed time (for testing)
+        fn with_elapsed_ms(
+            window_id: WindowId,
+            pid: i32,
+            display_id: DisplayId,
+            elapsed_ms: u64,
+        ) -> Self {
+            Self {
+                window_id,
+                pid,
+                display_id,
+                timestamp: Instant::now() - Duration::from_millis(elapsed_ms),
+            }
+        }
+    }
+
+    #[test]
+    fn test_check_spurious_focus_change_no_intent() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // No focus intent set
+        assert!(state.focus_intent.is_none());
+
+        // Should return None when no intent
+        assert!(state.check_spurious_focus_change(100).is_none());
+    }
+
+    #[test]
+    fn test_check_spurious_focus_change_expired() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1000, "Firefox", 200.0, 200.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Set expired focus intent (>200ms)
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 250));
+
+        // Should return None when expired
+        assert!(state.check_spurious_focus_change(101).is_none());
+    }
+
+    #[test]
+    fn test_check_spurious_focus_change_different_pid() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Safari", 200.0, 200.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Set focus intent for Firefox (pid 1000)
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 0));
+
+        // Focus change to Safari (pid 1001) - different app, not spurious
+        assert!(state.check_spurious_focus_change(101).is_none());
+    }
+
+    #[test]
+    fn test_check_spurious_focus_change_same_window() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Set focus intent for window 100
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 0));
+
+        // Focus change to same window - not spurious
+        assert!(state.check_spurious_focus_change(100).is_none());
+    }
+
+    #[test]
+    fn test_check_spurious_focus_change_suppresses() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1000, "Firefox", 200.0, 200.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Set focus intent for window 100
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 0));
+
+        // Focus change to different window of same app within 200ms - suppress
+        let result = state.check_spurious_focus_change(101);
+        assert_eq!(result, Some(100));
+    }
+
+    #[test]
+    fn test_cross_display_suppression_no_intent() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1000, "Firefox", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // No focus intent set
+        assert!(state.focus_intent.is_none());
+
+        // Should return false when no intent
+        assert!(!state.should_suppress_cross_display_tag_switch(101));
+    }
+
+    #[test]
+    fn test_cross_display_suppression_expired() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1000, "Firefox", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Set expired focus intent (>500ms)
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 550));
+
+        // Should return false when expired
+        assert!(!state.should_suppress_cross_display_tag_switch(101));
+    }
+
+    #[test]
+    fn test_cross_display_suppression_different_pid() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Safari", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Set focus intent for Firefox (pid 1000) on display 1
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 0));
+
+        // Focus change to Safari (pid 1001) on display 2 - different app
+        assert!(!state.should_suppress_cross_display_tag_switch(101));
+    }
+
+    #[test]
+    fn test_cross_display_suppression_same_display() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1000, "Firefox", 200.0, 200.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Set focus intent for window 100 on display 1
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 0));
+
+        // Focus change to window 101 on same display - not cross-display
+        assert!(!state.should_suppress_cross_display_tag_switch(101));
+    }
+
+    #[test]
+    fn test_cross_display_suppression_suppresses() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1000, "Firefox", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Set focus intent for window 100 on display 1
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 0));
+
+        // Focus change to window 101 on display 2 - same app, cross-display
+        assert!(state.should_suppress_cross_display_tag_switch(101));
+    }
+
+    #[test]
+    fn test_cross_display_suppression_between_timeouts() {
+        // Test that cross-display suppression works between 200ms and 500ms
+        // (spurious focus check expires at 200ms, cross-display at 500ms)
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1000, "Firefox", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Set focus intent at 300ms ago (between 200ms and 500ms)
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 300));
+
+        // check_spurious_focus_change should return None (expired at 200ms)
+        assert!(state.check_spurious_focus_change(101).is_none());
+
+        // should_suppress_cross_display_tag_switch should return true (still active at 500ms)
+        assert!(state.should_suppress_cross_display_tag_switch(101));
+    }
+
+    #[test]
+    fn test_should_suppress_rehide_no_intent() {
+        let state = State::new();
+
+        // No focus intent set
+        assert!(!state.should_suppress_rehide(1000));
+    }
+
+    #[test]
+    fn test_should_suppress_rehide_expired() {
+        let mut state = State::new();
+
+        // Set expired focus intent (>200ms)
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 250));
+
+        // Should return false when expired
+        assert!(!state.should_suppress_rehide(1000));
+    }
+
+    #[test]
+    fn test_should_suppress_rehide_different_pid() {
+        let mut state = State::new();
+
+        // Set focus intent for pid 1000
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 0));
+
+        // Should return false for different pid
+        assert!(!state.should_suppress_rehide(1001));
+    }
+
+    #[test]
+    fn test_should_suppress_rehide_suppresses() {
+        let mut state = State::new();
+
+        // Set focus intent for pid 1000
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 0));
+
+        // Should return true for same pid within suppression window
+        assert!(state.should_suppress_rehide(1000));
     }
 }

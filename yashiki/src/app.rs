@@ -409,8 +409,20 @@ impl App {
                                 if start.elapsed().as_millis() >= delay_ms as u128 {
                                     // Delay elapsed - check if already focused
                                     if state.focused != Some(window_id) {
+                                        // Get display_id for focus intent
+                                        let display_id = state
+                                            .windows
+                                            .get(&window_id)
+                                            .map(|w| w.display_id)
+                                            .or_else(|| {
+                                                state
+                                                    .ignored_windows
+                                                    .get(&window_id)
+                                                    .map(|w| w.display_id)
+                                            })
+                                            .unwrap_or(0);
                                         // Set focus intent before focusing
-                                        state.set_focus_intent(window_id, pid);
+                                        state.set_focus_intent(window_id, pid, display_id);
                                         drop(state); // Release borrow before manipulator call
                                         tracing::debug!(
                                             "Auto-raise: focusing window {} at ({}, {})",
