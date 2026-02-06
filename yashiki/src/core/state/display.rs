@@ -190,9 +190,8 @@ pub fn focus_output(state: &mut State, direction: OutputDirection) -> Option<Foc
     let mut display_ids: Vec<_> = state.displays.keys().copied().collect();
     display_ids.sort();
 
-    let current_idx = display_ids
-        .iter()
-        .position(|&id| id == state.focused_display)?;
+    let effective_display = state.effective_focused_display();
+    let current_idx = display_ids.iter().position(|&id| id == effective_display)?;
 
     let next_idx = match direction {
         OutputDirection::Next => (current_idx + 1) % display_ids.len(),

@@ -467,6 +467,18 @@ impl State {
         }
     }
 
+    /// Returns the effective focused display, considering FocusIntent.
+    /// During cross-display suppression window (500ms), returns intent's display_id
+    /// to prevent spurious macOS focus redirects from misdirecting commands.
+    pub fn effective_focused_display(&self) -> DisplayId {
+        if let Some(intent) = &self.focus_intent {
+            if intent.is_active_for_cross_display() {
+                return intent.display_id;
+            }
+        }
+        self.focused_display
+    }
+
     pub fn get_target_display(
         &self,
         output: Option<&OutputSpecifier>,
@@ -475,7 +487,7 @@ impl State {
             Some(spec) => self
                 .resolve_output(spec)
                 .ok_or_else(|| format!("Output not found: {:?}", spec)),
-            None => Ok(self.focused_display),
+            None => Ok(self.effective_focused_display()),
         }
     }
 
@@ -3320,5 +3332,120 @@ mod tests {
 
         // Should return true for same pid within suppression window
         assert!(state.should_suppress_rehide(1000));
+    }
+
+    // get_target_display tests
+
+    #[test]
+    fn test_get_target_display_uses_focus_intent_when_active() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1000, "Firefox", 2020.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Simulate: FocusIntent was set for window 100 on display 1
+        // but focused_display got spuriously changed to 2
+        state.focus_intent = Some(FocusIntent::new(100, 1000, 1));
+        state.focused_display = 2;
+
+        // get_target_display should return intent's display_id (1), not focused_display (2)
+        assert_eq!(state.get_target_display(None).unwrap(), 1);
+    }
+
+    #[test]
+    fn test_get_target_display_uses_focused_display_when_intent_expired() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Set expired focus intent (501ms > 500ms cross-display threshold)
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 501));
+        state.focused_display = 2;
+
+        // Should return focused_display since intent expired
+        assert_eq!(state.get_target_display(None).unwrap(), 2);
+    }
+
+    #[test]
+    fn test_get_target_display_explicit_output_ignores_intent() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        state.focus_intent = Some(FocusIntent::new(100, 1000, 1));
+        state.focused_display = 1;
+
+        // Explicit output specifier should be used, ignoring intent
+        let output = OutputSpecifier::Id(2);
+        assert_eq!(state.get_target_display(Some(&output)).unwrap(), 2);
+    }
+
+    #[test]
+    fn test_get_target_display_no_intent() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![])
+            .with_focused(None);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        state.focused_display = 2;
+
+        // No intent - should use focused_display
+        assert!(state.focus_intent.is_none());
+        assert_eq!(state.get_target_display(None).unwrap(), 2);
+    }
+
+    #[test]
+    fn test_effective_focused_display_with_active_intent() {
+        let mut state = State::new();
+        state.focused_display = 2;
+        state.focus_intent = Some(FocusIntent::new(100, 1000, 1));
+        assert_eq!(state.effective_focused_display(), 1);
+    }
+
+    #[test]
+    fn test_effective_focused_display_with_expired_intent() {
+        let mut state = State::new();
+        state.focused_display = 2;
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 501));
+        assert_eq!(state.effective_focused_display(), 2);
+    }
+
+    #[test]
+    fn test_effective_focused_display_no_intent() {
+        let mut state = State::new();
+        state.focused_display = 3;
+        assert_eq!(state.effective_focused_display(), 3);
     }
 }

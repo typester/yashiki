@@ -62,7 +62,8 @@ pub fn toggle_tags_on_display(
 }
 
 pub fn view_tags_last(state: &mut State) -> Vec<WindowMove> {
-    let Some(disp) = state.displays.get_mut(&state.focused_display) else {
+    let display_id = state.effective_focused_display();
+    let Some(disp) = state.displays.get_mut(&display_id) else {
         return vec![];
     };
     if disp.visible_tags == disp.previous_visible_tags {
@@ -70,7 +71,7 @@ pub fn view_tags_last(state: &mut State) -> Vec<WindowMove> {
     }
     tracing::info!(
         "View tags last on display {}: {} -> {}, layout: {:?} -> {:?}",
-        state.focused_display,
+        display_id,
         disp.visible_tags.mask(),
         disp.previous_visible_tags.mask(),
         disp.current_layout,
@@ -78,7 +79,7 @@ pub fn view_tags_last(state: &mut State) -> Vec<WindowMove> {
     );
     std::mem::swap(&mut disp.visible_tags, &mut disp.previous_visible_tags);
     std::mem::swap(&mut disp.current_layout, &mut disp.previous_layout);
-    compute_layout_changes_for_display(state, state.focused_display)
+    compute_layout_changes_for_display(state, display_id)
 }
 
 pub fn move_focused_to_tags(state: &mut State, tags: u32) -> Vec<WindowMove> {
