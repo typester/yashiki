@@ -61,12 +61,19 @@ struct RunLoopContext {
     window_system: MacOSWindowSystem,
     window_manipulator: MacOSWindowManipulator,
     ns_app: Retained<NSApplication>,
+    log_level_setter: Option<Box<dyn Fn(&str) -> Result<(), String>>>,
+    current_log_level: RefCell<String>,
+    is_file_logging: bool,
 }
 
 pub struct App {}
 
 impl App {
-    pub fn run() -> Result<()> {
+    pub fn run(
+        log_level_setter: Option<Box<dyn Fn(&str) -> Result<(), String>>>,
+        initial_log_level: String,
+        is_file_logging: bool,
+    ) -> Result<()> {
         // Check if already running
         if let Some(existing_pid) = pid::check_already_running() {
             anyhow::bail!("yashiki is already running (pid: {})", existing_pid);
@@ -95,14 +102,25 @@ impl App {
         });
 
         let app = App {};
-        app.run_main_loop(main_channels);
+        app.run_main_loop(
+            main_channels,
+            log_level_setter,
+            initial_log_level,
+            is_file_logging,
+        );
 
         // Clean up PID file on exit
         pid::remove_pid();
         Ok(())
     }
 
-    fn run_main_loop(self, channels: MainChannels) {
+    fn run_main_loop(
+        self,
+        channels: MainChannels,
+        log_level_setter: Option<Box<dyn Fn(&str) -> Result<(), String>>>,
+        initial_log_level: String,
+        is_file_logging: bool,
+    ) {
         // Destructure channels
         let MainChannels {
             ipc_cmd_rx,
@@ -205,6 +223,9 @@ impl App {
             window_system,
             window_manipulator,
             ns_app: ns_app.clone(),
+            log_level_setter,
+            current_log_level: RefCell::new(initial_log_level),
+            is_file_logging,
         });
         let context_ptr = Box::into_raw(context) as *mut std::ffi::c_void;
 
@@ -221,6 +242,35 @@ impl App {
             // Process all pending IPC commands
             while let Ok((cmd, resp_tx)) = ctx.ipc_cmd_rx.try_recv() {
                 tracing::debug!("Received IPC command: {:?}", cmd);
+
+                // Intercept log level commands (need RunLoopContext fields)
+                if let Command::SetLogLevel { ref level } = cmd {
+                    let response = if let Some(ref setter) = ctx.log_level_setter {
+                        match setter(level) {
+                            Ok(()) => {
+                                *ctx.current_log_level.borrow_mut() = level.clone();
+                                tracing::info!("Log level changed to: {}", level);
+                                yashiki_ipc::Response::Ok
+                            }
+                            Err(e) => yashiki_ipc::Response::Error { message: e },
+                        }
+                    } else {
+                        yashiki_ipc::Response::Error {
+                            message: "set-log-level is only available in file logging mode"
+                                .to_string(),
+                        }
+                    };
+                    let _ = resp_tx.blocking_send(response);
+                    continue;
+                }
+                if matches!(cmd, Command::GetLogLevel) {
+                    let response = yashiki_ipc::Response::LogLevel {
+                        level: ctx.current_log_level.borrow().clone(),
+                        file_mode: ctx.is_file_logging,
+                    };
+                    let _ = resp_tx.blocking_send(response);
+                    continue;
+                }
 
                 let response = dispatch_command(
                     &cmd,

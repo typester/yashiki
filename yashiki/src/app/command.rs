@@ -580,6 +580,9 @@ pub fn process_command(
             outer_gap: state.config.outer_gap,
         }),
 
+        // Log level - handled in ipc_source_callback (needs RunLoopContext)
+        Command::SetLogLevel { .. } | Command::GetLogLevel => CommandResult::ok(),
+
         // Control
         Command::Quit => {
             tracing::info!("Quit command received");

@@ -9,8 +9,11 @@ mod macos;
 mod pid;
 mod platform;
 
+use std::io::IsTerminal;
+
 use anyhow::{bail, Result};
 use argh::FromArgs;
+use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 use ipc::IpcClient;
@@ -72,6 +75,8 @@ enum SubCommand {
     GetAutoRaise(GetAutoRaiseCmd),
     SetOuterGap(SetOuterGapCmd),
     GetOuterGap(GetOuterGapCmd),
+    SetLogLevel(SetLogLevelCmd),
+    GetLogLevel(GetLogLevelCmd),
     Subscribe(SubscribeCmd),
     Quit(QuitCmd),
 }
@@ -475,6 +480,20 @@ struct SetOuterGapCmd {
 #[argh(subcommand, name = "get-outer-gap")]
 struct GetOuterGapCmd {}
 
+/// Set the log level at runtime (file logging mode only)
+#[derive(FromArgs)]
+#[argh(subcommand, name = "set-log-level")]
+struct SetLogLevelCmd {
+    /// log level: off, error, warn, info, debug, trace (or full EnvFilter directive)
+    #[argh(positional)]
+    level: String,
+}
+
+/// Get the current log level
+#[derive(FromArgs)]
+#[argh(subcommand, name = "get-log-level")]
+struct GetLogLevelCmd {}
+
 /// Subscribe to state change events
 #[derive(FromArgs)]
 #[argh(subcommand, name = "subscribe")]
@@ -491,6 +510,64 @@ struct SubscribeCmd {
 #[derive(FromArgs)]
 #[argh(subcommand, name = "quit")]
 struct QuitCmd {}
+
+/// Initialize logging.
+/// Returns (log_level_setter, initial_level_string, is_file_logging).
+/// - TTY mode: logs to stdout, no runtime control
+/// - File mode: logs to ~/Library/Logs/yashiki/, runtime control via reload handle
+fn init_logging() -> (
+    Option<Box<dyn Fn(&str) -> Result<(), String>>>,
+    String,
+    bool,
+) {
+    if std::io::stdout().is_terminal() {
+        // TTY mode: current behavior
+        let env_filter = EnvFilter::from_default_env();
+        let level_str = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
+        (None, level_str, false)
+    } else {
+        // File mode: rolling file appender + reload layer
+        let log_dir = dirs::home_dir()
+            .map(|d| d.join("Library").join("Logs").join("yashiki"))
+            .unwrap_or_else(|| std::path::PathBuf::from("/tmp/yashiki-logs"));
+
+        let file_appender = tracing_appender::rolling::Builder::new()
+            .rotation(tracing_appender::rolling::Rotation::MINUTELY)
+            .max_log_files(5)
+            .filename_prefix("yashiki")
+            .filename_suffix("log")
+            .build(&log_dir)
+            .expect("Failed to create log file appender");
+
+        let default_level = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+        let env_filter =
+            EnvFilter::try_new(&default_level).unwrap_or_else(|_| EnvFilter::new("info"));
+        let level_str = default_level.clone();
+
+        let (filter_layer, reload_handle) = tracing_subscriber::reload::Layer::new(env_filter);
+
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .with_writer(file_appender)
+            .with_ansi(false);
+
+        tracing_subscriber::registry()
+            .with(filter_layer)
+            .with(fmt_layer)
+            .init();
+
+        let setter: Box<dyn Fn(&str) -> Result<(), String>> = Box::new(move |level: &str| {
+            let new_filter =
+                EnvFilter::try_new(level).map_err(|e| format!("Invalid log level: {}", e))?;
+            reload_handle
+                .reload(new_filter)
+                .map_err(|e| format!("Failed to reload filter: {}", e))?;
+            Ok(())
+        });
+
+        (Some(setter), level_str, true)
+    }
+}
 
 fn main() -> Result<()> {
     let cli: Cli = argh::from_env();
@@ -509,12 +586,10 @@ fn main() -> Result<()> {
         }
         Some(SubCommand::Start(_)) => {
             // Start daemon
-            tracing_subscriber::fmt()
-                .with_env_filter(EnvFilter::from_default_env())
-                .init();
+            let (log_level_setter, initial_level, is_file_logging) = init_logging();
 
             tracing::info!("yashiki starting");
-            app::App::run()
+            app::App::run(log_level_setter, initial_level, is_file_logging)
         }
         Some(SubCommand::Version(_)) => {
             println!("v{}", VERSION);
@@ -708,6 +783,10 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
         }
         Response::OuterGap { outer_gap } => {
             println!("{}", outer_gap);
+        }
+        Response::LogLevel { level, file_mode } => {
+            let mode_str = if file_mode { "file" } else { "terminal" };
+            println!("{} (mode: {})", level, mode_str);
         }
     }
 
@@ -927,6 +1006,8 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             Ok(Command::SetOuterGap { values: cmd.values })
         }
         SubCommand::GetOuterGap(_) => Ok(Command::GetOuterGap),
+        SubCommand::SetLogLevel(cmd) => Ok(Command::SetLogLevel { level: cmd.level }),
+        SubCommand::GetLogLevel(_) => Ok(Command::GetLogLevel),
         SubCommand::Quit(_) => Ok(Command::Quit),
     }
 }
@@ -1215,6 +1296,11 @@ fn parse_command(args: &[String]) -> Result<Command> {
             Ok(Command::SetOuterGap { values: cmd.values })
         }
         "get-outer-gap" => Ok(Command::GetOuterGap),
+        "set-log-level" => {
+            let cmd: SetLogLevelCmd = from_argh(cmd_name, &cmd_args)?;
+            Ok(Command::SetLogLevel { level: cmd.level })
+        }
+        "get-log-level" => Ok(Command::GetLogLevel),
         "quit" => Ok(Command::Quit),
         _ => bail!("Unknown command: {}", cmd_name),
     }

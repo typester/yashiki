@@ -123,6 +123,8 @@ yashiki set-cursor-warp disabled|on-output-change|on-focus-change
 yashiki set-auto-raise disabled|enabled [--delay ms]
 yashiki get-auto-raise
 yashiki set-outer-gap <all>|<v h>|<t r b l>
+yashiki set-log-level <level>       # Runtime log level (file mode only)
+yashiki get-log-level
 yashiki subscribe [--snapshot] [--filter events]
 yashiki quit
 ```
@@ -178,6 +180,8 @@ yashiki rule-add --subrole AXUnknown ignore
 - Run daemon: `RUST_LOG=info cargo run -p yashiki -- start`
 - Run CLI: `cargo run -p yashiki -- list-windows`
 - PID file: `/tmp/yashiki.pid`
+- Log files (app bundle mode): `~/Library/Logs/yashiki/`
+- Runtime log level: `yashiki set-log-level debug` (file mode only)
 
 ## Release & Distribution
 
@@ -337,6 +341,20 @@ Two modes: Disabled (default), Enabled. Uses `CGEventTap` to monitor `MouseMoved
 
 ### Outer Gap
 Managed by daemon (not layout engines), applied to all layouts including fullscreen. CSS-style syntax.
+
+### File-Based Logging
+
+Two logging modes based on TTY detection:
+- **TTY (terminal)**: Logs to stdout via `tracing_subscriber::fmt()`, controlled by `RUST_LOG` env var
+- **Non-TTY (app bundle)**: Logs to `~/Library/Logs/yashiki/` with rolling file appender (MINUTELY rotation, max 5 files)
+
+File mode uses `tracing_subscriber::reload::Layer` for runtime log level control via `set-log-level` / `get-log-level` commands. `set-log-level` accepts standard levels (`off`, `error`, `warn`, `info`, `debug`, `trace`) or full `EnvFilter` directives.
+
+In terminal mode, `set-log-level` returns an error since the subscriber is initialized without reload capability.
+
+**Related code:**
+- `yashiki/src/main.rs`: `init_logging()` - TTY detection and subscriber setup
+- `yashiki/src/app.rs`: `RunLoopContext.log_level_setter` - intercepts log commands in `ipc_source_callback`
 
 ### Popup Filtering
 Use `ignore` rule with subrole/ax-id matching. Example: `--subrole AXUnknown ignore`
