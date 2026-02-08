@@ -336,8 +336,18 @@ impl WindowManipulator for MacOSWindowManipulator {
                     // Only activate application if it's not already frontmost
                     // This prevents macOS from re-evaluating which window to focus
                     if !is_frontmost {
-                        activate_application(pid);
-                        tracing::debug!("Activated application pid {}", pid);
+                        match app.set_frontmost(true) {
+                            Ok(()) => {
+                                tracing::debug!("Set AXFrontmost for pid {}", pid);
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to set AXFrontmost for pid {}: {}, falling back to activate_application",
+                                    pid, e
+                                );
+                                activate_application(pid);
+                            }
+                        }
                     } else {
                         tracing::debug!("Skipped activate for pid {} (already frontmost)", pid);
                     }
