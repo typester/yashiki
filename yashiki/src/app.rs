@@ -786,11 +786,12 @@ impl App {
                     Event::FocusedWindowChanged | Event::ApplicationActivated { .. }
                 );
 
-                // Capture previous focused window before handle_event updates it
-                let prev_focused = if is_focus_event {
-                    Some(ctx.state.borrow().focused)
+                // Capture previous focused window and display before handle_event updates it
+                let (prev_focused, prev_focused_display) = if is_focus_event {
+                    let s = ctx.state.borrow();
+                    (Some(s.focused), Some(s.focused_display))
                 } else {
-                    None
+                    (None, None)
                 };
 
                 // For ApplicationActivated, sync windows if none exist for this pid.
@@ -873,7 +874,18 @@ impl App {
                                 intended_id
                             );
                             ctx.window_manipulator.focus_window(intended_id, pid);
-                            ctx.state.borrow_mut().set_focused(Some(intended_id));
+                            let mut state = ctx.state.borrow_mut();
+                            state.set_focused(Some(intended_id));
+                            if let Some(prev_display) = prev_focused_display {
+                                if state.focused_display != prev_display {
+                                    tracing::debug!(
+                                        "Reverting focused_display: {} -> {}",
+                                        state.focused_display,
+                                        prev_display
+                                    );
+                                    state.focused_display = prev_display;
+                                }
+                            }
                             // Skip further focus handling - don't switch tags
                             continue;
                         }

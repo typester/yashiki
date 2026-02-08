@@ -494,6 +494,8 @@ This commonly happens with multi-window apps like Firefox across multiple displa
 
 2. **Re-hide suppression**: Within the suppression window, hidden windows of the same app are not re-hidden when macOS moves them. This prevents focus operations from triggering unnecessary window movements.
 
+3. **`focused_display` revert**: Both suppression paths (`check_spurious_focus_change` in app.rs, `should_suppress_cross_display_tag_switch` in focus.rs) revert `focused_display` to its pre-redirect value, ensuring subsequent commands target the correct display even after the 500ms suppression window expires.
+
 **Design principles:**
 - Single source of truth: `FocusIntent` lives in `State`
 - Unified call sites: `set_focus_intent()` called in `Effect::FocusWindow` and `focus_visible_window_if_needed()`

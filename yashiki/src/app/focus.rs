@@ -102,6 +102,18 @@ pub fn switch_tag_for_focused_window(state: &RefCell<State>) -> Option<Vec<Windo
             "Skipping tag switch for window {} - detected cross-display focus redirect",
             focused_id
         );
+        let mut s = state.borrow_mut();
+        if let Some(intent) = &s.focus_intent {
+            let intended_display = intent.display_id;
+            if s.focused_display != intended_display {
+                tracing::debug!(
+                    "Reverting focused_display: {} -> {}",
+                    s.focused_display,
+                    intended_display
+                );
+                s.focused_display = intended_display;
+            }
+        }
         return None;
     }
 
