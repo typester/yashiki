@@ -3490,4 +3490,65 @@ mod tests {
         state.focused_display = 3;
         assert_eq!(state.effective_focused_display(), 3);
     }
+
+    #[test]
+    fn test_sync_pid_removes_window_when_process_dead() {
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100,
+                1000,
+                "SystemInfo",
+                0.0,
+                0.0,
+                800.0,
+                600.0,
+            )]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        assert_eq!(state.windows.len(), 1);
+
+        // Process dies without AppTerminated
+        ws.remove_window(100);
+        ws.set_ax_accessible(1000, false);
+        ws.set_process_alive(1000, false);
+
+        let (changed, new_ids, _) = state.sync_pid(&ws, 1000);
+
+        assert!(changed);
+        assert!(new_ids.is_empty());
+        assert_eq!(state.windows.len(), 0);
+    }
+
+    #[test]
+    fn test_sync_with_window_infos_removes_dead_process_keeps_alive() {
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "SystemInfo", 0.0, 0.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Terminal", 100.0, 100.0, 800.0, 600.0),
+            ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        assert_eq!(state.windows.len(), 2);
+
+        // Both windows disappear from screen
+        ws.remove_window(100);
+        ws.remove_window(101);
+        // PID 1000: dead, AX inaccessible
+        ws.set_ax_accessible(1000, false);
+        ws.set_process_alive(1000, false);
+        // PID 1001: alive but on different Space, AX inaccessible
+        ws.set_ax_accessible(1001, false);
+        // PID 1001 is alive (default)
+
+        state.sync_all(&ws);
+
+        // Dead process window removed, alive process window kept
+        assert_eq!(state.windows.len(), 1);
+        assert!(!state.windows.contains_key(&100));
+        assert!(state.windows.contains_key(&101));
+    }
 }

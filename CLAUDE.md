@@ -362,22 +362,23 @@ When removing ignored windows that are no longer on screen, the same AX accessib
 
 ### Window Removal Safety
 
-Both managed and ignored windows use the same two-level safety check before removal:
+Both managed and ignored windows use the same safety checks before removal:
 
-1. **Process-level check** (`can_access_ax_windows`): Skip removal if entire process is AX inaccessible (window might be on different macOS Space)
-2. **Window-level check** (`window_exists_in_ax`): Skip removal if specific window still exists in AX API (window is transitioning, not truly gone)
+1. **Process-level AX check** (`can_access_ax_windows`): If AX inaccessible, proceed to liveness check
+2. **Process liveness check** (`is_process_alive`): If process is dead, remove window immediately (ghost window from missed AppTerminated)
+3. **Window-level check** (`window_exists_in_ax`): Skip removal if specific window still exists in AX API (window is transitioning, not truly gone)
 
-The `should_remove_window` helper in `core/state/sync.rs` encapsulates both checks and is used for both managed and ignored windows in `sync_pid` and `sync_with_window_infos`.
+The `should_remove_window` helper in `core/state/sync.rs` encapsulates all checks and is used for both managed and ignored windows in `sync_pid` and `sync_with_window_infos`.
 
-**Why both checks are needed:**
-- Process-level: Handles apps on different macOS Spaces (entire process inaccessible)
+**Why these checks are needed:**
+- Process-level AX + liveness: Distinguishes between apps on different macOS Spaces (alive, AX inaccessible → keep) and ghost windows from dead processes (dead, AX inaccessible → remove)
 - Window-level: Handles transitioning windows (process accessible, specific window temporarily invisible to CGWindowList but still in AX)
 
 **Non-normal layer windows (`level != 0`):**
 System dialogs (File Picker, etc.) are not included in `AXWindows` attribute, so `window_exists_in_ax` check is skipped for these windows. They are removed only when they disappear from CGWindowList.
 
 **Related code:**
-- `platform.rs`: `WindowSystem::window_exists_in_ax()` trait method
+- `platform.rs`: `WindowSystem::window_exists_in_ax()`, `WindowSystem::is_process_alive()` trait methods
 - `core/state/sync.rs`: `should_remove_window()`, `sync_pid()`, `sync_with_window_infos()`
 
 ### Orphan Tracking (Sleep/Wake Window Restoration)
