@@ -611,6 +611,23 @@ impl App {
                             tracing::warn!("Failed to add observer for pid {}: {}", pid, e);
                         }
 
+                        // Re-register if a previous attempt (e.g., from AppActivated) had failures
+                        if ctx.observer_manager.borrow().has_incomplete_observer(pid) {
+                            tracing::info!(
+                                "Re-registering observer for pid {} (previous registration incomplete)",
+                                pid
+                            );
+                            if let Err(e) =
+                                ctx.observer_manager.borrow_mut().reregister_observer(pid)
+                            {
+                                tracing::warn!(
+                                    "Failed to re-register observer for pid {}: {}",
+                                    pid,
+                                    e
+                                );
+                            }
+                        }
+
                         // Sync windows for this pid immediately after adding observer
                         let result = sync_and_process_new_windows(
                             &ctx.state,
