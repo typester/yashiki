@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.7](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.10.6...yashiki-ipc-v0.10.7) - 2026-02-08
+
+### Added
+
+- add file-based logging with runtime log level control ([#130](https://github.com/typester/yashiki/pull/130))
+
 ## [0.10.1](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.10.0...yashiki-ipc-v0.10.1) - 2026-01-28
 
 ### Added
