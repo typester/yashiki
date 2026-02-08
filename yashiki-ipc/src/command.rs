@@ -716,6 +716,12 @@ pub enum Command {
     },
     GetOuterGap,
 
+    // Log level
+    SetLogLevel {
+        level: String,
+    },
+    GetLogLevel,
+
     // Control
     Quit,
 }
@@ -761,6 +767,7 @@ pub enum Response {
     CursorWarp { mode: CursorWarpMode },
     AutoRaise { mode: AutoRaiseMode, delay_ms: u64 },
     OuterGap { outer_gap: OuterGap },
+    LogLevel { level: String, file_mode: bool },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
