@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.6](https://github.com/typester/yashiki/compare/yashiki-v0.10.5...yashiki-v0.10.6) - 2026-02-08
+
+### Added
+
+- add cross-display focus redirect suppression ([#121](https://github.com/typester/yashiki/pull/121))
+
+### Fixed
+
+- remove ghost windows from dead processes without AppTerminated notification ([#126](https://github.com/typester/yashiki/pull/126))
+- exclude non-normal layer windows from transition guard to prevent ghost windows ([#125](https://github.com/typester/yashiki/pull/125))
+- revert focused_display on spurious focus redirect to prevent permanent state corruption ([#123](https://github.com/typester/yashiki/pull/123))
+- use effective_focused_display() to protect all commands from spurious focus redirect ([#122](https://github.com/typester/yashiki/pull/122))
+
 ## [0.10.5](https://github.com/typester/yashiki/compare/yashiki-v0.10.4...yashiki-v0.10.5) - 2026-02-05
 
 ### Fixed
