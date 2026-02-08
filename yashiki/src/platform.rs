@@ -30,6 +30,9 @@ pub trait WindowSystem {
     /// Used for window-level checks during transitions (e.g., fullscreen).
     /// Returns true if the window is found via AX API.
     fn window_exists_in_ax(&self, window_id: u32, pid: i32) -> bool;
+    /// Check if a process is still alive.
+    /// Returns true if the process exists, false if it has terminated.
+    fn is_process_alive(&self, pid: i32) -> bool;
 }
 
 /// macOS implementation of WindowSystem
@@ -128,6 +131,10 @@ impl WindowSystem for MacOSWindowSystem {
                 false
             }
         }
+    }
+
+    fn is_process_alive(&self, pid: i32) -> bool {
+        unsafe { libc::kill(pid, 0) == 0 }
     }
 }
 
@@ -563,6 +570,7 @@ pub mod mock {
         pub displays: Vec<DisplayInfo>,
         pub focused_window_id: Option<u32>,
         pub ax_accessible_pids: HashSet<i32>,
+        pub alive_pids: HashSet<i32>,
         /// Custom extended attributes for specific windows (window_id -> attributes)
         pub custom_extended_attributes: HashMap<u32, ExtendedWindowAttributes>,
         /// Windows that exist only in AX API (not in get_on_screen_windows).
@@ -578,6 +586,7 @@ pub mod mock {
                 displays: Vec::new(),
                 focused_window_id: None,
                 ax_accessible_pids: HashSet::from([1, 2, 3, 4, 5, 100, 1000, 1001, 1002]),
+                alive_pids: HashSet::from([1, 2, 3, 4, 5, 100, 1000, 1001, 1002]),
                 custom_extended_attributes: HashMap::new(),
                 ax_only_windows: HashSet::new(),
             }
@@ -617,6 +626,14 @@ pub mod mock {
                 self.ax_accessible_pids.insert(pid);
             } else {
                 self.ax_accessible_pids.remove(&pid);
+            }
+        }
+
+        pub fn set_process_alive(&mut self, pid: i32, alive: bool) {
+            if alive {
+                self.alive_pids.insert(pid);
+            } else {
+                self.alive_pids.remove(&pid);
             }
         }
 
@@ -677,6 +694,10 @@ pub mod mock {
                 .iter()
                 .any(|w| w.window_id == window_id && w.pid == pid)
                 || self.ax_only_windows.contains(&(window_id, pid))
+        }
+
+        fn is_process_alive(&self, pid: i32) -> bool {
+            self.alive_pids.contains(&pid)
         }
     }
 

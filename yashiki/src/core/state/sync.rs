@@ -49,8 +49,12 @@ fn pids_with_recent_ignored_windows(state: &State) -> HashSet<i32> {
 
 /// Check if a window should be removed from tracking.
 /// Returns true if:
-/// - Process is accessible via AX API (window is not on different Space)
-/// - Window does NOT exist in AX API (window is truly gone, not transitioning)
+/// - Process is AX inaccessible AND dead (ghost window from missed AppTerminated)
+/// - Process is AX accessible AND window does NOT exist in AX API (window truly gone)
+///
+/// Returns false if:
+/// - Process is AX inaccessible but alive (window on different macOS Space)
+/// - Process is AX accessible AND window exists in AX API (window transitioning)
 ///
 /// For non-normal layer windows (level != 0), the AX check is skipped because
 /// system dialogs (File Picker, etc.) are not included in AXWindows attribute.
@@ -62,8 +66,17 @@ fn should_remove_window<W: WindowSystem>(
     window_level: i32,
 ) -> bool {
     // Process-level check: don't remove if entire process is AX inaccessible
+    // UNLESS the process is dead (no AppTerminated notification received)
     if !ax_accessible {
-        return false;
+        if ws.is_process_alive(pid) {
+            return false;
+        }
+        tracing::info!(
+            "Removing window [{}]: process {} is dead (AX inaccessible, process not running)",
+            window_id,
+            pid,
+        );
+        return true;
     }
 
     // Non-normal layer windows are not included in AXWindows attribute,
@@ -740,7 +753,7 @@ pub fn sync_with_window_infos<W: WindowSystem>(
 
     if !inaccessible_pids.is_empty() {
         tracing::info!(
-            "Skipping window removal for PIDs with inaccessible AX API: {:?}",
+            "AX inaccessible PIDs detected (liveness check will determine removal): {:?}",
             inaccessible_pids
         );
     }
