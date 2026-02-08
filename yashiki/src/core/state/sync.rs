@@ -348,7 +348,14 @@ pub fn sync_pid<W: WindowSystem>(
     let pids_with_recent_ignored = pids_with_recent_ignored_windows(state);
     let has_new_untracked = on_screen_ids
         .difference(&current_ids)
-        .any(|id| !current_ignored_ids.contains(id));
+        .filter(|id| !current_ignored_ids.contains(id))
+        .any(|id| {
+            pid_window_infos
+                .iter()
+                .find(|w| w.window_id == *id)
+                .map(|w| w.layer == 0)
+                .unwrap_or(false)
+        });
     let pids_with_new_windows: HashSet<i32> =
         if has_new_untracked || pids_with_recent_ignored.contains(&pid) {
             HashSet::from([pid])
@@ -708,6 +715,7 @@ pub fn sync_with_window_infos<W: WindowSystem>(
             window_infos
                 .iter()
                 .find(|w| w.window_id == *id)
+                .filter(|w| w.layer == 0)
                 .map(|w| w.pid)
         })
         .collect();

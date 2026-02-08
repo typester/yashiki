@@ -490,7 +490,7 @@ This commonly happens with multi-window apps like Firefox across multiple displa
 
 **Suppression rules:**
 
-1. **Focus change suppression**: Within the suppression window, any focus change to a **different window of the same app** is considered spurious and refocused to the intended window.
+1. **Focus change suppression**: Within the suppression window, any focus change to a **different window of the same app** is considered spurious and refocused to the intended window. Uses 200ms for same-display, 500ms for cross-display redirects.
 
 2. **Re-hide suppression**: Within the suppression window, hidden windows of the same app are not re-hidden when macOS moves them. This prevents focus operations from triggering unnecessary window movements.
 

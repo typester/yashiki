@@ -343,32 +343,45 @@ impl State {
     /// Returns the intended window_id to refocus if suppression is needed.
     ///
     /// Suppresses focus change when:
-    /// - FocusIntent is active (within 200ms)
     /// - New focused window is same PID as intended
     /// - New focused window is NOT the intended window
+    /// - FocusIntent is active: 200ms for same-display, 500ms for cross-display
     pub fn check_spurious_focus_change(&self, new_focused_id: WindowId) -> Option<WindowId> {
         let intent = self.focus_intent.as_ref()?;
-        if !intent.is_active() {
-            return None;
-        }
 
-        // Different app - not spurious
         let new_window = self.windows.get(&new_focused_id)?;
         if new_window.pid != intent.pid {
             return None;
         }
 
-        // Same app but different window - suppress
-        if new_focused_id != intent.window_id {
-            tracing::debug!(
-                "Detected spurious focus change: {} (intended: {})",
-                new_focused_id,
-                intent.window_id
-            );
-            return Some(intent.window_id);
+        if new_focused_id == intent.window_id {
+            return None;
         }
 
-        None
+        // Cross-display redirect uses longer suppression window (500ms)
+        // because macOS takes longer to redirect focus across displays
+        let is_cross_display = new_window.display_id != intent.display_id;
+        let is_active = if is_cross_display {
+            intent.is_active_for_cross_display()
+        } else {
+            intent.is_active()
+        };
+
+        if !is_active {
+            return None;
+        }
+
+        tracing::debug!(
+            "Detected spurious focus change: {} (intended: {}{})",
+            new_focused_id,
+            intent.window_id,
+            if is_cross_display {
+                ", cross-display"
+            } else {
+                ""
+            }
+        );
+        Some(intent.window_id)
     }
 
     /// Check if automatic tag switching should be suppressed for cross-display focus redirect.
@@ -1002,6 +1015,35 @@ mod tests {
         assert_eq!(state.windows.len(), 1);
         assert!(state.windows.contains_key(&100));
         assert!(!state.windows.contains_key(&101));
+    }
+
+    #[test]
+    fn test_sync_pid_non_normal_layer_window_does_not_block_removal() {
+        // Setup: PID 1000 has one managed window (layer=0) and one non-normal layer window (layer=3)
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Outlook", 0.0, 0.0, 800.0, 600.0),
+                create_test_window_with_layer(101, 1000, "Outlook", 100.0, 100.0, 300.0, 50.0, 3),
+            ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        // Only the layer=0 window should be managed
+        assert_eq!(state.windows.len(), 1);
+        assert!(state.windows.contains_key(&100));
+
+        // Now the managed window disappears but the layer=3 notification window remains
+        ws.remove_window(100);
+
+        let (changed, new_ids, _) = state.sync_pid(&ws, 1000);
+
+        // The managed window should be removed despite the non-normal layer window
+        // still being on screen (it should NOT be treated as a "new untracked window")
+        assert!(changed);
+        assert!(new_ids.is_empty());
+        assert_eq!(state.windows.len(), 0);
+        assert!(!state.windows.contains_key(&100));
     }
 
     #[test]
@@ -3286,10 +3328,10 @@ mod tests {
         // Set focus intent at 300ms ago (between 200ms and 500ms)
         state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 300));
 
-        // check_spurious_focus_change should return None (expired at 200ms)
-        assert!(state.check_spurious_focus_change(101).is_none());
+        // check_spurious_focus_change should now catch cross-display (uses 500ms window)
+        assert_eq!(state.check_spurious_focus_change(101), Some(100));
 
-        // should_suppress_cross_display_tag_switch should return true (still active at 500ms)
+        // should_suppress_cross_display_tag_switch should also return true (still active at 500ms)
         assert!(state.should_suppress_cross_display_tag_switch(101));
     }
 
