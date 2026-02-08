@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.7](https://github.com/typester/yashiki/compare/yashiki-v0.10.6...yashiki-v0.10.7) - 2026-02-08
+
+### Added
+
+- add file-based logging with runtime log level control ([#130](https://github.com/typester/yashiki/pull/130))
+
+### Fixed
+
+- use AXFrontmost instead of activate_application to prevent cross-display focus redirect ([#129](https://github.com/typester/yashiki/pull/129))
+- retry observer registration on AppLaunched and fix CallbackContext leak ([#128](https://github.com/typester/yashiki/pull/128))
+
 ## [0.10.6](https://github.com/typester/yashiki/compare/yashiki-v0.10.5...yashiki-v0.10.6) - 2026-02-08
 
 ### Added
