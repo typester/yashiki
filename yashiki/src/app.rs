@@ -43,6 +43,8 @@ use crate::pid;
 use crate::platform::{MacOSWindowManipulator, MacOSWindowSystem, WindowManipulator};
 use yashiki_ipc::Command;
 
+pub type LogLevelSetter = Box<dyn Fn(&str) -> Result<(), String>>;
+
 struct RunLoopContext {
     ipc_cmd_rx: std_mpsc::Receiver<IpcCommandWithResponse>,
     hotkey_cmd_rx: std_mpsc::Receiver<Command>,
@@ -61,7 +63,7 @@ struct RunLoopContext {
     window_system: MacOSWindowSystem,
     window_manipulator: MacOSWindowManipulator,
     ns_app: Retained<NSApplication>,
-    log_level_setter: Option<Box<dyn Fn(&str) -> Result<(), String>>>,
+    log_level_setter: Option<LogLevelSetter>,
     current_log_level: RefCell<String>,
     is_file_logging: bool,
 }
@@ -70,7 +72,7 @@ pub struct App {}
 
 impl App {
     pub fn run(
-        log_level_setter: Option<Box<dyn Fn(&str) -> Result<(), String>>>,
+        log_level_setter: Option<LogLevelSetter>,
         initial_log_level: String,
         is_file_logging: bool,
     ) -> Result<()> {
@@ -117,7 +119,7 @@ impl App {
     fn run_main_loop(
         self,
         channels: MainChannels,
-        log_level_setter: Option<Box<dyn Fn(&str) -> Result<(), String>>>,
+        log_level_setter: Option<LogLevelSetter>,
         initial_log_level: String,
         is_file_logging: bool,
     ) {

@@ -16,6 +16,7 @@ use argh::FromArgs;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
+use app::LogLevelSetter;
 use ipc::IpcClient;
 use yashiki_ipc::{
     AutoRaiseMode, ButtonInfo, ButtonState, Command, CursorWarpMode, Direction, EventFilter,
@@ -515,11 +516,7 @@ struct QuitCmd {}
 /// Returns (log_level_setter, initial_level_string, is_file_logging).
 /// - TTY mode: logs to stdout, no runtime control
 /// - File mode: logs to ~/Library/Logs/yashiki/, runtime control via reload handle
-fn init_logging() -> (
-    Option<Box<dyn Fn(&str) -> Result<(), String>>>,
-    String,
-    bool,
-) {
+fn init_logging() -> (Option<LogLevelSetter>, String, bool) {
     if std::io::stdout().is_terminal() {
         // TTY mode: current behavior
         let env_filter = EnvFilter::from_default_env();
@@ -556,7 +553,7 @@ fn init_logging() -> (
             .with(fmt_layer)
             .init();
 
-        let setter: Box<dyn Fn(&str) -> Result<(), String>> = Box::new(move |level: &str| {
+        let setter: LogLevelSetter = Box::new(move |level: &str| {
             let new_filter =
                 EnvFilter::try_new(level).map_err(|e| format!("Invalid log level: {}", e))?;
             reload_handle
