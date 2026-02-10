@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/typester/yashiki/compare/yashiki-v0.10.7...yashiki-v0.11.0) - 2026-02-10
+
+### Fixed
+
+- [**breaking**] rules without --window-level should only match normal-layer windows ([#132](https://github.com/typester/yashiki/pull/132))
+
 ## [0.10.7](https://github.com/typester/yashiki/compare/yashiki-v0.10.6...yashiki-v0.10.7) - 2026-02-08
 
 ### Added
