@@ -1531,7 +1531,7 @@ mod tests {
 
     #[test]
     fn test_non_normal_layer_window_managed_with_float_rule() {
-        use yashiki_ipc::GlobPattern;
+        use yashiki_ipc::{GlobPattern, WindowLevel, WindowLevelOther};
 
         let ws = MockWindowSystem::new()
             .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
@@ -1548,7 +1548,7 @@ mod tests {
                 title: None,
                 ax_id: None,
                 subrole: None,
-                window_level: None,
+                window_level: Some(WindowLevel::Other(WindowLevelOther::Other)),
                 close_button: None,
                 fullscreen_button: None,
                 minimize_button: None,
@@ -1567,7 +1567,7 @@ mod tests {
 
     #[test]
     fn test_non_normal_layer_window_managed_with_tags_rule() {
-        use yashiki_ipc::GlobPattern;
+        use yashiki_ipc::{GlobPattern, WindowLevel, WindowLevelOther};
 
         let ws = MockWindowSystem::new()
             .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
@@ -1584,7 +1584,7 @@ mod tests {
                 title: None,
                 ax_id: None,
                 subrole: None,
-                window_level: None,
+                window_level: Some(WindowLevel::Other(WindowLevelOther::Other)),
                 close_button: None,
                 fullscreen_button: None,
                 minimize_button: None,
@@ -1604,7 +1604,7 @@ mod tests {
 
     #[test]
     fn test_non_normal_layer_window_can_be_tiled_with_no_float() {
-        use yashiki_ipc::GlobPattern;
+        use yashiki_ipc::{GlobPattern, WindowLevel, WindowLevelOther};
 
         let ws = MockWindowSystem::new()
             .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
@@ -1621,7 +1621,7 @@ mod tests {
                 title: None,
                 ax_id: None,
                 subrole: None,
-                window_level: None,
+                window_level: Some(WindowLevel::Other(WindowLevelOther::Other)),
                 close_button: None,
                 fullscreen_button: None,
                 minimize_button: None,
@@ -1656,7 +1656,7 @@ mod tests {
 
     #[test]
     fn test_non_normal_layer_window_ignored_with_ignore_rule() {
-        use yashiki_ipc::GlobPattern;
+        use yashiki_ipc::{GlobPattern, WindowLevel, WindowLevelOther};
 
         let ws = MockWindowSystem::new()
             .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
@@ -1673,7 +1673,7 @@ mod tests {
                 title: None,
                 ax_id: None,
                 subrole: None,
-                window_level: None,
+                window_level: Some(WindowLevel::Other(WindowLevelOther::Other)),
                 close_button: None,
                 fullscreen_button: None,
                 minimize_button: None,
@@ -1688,7 +1688,7 @@ mod tests {
                 title: None,
                 ax_id: None,
                 subrole: None,
-                window_level: None,
+                window_level: Some(WindowLevel::Other(WindowLevelOther::Other)),
                 close_button: None,
                 fullscreen_button: None,
                 minimize_button: None,
@@ -1699,6 +1699,40 @@ mod tests {
 
         state.sync_all(&ws);
 
+        assert!(state.windows.is_empty());
+    }
+
+    #[test]
+    fn test_non_normal_layer_window_not_matched_by_rule_without_window_level() {
+        use yashiki_ipc::GlobPattern;
+
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window_with_layer(
+                100, 1000, "Ghostty", 100.0, 100.0, 800.0, 600.0, 3,
+            )]);
+
+        let mut state = State::new();
+
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("Ghostty")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Tags { tags: 1 },
+        });
+
+        state.sync_all(&ws);
+
+        // Rule without --window-level should NOT match non-normal layer windows
         assert!(state.windows.is_empty());
     }
 

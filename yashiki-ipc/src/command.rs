@@ -398,7 +398,7 @@ impl RuleMatcher {
             .window_level
             .as_ref()
             .map(|expected| Self::window_level_matches(expected, ext.window_level))
-            .unwrap_or(true);
+            .unwrap_or(ext.window_level == 0);
 
         // Button checks
         let close_button_matches = self
@@ -1974,5 +1974,79 @@ mod tests {
             }
             _ => panic!("Wrong variant"),
         }
+    }
+
+    #[test]
+    fn test_rule_without_window_level_only_matches_normal() {
+        let matcher = RuleMatcher {
+            app_name: Some(GlobPattern::new("Ghostty")),
+            app_id: None,
+            title: None,
+            ax_id: None,
+            subrole: None,
+            window_level: None,
+            close_button: None,
+            fullscreen_button: None,
+            minimize_button: None,
+            zoom_button: None,
+        };
+
+        // Level 0 (normal) should match
+        let ext_normal = ExtendedWindowAttributes {
+            window_level: 0,
+            ..Default::default()
+        };
+        assert!(matcher.matches_extended("Ghostty", None, "Window", &ext_normal));
+
+        // Level 3 (floating) should NOT match
+        let ext_floating = ExtendedWindowAttributes {
+            window_level: 3,
+            ..Default::default()
+        };
+        assert!(!matcher.matches_extended("Ghostty", None, "Window", &ext_floating));
+
+        // Level 8 (modal) should NOT match
+        let ext_modal = ExtendedWindowAttributes {
+            window_level: 8,
+            ..Default::default()
+        };
+        assert!(!matcher.matches_extended("Ghostty", None, "Window", &ext_modal));
+    }
+
+    #[test]
+    fn test_rule_with_explicit_window_level_matches_correctly() {
+        let matcher = RuleMatcher {
+            app_name: Some(GlobPattern::new("Raycast")),
+            app_id: None,
+            title: None,
+            ax_id: None,
+            subrole: None,
+            window_level: Some(WindowLevel::Other(WindowLevelOther::Other)),
+            close_button: None,
+            fullscreen_button: None,
+            minimize_button: None,
+            zoom_button: None,
+        };
+
+        // Level 8 (non-normal) should match with WindowLevel::Other
+        let ext_modal = ExtendedWindowAttributes {
+            window_level: 8,
+            ..Default::default()
+        };
+        assert!(matcher.matches_extended("Raycast", None, "Window", &ext_modal));
+
+        // Level 3 (non-normal) should also match with WindowLevel::Other
+        let ext_floating = ExtendedWindowAttributes {
+            window_level: 3,
+            ..Default::default()
+        };
+        assert!(matcher.matches_extended("Raycast", None, "Window", &ext_floating));
+
+        // Level 0 (normal) should NOT match with WindowLevel::Other
+        let ext_normal = ExtendedWindowAttributes {
+            window_level: 0,
+            ..Default::default()
+        };
+        assert!(!matcher.matches_extended("Raycast", None, "Window", &ext_normal));
     }
 }
