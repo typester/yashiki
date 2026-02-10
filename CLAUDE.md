@@ -337,7 +337,7 @@ Two modes: Disabled (default), Enabled. Uses `CGEventTap` to monitor `MouseMoved
 - Sorted by specificity (more specific first), "first match wins" per action type
 - Matching: app-name, app-id, title, ax-id, subrole, window-level, button states
 - For ax-id/subrole: "none" matches absent attribute
-- Non-normal layer windows: not managed by default, any non-ignore rule manages them (default to floating)
+- Non-normal layer windows: not managed by default. Rules without `--window-level` only match normal-layer (level=0) windows. To manage non-normal layer windows, `--window-level` must be specified explicitly. Matched non-normal windows default to floating.
 
 ### Outer Gap
 Managed by daemon (not layout engines), applied to all layouts including fullscreen. CSS-style syntax.
