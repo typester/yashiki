@@ -1,0 +1,65 @@
+#!/bin/bash
+
+# Yashiki workspace indicator example for SketchyBar
+#
+# Shows tags 1-10 with three states:
+#   active   - tag is visible on the focused display (highlighted)
+#   occupied - tag has windows but is not active (normal)
+#   vacant   - tag has no windows and is not active (dimmed)
+#
+# Prerequisites:
+#   - brew install --cask font-hack-nerd-font
+#   - brew install jq
+#   - yashiki running
+#
+# Usage:
+#   Copy this directory to ~/.config/sketchybar/ and restart SketchyBar.
+
+PLUGIN_DIR="$CONFIG_DIR/plugins"
+
+##### Bar Appearance #####
+sketchybar --bar position=top height=40 blur_radius=30 color=0x40000000
+
+##### Changing Defaults #####
+default=(
+  padding_left=5
+  padding_right=5
+  icon.font="Hack Nerd Font:Bold:17.0"
+  label.font="Hack Nerd Font:Bold:14.0"
+  icon.color=0xffffffff
+  label.color=0xffffffff
+  icon.padding_left=4
+  icon.padding_right=4
+  label.padding_left=4
+  label.padding_right=4
+)
+sketchybar --default "${default[@]}"
+
+##### Yashiki Workspace Indicators #####
+
+sketchybar --add event yashiki_workspace_change
+
+for i in $(seq 1 10); do
+  bitmask=$((1 << (i - 1)))
+
+  space=(
+    icon="$i"
+    icon.padding_left=7
+    icon.padding_right=7
+    icon.highlight_color=0xffffffff
+    background.color=0x40ffffff
+    background.corner_radius=5
+    background.height=25
+    background.drawing=off
+    label.drawing=off
+    click_script="yashiki tag-view $bitmask"
+    script="$PLUGIN_DIR/workspace.sh $i"
+  )
+
+  sketchybar --add item space."$i" left \
+             --set space."$i" "${space[@]}" \
+             --subscribe space."$i" yashiki_workspace_change
+done
+
+##### Start the Yashiki event bridge #####
+"$PLUGIN_DIR/yashiki_bridge.sh" &
