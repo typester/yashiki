@@ -200,6 +200,14 @@ pub async fn run_async(channels: TokioChannels) {
                 if snapshot_request_main_tx.send(snapshot_req).is_err() {
                     tracing::error!("Failed to forward snapshot request to main thread");
                 }
+                // Wake up the main thread's RunLoop immediately
+                let source = ipc_source.load(Ordering::Acquire);
+                if !source.is_null() {
+                    unsafe {
+                        CFRunLoopSourceSignal(source as CFRunLoopSourceRef);
+                        CFRunLoopWakeUp(CFRunLoopGetMain());
+                    }
+                }
             }
             else => break,
         }
