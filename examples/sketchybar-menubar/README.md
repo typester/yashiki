@@ -16,11 +16,19 @@ For a simpler single-display example, see [sketchybar](../sketchybar/).
 
 ## Usage
 
+Add to your `~/.config/yashiki/init`:
+
+```sh
+yashiki exec --track "sketchybar -c path/to/examples/sketchybar-menubar/sketchybarrc"
+```
+
+This starts SketchyBar alongside yashiki and automatically terminates it on `yashiki quit`.
+
+Or run standalone:
+
 ```sh
 sketchybar -c path/to/examples/sketchybar-menubar/sketchybarrc
 ```
-
-Or copy to your SketchyBar config directory and restart.
 
 ## Configuration
 
