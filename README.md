@@ -277,6 +277,10 @@ yashiki subscribe --filter focus,tags # Filter specific events
 
 Events are streamed as JSON lines to stdout.
 
+For integration examples with SketchyBar, see:
+- [examples/sketchybar](examples/sketchybar/) - Minimal workspace indicator (single display)
+- [examples/sketchybar-menubar](examples/sketchybar-menubar/) - Menubar overlay with multi-monitor support
+
 ### Exec Path
 
 The exec path is used for `exec` commands and custom layout engine discovery.

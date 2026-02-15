@@ -1,0 +1,83 @@
+#!/bin/bash
+
+# Yashiki workspace indicator - menubar overlay version (multi-monitor)
+#
+# Displays a minimal workspace indicator on top of the macOS menu bar,
+# between the system tray icons and the notch. Supports up to 3 displays.
+# Unfocused displays are shown dimmed.
+#
+# Prerequisites:
+#   - brew install --cask font-hack-nerd-font
+#   - python3 (macOS built-in)
+#   - yashiki running
+#
+# Usage:
+#   sketchybar -c path/to/examples/sketchybar-menubar/sketchybarrc
+
+PLUGIN_DIR="$CONFIG_DIR/plugins"
+MAX_DISPLAYS=3
+NUM_TAGS=10
+
+##### Bar Appearance #####
+sketchybar --bar \
+  topmost=on \
+  position=top \
+  height=25 \
+  color=0x00000000 \
+  blur_radius=0 \
+  shadow=off \
+  padding_left=0 \
+  padding_right=0 \
+  y_offset=5 \
+  margin=0 \
+  sticky=on \
+  notch_width=200
+
+##### Changing Defaults #####
+default=(
+  icon.font="Hack Nerd Font:Bold:12.0"
+  icon.color=0xff888888
+  label.drawing=off
+)
+sketchybar --default "${default[@]}"
+
+##### Yashiki Workspace Indicators (per display) #####
+
+for d in $(seq 1 $MAX_DISPLAYS); do
+  for i in $(seq 1 $NUM_TAGS); do
+    bitmask=$((1 << (i - 1)))
+    item_name="space.d${d}.${i}"
+
+    space=(
+      icon="$i"
+      icon.padding_left=4
+      icon.padding_right=4
+      background.drawing=off
+      display=$d
+      drawing=off
+      click_script="yashiki tag-view $bitmask"
+    )
+
+    # Outer padding on first/last items for balanced bracket background
+    if [ "$i" -eq 1 ]; then
+      space+=(padding_left=6)
+    fi
+    if [ "$i" -eq "$NUM_TAGS" ]; then
+      space+=(padding_right=6)
+    fi
+
+    sketchybar --add item "$item_name" e \
+               --set "$item_name" "${space[@]}"
+  done
+
+  # Group workspace items with a background bracket (per display)
+  sketchybar --add bracket "workspaces.d${d}" "/space\.d${d}\..*/" \
+             --set "workspaces.d${d}" \
+               background.color=0x80000000 \
+               background.corner_radius=8 \
+               background.height=22 \
+               background.drawing=on
+done
+
+##### Start the Yashiki event bridge #####
+reap --watch $PPID "$PLUGIN_DIR/yashiki_bridge.py" &
