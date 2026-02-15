@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/typester/yashiki/compare/yashiki-v0.11.0...yashiki-v0.11.1) - 2026-02-15
+
+### Fixed
+
+- wake up RunLoop after snapshot request to fix subscribe --snapshot ([#134](https://github.com/typester/yashiki/pull/134))
+
 ## [0.11.0](https://github.com/typester/yashiki/compare/yashiki-v0.10.7...yashiki-v0.11.0) - 2026-02-10
 
 ### Fixed
