@@ -8,7 +8,7 @@ For a simpler single-display example, see [sketchybar](../sketchybar/).
 
 ## Prerequisites
 
-- [SketchyBar](https://github.com/FelixKratz/SketchyBar)
+- [SketchyBar](https://github.com/FelixKratz/SketchyBar) (`brew install felixkratz/formulae/sketchybar`)
 - [Hack Nerd Font](https://github.com/ryanoasis/nerd-fonts) (`brew install --cask font-hack-nerd-font`)
 - [reap](https://github.com/nickolasburr/reap) (`brew install typester/tap/reap`)
 - python3 (macOS built-in)
