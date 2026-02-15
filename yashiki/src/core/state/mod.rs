@@ -55,6 +55,7 @@ pub struct DisplayChangeResult {
     pub added: Vec<Display>,
     pub removed: Vec<DisplayId>,
     pub new_window_ids: Vec<WindowId>,
+    pub relocated_window_ids: Vec<WindowId>,
 }
 
 /// Result of focus_output operation

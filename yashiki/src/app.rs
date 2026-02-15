@@ -551,6 +551,7 @@ impl App {
                 );
 
                 // Handle display change
+                let prev_focused = ctx.state.borrow().focused_display;
                 let result = ctx
                     .state
                     .borrow_mut()
@@ -572,6 +573,21 @@ impl App {
                     for disp in state.displays.values() {
                         ctx.event_emitter
                             .emit_display_updated(disp, focused_display);
+                    }
+                }
+
+                // Emit DisplayFocused if focus changed (e.g. focused display was removed)
+                if focused_display != prev_focused {
+                    ctx.event_emitter.emit_display_focused(focused_display);
+                }
+
+                // Emit WindowUpdated for windows relocated by orphan processing
+                if !result.relocated_window_ids.is_empty() {
+                    let state = ctx.state.borrow();
+                    for window_id in &result.relocated_window_ids {
+                        if let Some(window) = state.windows.get(window_id) {
+                            ctx.event_emitter.emit_window_updated(window, state.focused);
+                        }
                     }
                 }
 

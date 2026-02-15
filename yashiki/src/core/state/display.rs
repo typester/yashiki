@@ -51,6 +51,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
         }
 
         // Restore orphaned windows to their original displays if those displays have returned
+        let mut relocated_window_ids = Vec::new();
         for window in state.windows.values_mut() {
             if let Some(original_display_id) = window.orphaned_from {
                 // Guard: Only restore if the original display is back and exists in state
@@ -69,6 +70,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
                     window.orphaned_from = None; // Clear orphan state after successful restoration
                     displays_to_retile.insert(previous_display);
                     displays_to_retile.insert(original_display_id);
+                    relocated_window_ids.push(window.id);
                 }
                 // If original display didn't return, keep orphaned_from set for future restoration
             }
@@ -94,6 +96,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
             added,
             removed: vec![],
             new_window_ids,
+            relocated_window_ids,
         };
     }
 
@@ -114,11 +117,13 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
             added: vec![],
             removed: removed_ids,
             new_window_ids: vec![],
+            relocated_window_ids: vec![],
         };
     };
 
     let mut window_moves = Vec::new();
     let mut affected_displays = HashSet::new();
+    let mut relocated_window_ids = Vec::new();
 
     for window in state.windows.values_mut() {
         if removed_ids.contains(&window.display_id) {
@@ -136,6 +141,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
             }
             window.display_id = fallback_id;
             affected_displays.insert(fallback_id);
+            relocated_window_ids.push(window.id);
         }
     }
 
@@ -179,6 +185,7 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
         added,
         removed: removed_ids,
         new_window_ids,
+        relocated_window_ids,
     }
 }
 

@@ -19,6 +19,8 @@ MAX_DISPLAYS=3
 NUM_TAGS=10
 
 ##### Bar Appearance #####
+# height, y_offset, notch_width are base values for 1512pt display width.
+# The bridge dynamically scales them when display resolution changes.
 sketchybar --bar \
   topmost=on \
   position=top \
