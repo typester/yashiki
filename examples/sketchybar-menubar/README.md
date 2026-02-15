@@ -39,12 +39,29 @@ Edit the constants at the top of `plugins/yashiki_bridge.py` and the matching va
 | `MAX_DISPLAYS` | `3` | Maximum number of displays to support (must match `sketchybarrc`) |
 | `NUM_TAGS` | `10` | Number of workspace tags (must match `sketchybarrc`) |
 | `NOTCH_DISPLAY_ID` | `"1"` | Yashiki display ID of the notched display. Set to `None` for desktop Macs without a notch |
+| `BASE_DISPLAY_WIDTH` | `1512` | Reference display width (points) for scaling calculation |
+| `BASE_NOTCH_WIDTH` | `200` | Notch width (points) at reference display width |
+| `BASE_BAR_HEIGHT` | `25` | Bar height (points) at reference display width |
+| `BASE_BAR_Y_OFFSET` | `5` | Bar vertical offset (points) at reference display width |
 
 To find your display IDs, run `yashiki list-outputs`.
 
 ### Notch Display
 
 The notched display's tags are positioned at the right end of the menu bar (between system tray and the notch). Other displays use center positioning. Set `NOTCH_DISPLAY_ID = None` if none of your displays have a notch.
+
+### Bar Scaling
+
+The builtin display's resolution (in points) may change depending on the connected external displays and their scaling settings. For example, on one setup a MacBook Pro 14" reports 1512pt with an external display connected, but 1800pt without one. When this happens, the notch width, bar height, and vertical offset need to be adjusted accordingly.
+
+The bridge automatically scales `notch_width`, `height`, and `y_offset` based on the ratio of the current display width to `BASE_DISPLAY_WIDTH`. The defaults are calibrated for a MacBook Pro 14" (M1/M2/M3).
+
+If the bar position doesn't look right on your machine, adjust the base constants:
+
+1. Run `sketchybar --query displays` and note the `frame.w` value of your notched display
+2. Set `BASE_DISPLAY_WIDTH` to that value
+3. Adjust `BASE_NOTCH_WIDTH` until the tags align with the right edge of the notch
+4. Adjust `BASE_BAR_HEIGHT` and `BASE_BAR_Y_OFFSET` if the bar height or vertical position looks off
 
 ## How It Works
 

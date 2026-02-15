@@ -25,6 +25,13 @@ NUM_TAGS = 10
 # Yashiki display ID of the notched display (None if no notch, e.g. desktop Mac)
 NOTCH_DISPLAY_ID = "1"
 
+# Base bar values calibrated at 1512pt display width (default MacBook scaling).
+# The bridge dynamically scales these when the display resolution changes.
+BASE_DISPLAY_WIDTH = 1512
+BASE_NOTCH_WIDTH = 200
+BASE_BAR_HEIGHT = 25
+BASE_BAR_Y_OFFSET = 5
+
 # Colors for focused display
 FOCUSED_ACTIVE_ICON = "0xffffffff"
 FOCUSED_ACTIVE_BG = "0x40ffffff"
@@ -63,7 +70,12 @@ def kill_old_instances():
 
 
 def query_sketchybar_displays():
-    """Query SketchyBar for DirectDisplayID -> arrangement-id mapping."""
+    """Query SketchyBar for display info.
+
+    Returns (arrangement_map, frame_widths) where:
+      arrangement_map: DirectDisplayID -> arrangement-id
+      frame_widths: DirectDisplayID -> frame width in points
+    """
     try:
         result = subprocess.run(
             ["sketchybar", "--query", "displays"],
@@ -71,13 +83,15 @@ def query_sketchybar_displays():
             text=True,
         )
         displays = json.loads(result.stdout)
-        mapping = {}
+        arrangement_map = {}
+        frame_widths = {}
         for d in displays:
             did = str(d["DirectDisplayID"])
-            mapping[did] = d["arrangement-id"]
-        return mapping
+            arrangement_map[did] = d["arrangement-id"]
+            frame_widths[did] = d["frame"]["w"]
+        return arrangement_map, frame_widths
     except Exception:
-        return {}
+        return {}, {}
 
 
 def assign_slots(state):
@@ -105,10 +119,37 @@ def assign_slots(state):
 
 def refresh_display_mapping(state):
     """Refresh SketchyBar display info and update item properties."""
-    state["arrangement_map"] = query_sketchybar_displays()
+    arrangement_map, frame_widths = query_sketchybar_displays()
+    state["arrangement_map"] = arrangement_map
+    state["frame_widths"] = frame_widths
     assign_slots(state)
+    update_bar_properties(state)
     update_display_properties(state)
     update_click_scripts(state)
+
+
+def update_bar_properties(state):
+    """Scale bar properties based on the notched display's current resolution."""
+    if NOTCH_DISPLAY_ID is None:
+        return
+    width = state.get("frame_widths", {}).get(NOTCH_DISPLAY_ID)
+    if width is None:
+        return
+    scale = width / BASE_DISPLAY_WIDTH
+    notch_width = round(BASE_NOTCH_WIDTH * scale)
+    height = round(BASE_BAR_HEIGHT * scale)
+    y_offset = round(BASE_BAR_Y_OFFSET * scale)
+    subprocess.run(
+        [
+            "sketchybar",
+            "--bar",
+            f"notch_width={notch_width}",
+            f"height={height}",
+            f"y_offset={y_offset}",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def update_display_properties(state):
@@ -239,10 +280,15 @@ def process_event(event, state):
     elif t in ("display_added", "display_updated"):
         d = event["display"]
         state["displays"][str(d["id"])] = {"visible_tags": d["visible_tags"]}
+        if d.get("is_focused"):
+            state["focused_display"] = str(d["id"])
         time.sleep(0.5)
         refresh_display_mapping(state)
     elif t == "display_removed":
-        state["displays"].pop(str(event["display_id"]), None)
+        removed_id = str(event["display_id"])
+        state["displays"].pop(removed_id, None)
+        if state["focused_display"] == removed_id and state["displays"]:
+            state["focused_display"] = next(iter(state["displays"]))
         time.sleep(0.5)
         refresh_display_mapping(state)
     else:
