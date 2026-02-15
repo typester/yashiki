@@ -10,7 +10,7 @@ For a simpler single-display example, see [sketchybar](../sketchybar/).
 
 - [SketchyBar](https://github.com/FelixKratz/SketchyBar) (`brew install felixkratz/formulae/sketchybar`)
 - [Hack Nerd Font](https://github.com/ryanoasis/nerd-fonts) (`brew install --cask font-hack-nerd-font`)
-- [reap](https://github.com/typester/reap) (`brew install typester/tap/reap`)
+- [reap](https://github.com/typester/reap) (`brew install typester/reap/reap`)
 - python3 (macOS built-in)
 - yashiki running
 
