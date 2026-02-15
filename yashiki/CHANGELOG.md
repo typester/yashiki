@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2](https://github.com/typester/yashiki/compare/yashiki-v0.11.1...yashiki-v0.11.2) - 2026-02-15
+
+### Fixed
+
+- emit missing events on display connect/disconnect and scale bar properties ([#139](https://github.com/typester/yashiki/pull/139))
+
 ## [0.11.1](https://github.com/typester/yashiki/compare/yashiki-v0.11.0...yashiki-v0.11.1) - 2026-02-15
 
 ### Fixed
