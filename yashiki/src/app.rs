@@ -473,6 +473,12 @@ impl App {
                                                     .map(|w| w.display_id)
                                             })
                                             .unwrap_or(0);
+                                        // Update focused_display if window is on a different display
+                                        let display_changed =
+                                            display_id != 0 && state.focused_display != display_id;
+                                        if display_changed {
+                                            state.focused_display = display_id;
+                                        }
                                         // Set focus intent before focusing
                                         state.set_focus_intent(window_id, pid, display_id);
                                         drop(state); // Release borrow before manipulator call
@@ -485,6 +491,9 @@ impl App {
                                         ctx.window_manipulator.focus_window(window_id, pid);
                                         ctx.state.borrow_mut().set_focused(Some(window_id));
                                         ctx.event_emitter.emit_window_focused(Some(window_id));
+                                        if display_changed {
+                                            ctx.event_emitter.emit_display_focused(display_id);
+                                        }
                                         // Clear hover state after focusing
                                         ctx.state.borrow_mut().auto_raise_state.hover_start = None;
                                     }
@@ -978,6 +987,14 @@ impl App {
 
                     // Emit focus change event
                     ctx.event_emitter.emit_window_focused(focused_id);
+
+                    // Emit DisplayFocused if display changed
+                    if let Some(prev_display) = prev_focused_display {
+                        let current_display = ctx.state.borrow().focused_display;
+                        if current_display != prev_display {
+                            ctx.event_emitter.emit_display_focused(current_display);
+                        }
+                    }
 
                     if let Some(focused_id) = focused_id {
                         if notify_layout_focus(&ctx.state, &ctx.layout_engine_manager, focused_id) {
