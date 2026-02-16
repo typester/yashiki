@@ -28,6 +28,7 @@ use channels::{create_channels, run_async, IpcCommandWithResponse, MainChannels,
 use dispatch::dispatch_command;
 use focus::{notify_layout_focus, switch_tag_for_focused_window};
 use retile::{do_retile, do_retile_display};
+use state_events::{capture_event_state, emit_state_change_events};
 use sync_helper::{process_new_windows, sync_and_process_new_windows, sync_focused_and_process};
 
 use crate::core::State;
@@ -473,15 +474,17 @@ impl App {
                                                     .map(|w| w.display_id)
                                             })
                                             .unwrap_or(0);
-                                        // Update focused_display if window is on a different display
-                                        let display_changed =
-                                            display_id != 0 && state.focused_display != display_id;
-                                        if display_changed {
-                                            state.focused_display = display_id;
+                                        drop(state); // Release borrow before capture
+                                        let pre_state = capture_event_state(&ctx.state);
+                                        {
+                                            let mut state = ctx.state.borrow_mut();
+                                            if display_id != 0
+                                                && state.focused_display != display_id
+                                            {
+                                                state.focused_display = display_id;
+                                            }
+                                            state.set_focus_intent(window_id, pid, display_id);
                                         }
-                                        // Set focus intent before focusing
-                                        state.set_focus_intent(window_id, pid, display_id);
-                                        drop(state); // Release borrow before manipulator call
                                         tracing::debug!(
                                             "Auto-raise: focusing window {} at ({}, {})",
                                             window_id,
@@ -490,10 +493,11 @@ impl App {
                                         );
                                         ctx.window_manipulator.focus_window(window_id, pid);
                                         ctx.state.borrow_mut().set_focused(Some(window_id));
-                                        ctx.event_emitter.emit_window_focused(Some(window_id));
-                                        if display_changed {
-                                            ctx.event_emitter.emit_display_focused(display_id);
-                                        }
+                                        emit_state_change_events(
+                                            &ctx.event_emitter,
+                                            &ctx.state,
+                                            &pre_state,
+                                        );
                                         // Clear hover state after focusing
                                         ctx.state.borrow_mut().auto_raise_state.hover_start = None;
                                     }
@@ -559,14 +563,16 @@ impl App {
                     event.flags
                 );
 
+                // Capture state before display change for event emission
+                let pre_state = capture_event_state(&ctx.state);
+
                 // Handle display change
-                let prev_focused = ctx.state.borrow().focused_display;
                 let result = ctx
                     .state
                     .borrow_mut()
                     .handle_display_change(&ctx.window_system);
 
-                // Emit display events
+                // Emit display add/remove/update events (not covered by emit_state_change_events)
                 let focused_display = ctx.state.borrow().focused_display;
                 for display in &result.added {
                     ctx.event_emitter
@@ -575,28 +581,11 @@ impl App {
                 for display_id in &result.removed {
                     ctx.event_emitter.emit_display_removed(*display_id);
                 }
-
-                // Emit DisplayUpdated events for frame changes
                 {
                     let state = ctx.state.borrow();
                     for disp in state.displays.values() {
                         ctx.event_emitter
                             .emit_display_updated(disp, focused_display);
-                    }
-                }
-
-                // Emit DisplayFocused if focus changed (e.g. focused display was removed)
-                if focused_display != prev_focused {
-                    ctx.event_emitter.emit_display_focused(focused_display);
-                }
-
-                // Emit WindowUpdated for windows relocated by orphan processing
-                if !result.relocated_window_ids.is_empty() {
-                    let state = ctx.state.borrow();
-                    for window_id in &result.relocated_window_ids {
-                        if let Some(window) = state.windows.get(window_id) {
-                            ctx.event_emitter.emit_window_updated(window, state.focused);
-                        }
                     }
                 }
 
@@ -632,6 +621,9 @@ impl App {
                         &ctx.window_manipulator,
                     );
                 }
+
+                // Emit state change events (DisplayFocused, WindowUpdated, WindowDestroyed, TagsChanged, etc.)
+                emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
             }
         }
 
@@ -683,6 +675,8 @@ impl App {
             while let Ok(event) = ctx.workspace_event_rx.try_recv() {
                 match event {
                     WorkspaceEvent::AppLaunched { pid } => {
+                        let pre_state = capture_event_state(&ctx.state);
+
                         tracing::info!("App launched, adding observer for pid {}", pid);
                         if let Err(e) = ctx.observer_manager.borrow_mut().add_observer(pid) {
                             tracing::warn!("Failed to add observer for pid {}: {}", pid, e);
@@ -744,22 +738,13 @@ impl App {
                             );
                         }
 
-                        ctx.event_emitter
-                            .emit_window_focused(ctx.state.borrow().focused);
+                        emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
                     }
                     WorkspaceEvent::AppTerminated { pid } => {
+                        let pre_state = capture_event_state(&ctx.state);
+
                         tracing::info!("App terminated, removing observer for pid {}", pid);
                         ctx.observer_manager.borrow_mut().remove_observer(pid);
-
-                        // Emit window destroyed events before removing windows
-                        {
-                            let state = ctx.state.borrow();
-                            for window in state.windows.values() {
-                                if window.pid == pid {
-                                    ctx.event_emitter.emit_window_destroyed(window.id);
-                                }
-                            }
-                        }
 
                         // Directly remove windows - no AX API check needed since
                         // process termination is confirmed by NSWorkspace notification
@@ -771,6 +756,8 @@ impl App {
                                 &ctx.window_manipulator,
                             );
                         }
+
+                        emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
                     }
                     WorkspaceEvent::AppActivated { pid } => {
                         // Only sync if we don't have an observer OR we don't have windows
@@ -779,6 +766,8 @@ impl App {
                             || !ctx.state.borrow().has_windows_for_pid(pid);
 
                         if needs_sync {
+                            let pre_state = capture_event_state(&ctx.state);
+
                             tracing::info!("App activated (needs sync), pid {}", pid);
 
                             // sync_and_process_new_windows handles observer registration internally
@@ -819,8 +808,7 @@ impl App {
                                 );
                             }
 
-                            ctx.event_emitter
-                                .emit_window_focused(ctx.state.borrow().focused);
+                            emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
                         } else {
                             tracing::debug!("App activated (already tracked), pid {}", pid);
                         }
@@ -875,18 +863,12 @@ impl App {
             // Process observer events and forward to tokio
             let mut needs_retile = false;
             while let Ok(event) = ctx.observer_event_rx.try_recv() {
+                let pre_state = capture_event_state(&ctx.state);
+
                 let is_focus_event = matches!(
                     event,
                     Event::FocusedWindowChanged | Event::ApplicationActivated { .. }
                 );
-
-                // Capture previous focused window and display before handle_event updates it
-                let (prev_focused, prev_focused_display) = if is_focus_event {
-                    let s = ctx.state.borrow();
-                    (Some(s.focused), Some(s.focused_display))
-                } else {
-                    (None, None)
-                };
 
                 // For ApplicationActivated, sync windows if none exist for this pid.
                 // This handles cases where AppLaunched event was missed.
@@ -968,31 +950,22 @@ impl App {
                                 intended_id
                             );
                             ctx.window_manipulator.focus_window(intended_id, pid);
-                            let mut state = ctx.state.borrow_mut();
-                            state.set_focused(Some(intended_id));
-                            if let Some(prev_display) = prev_focused_display {
-                                if state.focused_display != prev_display {
+                            {
+                                let mut state = ctx.state.borrow_mut();
+                                state.set_focused(Some(intended_id));
+                                if state.focused_display != pre_state.focused_display {
                                     tracing::debug!(
                                         "Reverting focused_display: {} -> {}",
                                         state.focused_display,
-                                        prev_display
+                                        pre_state.focused_display
                                     );
-                                    state.focused_display = prev_display;
+                                    state.focused_display = pre_state.focused_display;
                                 }
                             }
-                            // Skip further focus handling - don't switch tags
+                            // Emit events for any state changes (e.g., windows added/removed
+                            // by handle_event) before skipping further focus handling
+                            emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
                             continue;
-                        }
-                    }
-
-                    // Emit focus change event
-                    ctx.event_emitter.emit_window_focused(focused_id);
-
-                    // Emit DisplayFocused if display changed
-                    if let Some(prev_display) = prev_focused_display {
-                        let current_display = ctx.state.borrow().focused_display;
-                        if current_display != prev_display {
-                            ctx.event_emitter.emit_display_focused(current_display);
                         }
                     }
 
@@ -1006,9 +979,9 @@ impl App {
                     // This prevents unwanted tag switch when:
                     // 1. Accessory apps like Raycast are activated (prev_focused is None)
                     // 2. App terminates and macOS auto-activates another app (prev was None)
-                    let focus_changed = match prev_focused {
-                        Some(Some(prev_id)) => Some(prev_id) != focused_id,
-                        _ => false,
+                    let focus_changed = match pre_state.focused {
+                        Some(prev_id) => Some(prev_id) != focused_id,
+                        None => false,
                     };
                     if focus_changed {
                         let moves = switch_tag_for_focused_window(&ctx.state);
@@ -1018,6 +991,8 @@ impl App {
                         }
                     }
                 }
+
+                emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
 
                 if ctx.event_tx.blocking_send(event).is_err() {
                     tracing::error!("Failed to forward event to tokio");
