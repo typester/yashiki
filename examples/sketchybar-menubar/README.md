@@ -30,6 +30,20 @@ Or run standalone:
 sketchybar -c path/to/examples/sketchybar-menubar/sketchybarrc
 ```
 
+## Known Limitations
+
+### Menu Bar Click-Through
+
+SketchyBar overlays the macOS menu bar as a topmost window. While SketchyBar's transparent areas allow clicks to pass through to regular windows, they do **not** pass through to the macOS menu bar (which is a system UI layer, not a regular window). This means OS menu bar items (app menus, Wi-Fi, clock, etc.) behind the SketchyBar overlay cannot be clicked.
+
+**Workaround:** Bind a hotkey to toggle SketchyBar visibility:
+
+```sh
+yashiki bind alt-b exec "sketchybar --bar hidden=toggle"
+```
+
+Press the hotkey to hide SketchyBar when you need to access menu bar items, then press again to show it.
+
 ## Configuration
 
 Edit the constants at the top of `plugins/yashiki_bridge.py` and the matching values in `sketchybarrc`:
