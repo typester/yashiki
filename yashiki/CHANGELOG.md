@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.3](https://github.com/typester/yashiki/compare/yashiki-v0.11.2...yashiki-v0.11.3) - 2026-02-16
+
+### Fixed
+
+- emit DisplayFocused event on auto-raise and external focus change ([#142](https://github.com/typester/yashiki/pull/142))
+
 ## [0.11.2](https://github.com/typester/yashiki/compare/yashiki-v0.11.1...yashiki-v0.11.2) - 2026-02-15
 
 ### Fixed
