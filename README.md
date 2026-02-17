@@ -277,9 +277,10 @@ yashiki subscribe --filter focus,tags # Filter specific events
 
 Events are streamed as JSON lines to stdout.
 
-For integration examples with SketchyBar, see:
-- [examples/sketchybar](examples/sketchybar/) - Minimal workspace indicator (single display)
-- [examples/sketchybar-menubar](examples/sketchybar-menubar/) - Menubar overlay with multi-monitor support
+For integration examples, see:
+- [examples/ranma](examples/ranma/) - Workspace indicator using [Ranma](https://github.com/typester/ranma) (multi-monitor)
+- [examples/sketchybar](examples/sketchybar/) - Workspace indicator using [SketchyBar](https://github.com/FelixKratz/SketchyBar) (single display)
+- [examples/sketchybar-menubar](examples/sketchybar-menubar/) - SketchyBar menubar overlay (multi-monitor)
 
 ### Exec Path
 
