@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.4](https://github.com/typester/yashiki/compare/yashiki-v0.11.3...yashiki-v0.11.4) - 2026-02-17
+
+### Added
+
+- suppress auto-raise while popup menus are visible ([#146](https://github.com/typester/yashiki/pull/146))
+
+### Fixed
+
+- unify event emission across all callbacks using capture/emit pattern ([#144](https://github.com/typester/yashiki/pull/144))
+
 ## [0.11.3](https://github.com/typester/yashiki/compare/yashiki-v0.11.2...yashiki-v0.11.3) - 2026-02-16
 
 ### Fixed
