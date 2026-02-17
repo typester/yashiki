@@ -460,6 +460,10 @@ impl App {
                             // Same window - check if delay has elapsed
                             if let Some(start) = auto_raise.hover_start {
                                 if start.elapsed().as_millis() >= delay_ms as u128 {
+                                    // Suppress auto-raise while popup menus are visible
+                                    if crate::macos::has_popup_menu_on_screen() {
+                                        continue;
+                                    }
                                     // Delay elapsed - check if already focused
                                     if state.focused != Some(window_id) {
                                         // Get display_id for focus intent

@@ -290,6 +290,30 @@ fn get_display_bounds(display_id: DisplayId) -> Bounds {
     }
 }
 
+/// Check if any popup menu windows are visible on screen.
+/// Popup menus (layer 101) include menu bar menus and context menus.
+/// Used to suppress auto-raise while menus are open.
+pub fn has_popup_menu_on_screen() -> bool {
+    let options = kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements;
+    let window_list: CFArray = unsafe {
+        CFArray::wrap_under_create_rule(CGWindowListCopyWindowInfo(options, kCGNullWindowID))
+    };
+
+    for i in 0..window_list.len() {
+        let dict_ptr = unsafe { *window_list.get_unchecked(i) };
+        let dict: CFDictionary = unsafe { CFDictionary::wrap_under_get_rule(dict_ptr as *const _) };
+
+        let Some(layer) = get_number(&dict, "kCGWindowLayer").and_then(|n| n.to_i32()) else {
+            continue;
+        };
+        if layer == 101 {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Detect menu bar heights for each display by looking at Window Server windows.
 /// Menu bars are at layer 24, owned by "Window Server", thin (height < 50) and screen-wide.
 /// Returns a map of display_id -> menu_bar_height.
