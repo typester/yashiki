@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.5](https://github.com/typester/yashiki/compare/yashiki-v0.11.4...yashiki-v0.11.5) - 2026-02-19
+
+### Fixed
+
+- make window-focus next/prev follow visual layout order instead of WindowId order ([#150](https://github.com/typester/yashiki/pull/150))
+
 ## [0.11.4](https://github.com/typester/yashiki/compare/yashiki-v0.11.3...yashiki-v0.11.4) - 2026-02-17
 
 ### Added
