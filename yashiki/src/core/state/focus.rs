@@ -39,8 +39,15 @@ fn focus_window_stack(
         return None;
     }
 
+    let display = state.displays.get(&state.focused_display)?;
     let mut sorted: Vec<_> = visible.iter().map(|w| (w.id, w.pid)).collect();
-    sorted.sort_by_key(|(id, _)| *id);
+    sorted.sort_by_key(|(id, _)| {
+        display
+            .window_order
+            .iter()
+            .position(|&wid| wid == *id)
+            .unwrap_or(usize::MAX)
+    });
 
     let current_idx = state
         .focused

@@ -827,6 +827,59 @@ mod tests {
     }
 
     #[test]
+    fn test_focus_window_next_follows_window_order() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Override window_order to differ from WindowId order
+        // WindowId order: [100, 101, 102], window_order: [102, 100, 101]
+        let display = state.displays.get_mut(&state.focused_display).unwrap();
+        display.window_order = vec![102, 100, 101];
+
+        // focused=100 (index 1 in window_order), Next → 101 (index 2)
+        state.focused = Some(100);
+        let result = state.focus_window(Direction::Next);
+        assert_eq!(result.unwrap().0, 101);
+
+        // focused=101 (index 2, last), Next → 102 (index 0, wrap)
+        state.focused = Some(101);
+        let result = state.focus_window(Direction::Next);
+        assert_eq!(result.unwrap().0, 102);
+
+        // focused=102 (index 0, first), Next → 100 (index 1)
+        state.focused = Some(102);
+        let result = state.focus_window(Direction::Next);
+        assert_eq!(result.unwrap().0, 100);
+    }
+
+    #[test]
+    fn test_focus_window_prev_follows_window_order() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Override window_order: [102, 100, 101]
+        let display = state.displays.get_mut(&state.focused_display).unwrap();
+        display.window_order = vec![102, 100, 101];
+
+        // focused=102 (index 0, first), Prev → 101 (index 2, wrap)
+        state.focused = Some(102);
+        let result = state.focus_window(Direction::Prev);
+        assert_eq!(result.unwrap().0, 101);
+
+        // focused=100 (index 1), Prev → 102 (index 0)
+        state.focused = Some(100);
+        let result = state.focus_window(Direction::Prev);
+        assert_eq!(result.unwrap().0, 102);
+
+        // focused=101 (index 2), Prev → 100 (index 1)
+        state.focused = Some(101);
+        let result = state.focus_window(Direction::Prev);
+        assert_eq!(result.unwrap().0, 100);
+    }
+
+    #[test]
     fn test_focus_window_directional() {
         let ws = setup_mock_system();
         let mut state = State::new();
