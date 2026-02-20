@@ -442,13 +442,11 @@ impl App {
 
                 let delay_ms = ctx.state.borrow().config.auto_raise_delay_ms;
 
-                // Find topmost window at cursor position (managed or ignored)
+                // Find topmost managed window at cursor position
                 let window_at_point = ctx.state.borrow().find_window_at_point(pos.x, pos.y);
 
-                // Extract window_id and pid from WindowAtPoint (both variants handled the same)
                 let window_info = window_at_point.map(|w| match w {
                     WindowAtPoint::Managed { window_id, pid } => (window_id, pid),
-                    WindowAtPoint::Ignored { window_id, pid } => (window_id, pid),
                 });
 
                 match window_info {
@@ -471,12 +469,6 @@ impl App {
                                             .windows
                                             .get(&window_id)
                                             .map(|w| w.display_id)
-                                            .or_else(|| {
-                                                state
-                                                    .ignored_windows
-                                                    .get(&window_id)
-                                                    .map(|w| w.display_id)
-                                            })
                                             .unwrap_or(0);
                                         drop(state); // Release borrow before capture
                                         let pre_state = capture_event_state(&ctx.state);
