@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.6](https://github.com/typester/yashiki/compare/yashiki-v0.11.5...yashiki-v0.11.6) - 2026-02-20
+
+### Fixed
+
+- prevent auto-raise from focusing ignored windows ([#152](https://github.com/typester/yashiki/pull/152))
+
 ## [0.11.5](https://github.com/typester/yashiki/compare/yashiki-v0.11.4...yashiki-v0.11.5) - 2026-02-19
 
 ### Fixed
