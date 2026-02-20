@@ -17,20 +17,19 @@ pub struct IgnoredWindowInfo {
     /// When this window was added to the ignored list.
     /// Used to protect managed windows during app transitions (e.g., native fullscreen).
     pub added_at: Instant,
-    /// Window frame from CGWindowList, used for auto-raise hit testing.
+    /// Window frame from CGWindowList.
     pub frame: Rect,
-    /// Display ID where this window is located, used for hit-test optimization.
+    /// Display ID where this window is located.
     pub display_id: DisplayId,
     /// Window layer level. Non-zero level windows (system dialogs, etc.) are not included
     /// in AXWindows attribute, so window_exists_in_ax check is skipped for them.
     pub window_level: i32,
 }
 
-/// Result of find_window_at_point, indicating whether the window is managed or ignored.
+/// Result of find_window_at_point.
 #[derive(Debug, Clone, Copy)]
 pub enum WindowAtPoint {
     Managed { window_id: WindowId, pid: i32 },
-    Ignored { window_id: WindowId, pid: i32 },
 }
 
 mod display;
@@ -267,9 +266,9 @@ impl State {
         self.windows.values().any(|w| w.pid == pid)
     }
 
-    /// Find the topmost visible window at the given screen coordinates.
+    /// Find the topmost visible managed window at the given screen coordinates.
     /// Uses cached z-order (front-to-back) to return the window that is visually on top.
-    /// Returns WindowAtPoint indicating whether the window is managed or ignored.
+    /// Ignored windows are skipped so auto-raise doesn't try to focus them.
     pub fn find_window_at_point(&self, x: i32, y: i32) -> Option<WindowAtPoint> {
         // Find the display containing this point
         let display = self.displays.values().find(|d| {
@@ -277,9 +276,8 @@ impl State {
             x >= f.x && x < f.x + f.width as i32 && y >= f.y && y < f.y + f.height as i32
         })?;
 
-        // Iterate in z-order (front-to-back) to find topmost window at point
+        // Iterate in z-order (front-to-back) to find topmost managed window at point
         for &window_id in &self.window_z_order {
-            // Check if it's a managed window
             if let Some(window) = self.windows.get(&window_id) {
                 if window.display_id == display.id
                     && window.tags.intersects(display.visible_tags)
@@ -291,21 +289,6 @@ impl State {
                         return Some(WindowAtPoint::Managed {
                             window_id: window.id,
                             pid: window.pid,
-                        });
-                    }
-                }
-                continue;
-            }
-
-            // Check if it's an ignored window
-            if let Some(info) = self.ignored_windows.get(&window_id) {
-                if info.display_id == display.id {
-                    let f = &info.frame;
-                    if x >= f.x && x < f.x + f.width as i32 && y >= f.y && y < f.y + f.height as i32
-                    {
-                        return Some(WindowAtPoint::Ignored {
-                            window_id,
-                            pid: info.pid,
                         });
                     }
                 }
@@ -3637,5 +3620,129 @@ mod tests {
         assert_eq!(state.windows.len(), 1);
         assert!(!state.windows.contains_key(&100));
         assert!(state.windows.contains_key(&101));
+    }
+
+    #[test]
+    fn test_find_window_at_point_returns_managed_window() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Cursor inside window → returns Managed
+        let result = state.find_window_at_point(400, 400);
+        assert!(matches!(
+            result,
+            Some(WindowAtPoint::Managed {
+                window_id: 100,
+                pid: 1000
+            })
+        ));
+
+        // Cursor outside window → None
+        let result = state.find_window_at_point(1500, 800);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_window_at_point_skips_ignored_window() {
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        // borders-like overlay: full-screen ignored window
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "borders", 0.0, 0.0, 1920.0, 1080.0,
+            )]);
+
+        ws.set_extended_attributes(
+            100,
+            ExtendedWindowAttributes {
+                subrole: Some("AXUnknown".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let mut state = State::new();
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("borders")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Ignore,
+        });
+        state.sync_all(&ws);
+
+        assert!(state.windows.is_empty());
+        assert!(state.ignored_windows.contains_key(&100));
+
+        // Cursor inside ignored window → None (ignored windows are skipped)
+        let result = state.find_window_at_point(500, 500);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_window_at_point_finds_managed_behind_ignored() {
+        use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
+
+        // borders (z-order front, ignored) overlapping Teams (z-order back, managed)
+        // with_windows order = CGWindowList order = z-order (front-to-back)
+        let mut ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "borders", 0.0, 0.0, 1920.0, 1080.0),
+                create_test_window(101, 1001, "Teams", 100.0, 100.0, 800.0, 600.0),
+            ]);
+
+        ws.set_extended_attributes(
+            100,
+            ExtendedWindowAttributes {
+                subrole: Some("AXUnknown".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let mut state = State::new();
+        state.add_rule(WindowRule {
+            matcher: RuleMatcher {
+                app_name: Some(GlobPattern::new("borders")),
+                app_id: None,
+                title: None,
+                ax_id: None,
+                subrole: None,
+                window_level: None,
+                close_button: None,
+                fullscreen_button: None,
+                minimize_button: None,
+                zoom_button: None,
+            },
+            action: RuleAction::Ignore,
+        });
+        state.sync_all(&ws);
+
+        assert!(state.ignored_windows.contains_key(&100));
+        assert!(state.windows.contains_key(&101));
+
+        // Cursor in overlap area → finds managed Teams (skips ignored borders)
+        let result = state.find_window_at_point(400, 400);
+        assert!(matches!(
+            result,
+            Some(WindowAtPoint::Managed {
+                window_id: 101,
+                pid: 1001
+            })
+        ));
     }
 }
