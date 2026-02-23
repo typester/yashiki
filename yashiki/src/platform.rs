@@ -150,6 +150,7 @@ pub trait WindowManipulator {
     fn apply_window_moves(&self, moves: &[WindowMove]);
     fn apply_layout(&self, display_id: DisplayId, frame: &Rect, geometries: &[WindowGeometry]);
     fn focus_window(&self, window_id: u32, pid: i32);
+    fn refocus_window(&self, window_id: u32, pid: i32);
     fn move_window_to_position(&self, window_id: u32, pid: i32, x: i32, y: i32);
     fn set_window_dimensions(&self, window_id: u32, pid: i32, width: u32, height: u32);
     fn set_window_frame(&self, window_id: u32, pid: i32, x: i32, y: i32, width: u32, height: u32);
@@ -333,9 +334,9 @@ impl WindowManipulator for MacOSWindowManipulator {
                         Ok(()) => tracing::debug!("Raised window {} (pid {})", window_id, pid),
                         Err(e) => tracing::warn!("Failed to raise window {}: {}", window_id, e),
                     }
-                    // Only activate application if it's not already frontmost
-                    // This prevents macOS from re-evaluating which window to focus
                     if !is_frontmost {
+                        // Not frontmost: use AXFrontmost which activates the app without
+                        // re-evaluating which window should be key window
                         match app.set_frontmost(true) {
                             Ok(()) => {
                                 tracing::debug!("Set AXFrontmost for pid {}", pid);
@@ -349,7 +350,59 @@ impl WindowManipulator for MacOSWindowManipulator {
                             }
                         }
                     } else {
-                        tracing::debug!("Skipped activate for pid {} (already frontmost)", pid);
+                        // Already frontmost: AXFrontmost is a no-op when the app is already
+                        // frontmost, so it won't change the key window (Firefox ignores
+                        // set_main/raise alone). Use activate_application (NSRunningApplication)
+                        // instead, which forces macOS to re-evaluate the key window.
+                        // This may cause cross-display redirect, but FocusIntent handles that.
+                        activate_application(pid);
+                        tracing::debug!(
+                            "Activated already-frontmost pid {} to force key window change",
+                            pid
+                        );
+                    }
+                    return;
+                }
+            }
+        }
+
+        tracing::warn!(
+            "Could not find AX window for id {} (pid {})",
+            window_id,
+            pid
+        );
+    }
+
+    fn refocus_window(&self, window_id: u32, pid: i32) {
+        let app = AXUIElement::application(pid);
+        let ax_windows = match app.windows() {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!("Failed to get windows for pid {}: {}", pid, e);
+                return;
+            }
+        };
+
+        for ax_win in &ax_windows {
+            if let Some(wid) = ax_win.window_id() {
+                if wid == window_id {
+                    match ax_win.set_main(true) {
+                        Ok(()) => {
+                            tracing::debug!("Refocus: set main window {} (pid {})", window_id, pid)
+                        }
+                        Err(e) => tracing::warn!(
+                            "Refocus: failed to set main window {}: {}",
+                            window_id,
+                            e
+                        ),
+                    }
+                    match ax_win.raise() {
+                        Ok(()) => {
+                            tracing::debug!("Refocus: raised window {} (pid {})", window_id, pid)
+                        }
+                        Err(e) => {
+                            tracing::warn!("Refocus: failed to raise window {}: {}", window_id, e)
+                        }
                     }
                     return;
                 }
@@ -789,6 +842,7 @@ pub mod mock {
         ) {
         }
         fn focus_window(&self, _window_id: u32, _pid: i32) {}
+        fn refocus_window(&self, _window_id: u32, _pid: i32) {}
         fn move_window_to_position(&self, _window_id: u32, _pid: i32, _x: i32, _y: i32) {}
         fn set_window_dimensions(&self, _window_id: u32, _pid: i32, _width: u32, _height: u32) {}
         fn set_window_frame(

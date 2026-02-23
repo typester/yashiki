@@ -945,7 +945,7 @@ impl App {
                                 "Suppressing spurious focus change, refocusing window {}",
                                 intended_id
                             );
-                            ctx.window_manipulator.focus_window(intended_id, pid);
+                            ctx.window_manipulator.refocus_window(intended_id, pid);
                             {
                                 let mut state = ctx.state.borrow_mut();
                                 state.set_focused(Some(intended_id));
