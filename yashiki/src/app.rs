@@ -454,6 +454,9 @@ impl App {
                         let mut state = ctx.state.borrow_mut();
                         let auto_raise = &mut state.auto_raise_state;
 
+                        auto_raise.last_hovered_display = None;
+                        auto_raise.display_hover_start = None;
+
                         if auto_raise.last_hovered == Some(window_id) {
                             // Same window - check if delay has elapsed
                             if let Some(start) = auto_raise.hover_start {
@@ -496,6 +499,25 @@ impl App {
                                         );
                                         // Clear hover state after focusing
                                         ctx.state.borrow_mut().auto_raise_state.hover_start = None;
+                                    } else {
+                                        // Window already focused but focused_display may differ
+                                        let display_id = state
+                                            .windows
+                                            .get(&window_id)
+                                            .map(|w| w.display_id)
+                                            .unwrap_or(0);
+                                        if display_id != 0 && state.focused_display != display_id {
+                                            drop(state);
+                                            let pre_state = capture_event_state(&ctx.state);
+                                            ctx.state.borrow_mut().focused_display = display_id;
+                                            emit_state_change_events(
+                                                &ctx.event_emitter,
+                                                &ctx.state,
+                                                &pre_state,
+                                            );
+                                            ctx.state.borrow_mut().auto_raise_state.hover_start =
+                                                None;
+                                        }
                                     }
                                 }
                             }
@@ -506,10 +528,57 @@ impl App {
                         }
                     }
                     None => {
-                        // No window under cursor - clear hover state
+                        // No window under cursor - check for display hover
+                        let display_at_point =
+                            ctx.state.borrow().find_display_at_point(pos.x, pos.y);
+
                         let mut state = ctx.state.borrow_mut();
                         state.auto_raise_state.last_hovered = None;
                         state.auto_raise_state.hover_start = None;
+
+                        if let Some(display_id) = display_at_point {
+                            if display_id != state.focused_display {
+                                if crate::macos::has_popup_menu_on_screen() {
+                                    continue;
+                                }
+                                let auto_raise = &mut state.auto_raise_state;
+                                if auto_raise.last_hovered_display == Some(display_id) {
+                                    // Same display - check if delay has elapsed
+                                    if let Some(start) = auto_raise.display_hover_start {
+                                        if start.elapsed().as_millis() >= delay_ms as u128 {
+                                            drop(state);
+                                            let pre_state = capture_event_state(&ctx.state);
+                                            ctx.state.borrow_mut().focused_display = display_id;
+                                            tracing::debug!(
+                                                "Auto-raise: focusing display {} at ({}, {})",
+                                                display_id,
+                                                pos.x,
+                                                pos.y
+                                            );
+                                            emit_state_change_events(
+                                                &ctx.event_emitter,
+                                                &ctx.state,
+                                                &pre_state,
+                                            );
+                                            let mut state = ctx.state.borrow_mut();
+                                            state.auto_raise_state.display_hover_start = None;
+                                        }
+                                    }
+                                } else {
+                                    // Different display - start new hover timer
+                                    auto_raise.last_hovered_display = Some(display_id);
+                                    auto_raise.display_hover_start = Some(Instant::now());
+                                }
+                            } else {
+                                // Same as focused display - clear display hover
+                                state.auto_raise_state.last_hovered_display = None;
+                                state.auto_raise_state.display_hover_start = None;
+                            }
+                        } else {
+                            // No display found - clear display hover
+                            state.auto_raise_state.last_hovered_display = None;
+                            state.auto_raise_state.display_hover_start = None;
+                        }
                     }
                 }
             }
