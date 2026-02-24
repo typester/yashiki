@@ -136,6 +136,9 @@ impl FocusIntent {
 pub struct AutoRaiseState {
     pub last_hovered: Option<WindowId>,
     pub hover_start: Option<Instant>,
+    /// Display being hovered when no managed window is under cursor.
+    pub last_hovered_display: Option<DisplayId>,
+    pub display_hover_start: Option<Instant>,
 }
 
 pub struct State {
@@ -296,6 +299,16 @@ impl State {
         }
 
         None
+    }
+
+    pub fn find_display_at_point(&self, x: i32, y: i32) -> Option<DisplayId> {
+        self.displays
+            .values()
+            .find(|d| {
+                let f = &d.frame;
+                x >= f.x && x < f.x + f.width as i32 && y >= f.y && y < f.y + f.height as i32
+            })
+            .map(|d| d.id)
     }
 
     /// Set the focus intent when intentionally focusing a window.
