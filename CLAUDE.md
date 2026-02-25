@@ -259,7 +259,7 @@ Each group sorted alphabetically, blank lines between groups.
 3. Wait for explicit approval
 4. Only then use Edit/Write tools
 5. If unexpected changes are needed, STOP and ask again
-6. Run `cargo fmt --all` at the end
+6. Run `cargo clippy --all` and `cargo fmt --all` at the end
 
 #### When user asks a question during implementation:
 - ANSWER THE QUESTION ONLY

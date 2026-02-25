@@ -113,9 +113,7 @@ impl HotkeyManager {
 
     pub fn declare_mode(&mut self, name: &str) {
         self.declared_modes.insert(name.to_string());
-        self.modes
-            .entry(name.to_string())
-            .or_insert_with(HashMap::new);
+        self.modes.entry(name.to_string()).or_default();
         tracing::info!("Declared mode: {}", name);
     }
 
