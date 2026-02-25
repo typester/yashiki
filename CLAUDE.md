@@ -56,6 +56,7 @@ Like AeroSpace, uses virtual workspaces instead of macOS native Spaces:
 - **Window rules** (riverctl-style) - glob patterns, actions: ignore, float, tags, output, position, dimensions
 - **Cursor warp** - `disabled`, `on-output-change`, `on-focus-change`
 - **Auto-raise** (focus follows mouse) - `disabled`, `enabled` with optional delay
+- **Keybinding modes** (river-style) - named modes (normal, resize, passthrough, etc.) with per-mode bindings
 - **State streaming** - real-time events via `/tmp/yashiki-events.sock`
 
 ## Layout Protocol
@@ -80,7 +81,7 @@ Focus notification: `focus-changed <window_id>` sent automatically on focus chan
 
 ## State Streaming
 
-Events via `/tmp/yashiki-events.sock` (JSON lines). Client sends `SubscribeRequest` with optional snapshot and filter. Events: WindowCreated/Destroyed/Updated, WindowFocused, DisplayFocused/Added/Removed/Updated, TagsChanged, LayoutChanged, Snapshot.
+Events via `/tmp/yashiki-events.sock` (JSON lines). Client sends `SubscribeRequest` with optional snapshot and filter. Events: WindowCreated/Destroyed/Updated, WindowFocused, DisplayFocused/Added/Removed/Updated, TagsChanged, LayoutChanged, ModeChanged, Snapshot.
 
 ## CLI Usage
 
@@ -88,9 +89,15 @@ Tags use bitmask: tag 1 = 1, tag 2 = 2, tag 3 = 4, tags 1+2 = 3
 
 ```sh
 yashiki start                     # Start daemon
-yashiki bind alt-1 tag-view 1     # Bind hotkey
-yashiki unbind alt-1              # Unbind hotkey
-yashiki list-bindings             # List bindings
+yashiki declare-mode resize        # Declare a keybinding mode
+yashiki enter-mode resize          # Switch to a mode
+yashiki get-mode                   # Get current mode
+yashiki bind alt-1 tag-view 1     # Bind hotkey (normal mode)
+yashiki bind --mode resize h layout-cmd dec-main-ratio  # Bind in specific mode
+yashiki unbind alt-1              # Unbind hotkey (normal mode)
+yashiki unbind --mode resize h    # Unbind in specific mode
+yashiki list-bindings             # List all bindings (all modes)
+yashiki list-bindings --mode normal  # List bindings for specific mode
 yashiki tag-view 1                # Switch to tag
 yashiki tag-view --output 2 1     # Switch on specific display
 yashiki tag-toggle 2              # Toggle tag visibility
@@ -125,7 +132,7 @@ yashiki get-auto-raise
 yashiki set-outer-gap <all>|<v h>|<t r b l>
 yashiki set-log-level <level>       # Runtime log level (file mode only)
 yashiki get-log-level
-yashiki subscribe [--snapshot] [--filter events]
+yashiki subscribe [--snapshot] [--filter events]  # filter: window,focus,display,tags,layout,mode
 yashiki quit
 ```
 
@@ -152,6 +159,12 @@ yashiki bind alt-f window-toggle-fullscreen
 # Layout commands
 yashiki set-outer-gap 10
 yashiki layout-cmd --layout tatami set-inner-gap 10
+
+# Keybinding modes (river-style)
+yashiki declare-mode resize
+yashiki bind alt-r enter-mode resize
+yashiki bind --mode resize h layout-cmd dec-main-ratio
+yashiki bind --mode resize escape enter-mode normal
 
 # Window rules
 yashiki rule-add --app-name Finder float
@@ -264,8 +277,12 @@ Each group sorted alphabetically, blank lines between groups.
 ## Design Decisions
 
 ### Hotkey Management
-- Bindings in `HashMap<Hotkey, Command>`, dirty flag for deferred tap recreation
+- Per-mode bindings in `HashMap<String, HashMap<Hotkey, Command>>`, dirty flag for deferred tap recreation
+- `Arc<RwLock<String>>` shares current mode between main thread and CGEventTap callback
+- `enter_mode()` only updates RwLock (no tap rebuild); `bind()`/`unbind()` set dirty flag (tap rebuild needed)
+- CGEventTap callback captures all modes' bindings at creation, reads current mode via RwLock at runtime
 - CGEventTap callback signals CFRunLoopSource for immediate processing
+- Default mode: `"normal"` (always exists, implicit)
 
 ### Focus
 - `next`/`prev`: Stack-based (sorted by window ID)

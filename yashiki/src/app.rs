@@ -238,7 +238,8 @@ impl App {
 
             // Process snapshot requests
             while let Ok(resp_tx) = ctx.snapshot_request_rx.try_recv() {
-                let snapshot = create_snapshot(&ctx.state.borrow());
+                let mode = ctx.hotkey_manager.borrow().current_mode();
+                let snapshot = create_snapshot(&ctx.state.borrow(), &mode);
                 let _ = resp_tx.send(snapshot);
             }
 
@@ -1259,7 +1260,11 @@ mod tests {
         assert!(matches!(result.response, Response::WindowId { .. }));
 
         // ListBindings
-        let result = process_command(&mut state, &mut hotkey_manager, &Command::ListBindings);
+        let result = process_command(
+            &mut state,
+            &mut hotkey_manager,
+            &Command::ListBindings { mode: None },
+        );
         assert!(result.effects.is_empty());
         assert!(matches!(result.response, Response::Bindings { .. }));
     }

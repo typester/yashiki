@@ -454,6 +454,25 @@ yashiki bind alt-shift-return exec "open -n /Applications/Ghostty.app"
 yashiki bind alt-s exec-or-focus --app-name Safari "open -a Safari"
 yashiki bind alt-c exec-or-focus --app-name "Google Chrome" "open -a 'Google Chrome'"
 
+# Keybinding modes (river-style)
+yashiki declare-mode resize
+yashiki declare-mode passthrough
+
+# Enter resize/passthrough mode
+yashiki bind alt-r enter-mode resize
+yashiki bind alt-p enter-mode passthrough
+
+# Resize mode: h/j/k/l to adjust layout, escape/return to exit
+yashiki bind --mode resize h layout-cmd dec-main-ratio
+yashiki bind --mode resize l layout-cmd inc-main-ratio
+yashiki bind --mode resize j layout-cmd dec-main-count
+yashiki bind --mode resize k layout-cmd inc-main-count
+yashiki bind --mode resize escape enter-mode normal
+yashiki bind --mode resize return enter-mode normal
+
+# Passthrough mode: all keys pass through, alt-p to exit
+yashiki bind --mode passthrough alt-p enter-mode normal
+
 # Companion tools (terminated on yashiki quit)
 yashiki exec --track "borders active_color=0xffe1e3e4"
 

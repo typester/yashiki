@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::OuterGap;
 
+fn default_mode_name() -> String {
+    "normal".to_string()
+}
+
 /// Cursor warp mode - controls when the mouse cursor follows focus
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -644,15 +648,31 @@ pub enum Command {
         output: Option<OutputSpecifier>,
     },
 
+    // Mode operations
+    DeclareMode {
+        name: String,
+    },
+    EnterMode {
+        name: String,
+    },
+    GetMode,
+
     // Keybinding operations
     Bind {
+        #[serde(default = "default_mode_name")]
+        mode: String,
         key: String,
         action: Box<Command>,
     },
     Unbind {
+        #[serde(default = "default_mode_name")]
+        mode: String,
         key: String,
     },
-    ListBindings,
+    ListBindings {
+        #[serde(default)]
+        mode: Option<String>,
+    },
 
     // Queries
     ListWindows {
@@ -765,6 +785,7 @@ pub enum Response {
     Layout { layout: String },
     ExecPath { path: String },
     CursorWarp { mode: CursorWarpMode },
+    Mode { name: String },
     AutoRaise { mode: AutoRaiseMode, delay_ms: u64 },
     OuterGap { outer_gap: OuterGap },
     LogLevel { level: String, file_mode: bool },
@@ -772,6 +793,7 @@ pub enum Response {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BindingInfo {
+    pub mode: String,
     pub key: String,
     pub action: String,
 }
@@ -833,6 +855,7 @@ pub struct StateInfo {
     pub window_count: usize,
     pub default_layout: String,
     pub current_layout: Option<String>,
+    pub mode: String,
 }
 
 #[cfg(test)]
@@ -869,6 +892,7 @@ mod tests {
     #[test]
     fn test_command_bind_serialization() {
         let cmd = Command::Bind {
+            mode: "normal".to_string(),
             key: "alt-1".to_string(),
             action: Box::new(Command::TagView {
                 tags: 1,
@@ -879,12 +903,28 @@ mod tests {
 
         let deserialized: Command = serde_json::from_str(&json).unwrap();
         match deserialized {
-            Command::Bind { key, action } => {
+            Command::Bind { mode, key, action } => {
+                assert_eq!(mode, "normal");
                 assert_eq!(key, "alt-1");
                 match *action {
                     Command::TagView { tags, .. } => assert_eq!(tags, 1),
                     _ => panic!("Wrong inner variant"),
                 }
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_command_bind_backward_compatibility() {
+        // Bind without "mode" field should default to "normal"
+        let json =
+            r#"{"type":"bind","key":"alt-1","action":{"type":"tag_view","tags":1,"output":null}}"#;
+        let cmd: Command = serde_json::from_str(json).unwrap();
+        match cmd {
+            Command::Bind { mode, key, .. } => {
+                assert_eq!(mode, "normal");
+                assert_eq!(key, "alt-1");
             }
             _ => panic!("Wrong variant"),
         }
@@ -1035,6 +1075,7 @@ mod tests {
                 window_count: 5,
                 default_layout: "tatami".to_string(),
                 current_layout: Some("byobu".to_string()),
+                mode: "normal".to_string(),
             },
         };
         let json = serde_json::to_string(&resp).unwrap();
@@ -1047,6 +1088,7 @@ mod tests {
                 assert_eq!(state.window_count, 5);
                 assert_eq!(state.default_layout, "tatami");
                 assert_eq!(state.current_layout, Some("byobu".to_string()));
+                assert_eq!(state.mode, "normal");
             }
             _ => panic!("Wrong variant"),
         }
@@ -1159,6 +1201,7 @@ mod tests {
     fn test_response_bindings_serialization() {
         let resp = Response::Bindings {
             bindings: vec![BindingInfo {
+                mode: "normal".to_string(),
                 key: "alt-1".to_string(),
                 action: "tag-view 1".to_string(),
             }],
@@ -1169,6 +1212,7 @@ mod tests {
         match deserialized {
             Response::Bindings { bindings } => {
                 assert_eq!(bindings.len(), 1);
+                assert_eq!(bindings[0].mode, "normal");
                 assert_eq!(bindings[0].key, "alt-1");
             }
             _ => panic!("Wrong variant"),
