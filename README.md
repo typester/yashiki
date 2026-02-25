@@ -12,6 +12,7 @@ macOS tiling window manager written in Rust.
 - **Window rules** - Automatically configure windows by app name, bundle identifier, or title
 - **Cursor warp** - Mouse follows focus (configurable: disabled, on-output-change, on-focus-change)
 - **Auto-raise** - Focus follows mouse with optional delay (focus window when cursor enters)
+- **Keybinding modes** - Named modes (river-style) for context-dependent hotkeys (e.g., resize mode, passthrough mode)
 - **State streaming** - Real-time events for status bars and external tools
 - **No SIP disable required** - Uses only public Accessibility API
 - **Shell script configuration** - Config is just a shell script (`~/.config/yashiki/init`)
@@ -151,9 +152,31 @@ yashiki version            # Show version
 ### Hotkey Management
 
 ```sh
-yashiki bind alt-1 tag-view 1    # Bind hotkey
-yashiki unbind alt-1             # Unbind hotkey
-yashiki list-bindings            # List all bindings
+yashiki bind alt-1 tag-view 1    # Bind hotkey (normal mode)
+yashiki unbind alt-1             # Unbind hotkey (normal mode)
+yashiki list-bindings            # List all bindings (all modes)
+yashiki list-bindings --mode normal  # List bindings for a specific mode
+```
+
+### Keybinding Modes
+
+River-style modal keybindings. All bindings default to `normal` mode. Use `--mode` to bind in other modes.
+
+```sh
+yashiki declare-mode resize          # Declare a new mode
+yashiki declare-mode passthrough     # Another mode
+
+yashiki bind alt-r enter-mode resize # Enter resize mode with alt-r
+yashiki bind --mode resize h layout-cmd dec-main-ratio  # h in resize mode
+yashiki bind --mode resize l layout-cmd inc-main-ratio  # l in resize mode
+yashiki bind --mode resize escape enter-mode normal     # escape to exit
+
+# Passthrough mode: only one binding to exit
+yashiki bind alt-p enter-mode passthrough
+yashiki bind --mode passthrough alt-p enter-mode normal
+
+yashiki get-mode                     # Get current mode
+yashiki enter-mode normal            # Switch mode via CLI
 ```
 
 ### Tag Operations
@@ -273,7 +296,7 @@ yashiki subscribe --snapshot          # Get initial snapshot on connect
 yashiki subscribe --filter focus,tags # Filter specific events
 ```
 
-**Event types:** `window`, `focus`, `display`, `tags`, `layout`
+**Event types:** `window`, `focus`, `display`, `tags`, `layout`, `mode`
 
 Events are streamed as JSON lines to stdout.
 

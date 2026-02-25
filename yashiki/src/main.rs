@@ -38,6 +38,9 @@ struct Cli {
 enum SubCommand {
     Start(StartCmd),
     Version(VersionCmd),
+    DeclareMode(DeclareModeCmd),
+    EnterMode(EnterModeCmd),
+    GetMode(GetModeCmd),
     Bind(BindCmd),
     Unbind(UnbindCmd),
     ListBindings(ListBindingsCmd),
@@ -92,10 +95,36 @@ struct StartCmd {}
 #[argh(subcommand, name = "version")]
 struct VersionCmd {}
 
+/// Declare a keybinding mode
+#[derive(FromArgs)]
+#[argh(subcommand, name = "declare-mode")]
+struct DeclareModeCmd {
+    /// mode name (e.g., resize, passthrough)
+    #[argh(positional)]
+    name: String,
+}
+
+/// Switch to a keybinding mode
+#[derive(FromArgs)]
+#[argh(subcommand, name = "enter-mode")]
+struct EnterModeCmd {
+    /// mode name to enter
+    #[argh(positional)]
+    name: String,
+}
+
+/// Get the current keybinding mode
+#[derive(FromArgs)]
+#[argh(subcommand, name = "get-mode")]
+struct GetModeCmd {}
+
 /// Bind a hotkey to a command
 #[derive(FromArgs)]
 #[argh(subcommand, name = "bind")]
 struct BindCmd {
+    /// keybinding mode (default: normal)
+    #[argh(option)]
+    mode: Option<String>,
     /// hotkey (e.g., alt-1, cmd-shift-h)
     #[argh(positional)]
     key: String,
@@ -108,6 +137,9 @@ struct BindCmd {
 #[derive(FromArgs)]
 #[argh(subcommand, name = "unbind")]
 struct UnbindCmd {
+    /// keybinding mode (default: normal)
+    #[argh(option)]
+    mode: Option<String>,
     /// hotkey to unbind
     #[argh(positional)]
     key: String,
@@ -116,7 +148,11 @@ struct UnbindCmd {
 /// List all hotkey bindings
 #[derive(FromArgs)]
 #[argh(subcommand, name = "list-bindings")]
-struct ListBindingsCmd {}
+struct ListBindingsCmd {
+    /// filter by mode
+    #[argh(option)]
+    mode: Option<String>,
+}
 
 /// Switch to specific tags (bitmask)
 #[derive(FromArgs)]
@@ -502,7 +538,7 @@ struct SubscribeCmd {
     /// request a snapshot on connection
     #[argh(switch)]
     snapshot: bool,
-    /// filter events (comma-separated: window,focus,display,tags,layout)
+    /// filter events (comma-separated: window,focus,display,tags,layout,mode)
     #[argh(option)]
     filter: Option<String>,
 }
@@ -716,11 +752,15 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
                 "Current layout: {}",
                 state.current_layout.as_deref().unwrap_or("(default)")
             );
+            println!("Mode: {}", state.mode);
         }
         Response::Bindings { bindings } => {
             for b in bindings {
-                println!("{} -> {}", b.key, b.action);
+                println!("[{}] {} -> {}", b.mode, b.key, b.action);
             }
+        }
+        Response::Mode { name } => {
+            println!("{}", name);
         }
         Response::WindowId { id } => {
             if let Some(id) = id {
@@ -795,18 +835,25 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
         SubCommand::Start(_) | SubCommand::Version(_) | SubCommand::Subscribe(_) => {
             unreachable!("handled in main")
         }
+        SubCommand::DeclareMode(cmd) => Ok(Command::DeclareMode { name: cmd.name }),
+        SubCommand::EnterMode(cmd) => Ok(Command::EnterMode { name: cmd.name }),
+        SubCommand::GetMode(_) => Ok(Command::GetMode),
         SubCommand::Bind(cmd) => {
             if cmd.action.is_empty() {
                 bail!("bind requires a command to bind");
             }
             let action = parse_command(&cmd.action)?;
             Ok(Command::Bind {
+                mode: cmd.mode.unwrap_or_else(|| "normal".to_string()),
                 key: cmd.key,
                 action: Box::new(action),
             })
         }
-        SubCommand::Unbind(cmd) => Ok(Command::Unbind { key: cmd.key }),
-        SubCommand::ListBindings(_) => Ok(Command::ListBindings),
+        SubCommand::Unbind(cmd) => Ok(Command::Unbind {
+            mode: cmd.mode.unwrap_or_else(|| "normal".to_string()),
+            key: cmd.key,
+        }),
+        SubCommand::ListBindings(cmd) => Ok(Command::ListBindings { mode: cmd.mode }),
         SubCommand::TagView(cmd) => Ok(Command::TagView {
             tags: cmd.tags,
             output: parse_output_specifier(cmd.output),
@@ -1022,6 +1069,15 @@ fn parse_command(args: &[String]) -> Result<Command> {
     }
 
     match cmd_name.as_str() {
+        "declare-mode" => {
+            let cmd: DeclareModeCmd = from_argh(cmd_name, &cmd_args)?;
+            Ok(Command::DeclareMode { name: cmd.name })
+        }
+        "enter-mode" => {
+            let cmd: EnterModeCmd = from_argh(cmd_name, &cmd_args)?;
+            Ok(Command::EnterMode { name: cmd.name })
+        }
+        "get-mode" => Ok(Command::GetMode),
         "bind" => {
             let cmd: BindCmd = from_argh(cmd_name, &cmd_args)?;
             if cmd.action.is_empty() {
@@ -1029,15 +1085,22 @@ fn parse_command(args: &[String]) -> Result<Command> {
             }
             let action = parse_command(&cmd.action)?;
             Ok(Command::Bind {
+                mode: cmd.mode.unwrap_or_else(|| "normal".to_string()),
                 key: cmd.key,
                 action: Box::new(action),
             })
         }
         "unbind" => {
             let cmd: UnbindCmd = from_argh(cmd_name, &cmd_args)?;
-            Ok(Command::Unbind { key: cmd.key })
+            Ok(Command::Unbind {
+                mode: cmd.mode.unwrap_or_else(|| "normal".to_string()),
+                key: cmd.key,
+            })
         }
-        "list-bindings" => Ok(Command::ListBindings),
+        "list-bindings" => {
+            let cmd: ListBindingsCmd = from_argh(cmd_name, &cmd_args)?;
+            Ok(Command::ListBindings { mode: cmd.mode })
+        }
         "tag-view" => {
             let cmd: TagViewCmd = from_argh(cmd_name, &cmd_args)?;
             Ok(Command::TagView {
@@ -1463,6 +1526,7 @@ fn parse_event_filter(s: &str) -> EventFilter {
             "display" => filter.display = true,
             "tags" => filter.tags = true,
             "layout" => filter.layout = true,
+            "mode" => filter.mode = true,
             _ => {}
         }
     }

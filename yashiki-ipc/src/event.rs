@@ -20,6 +20,9 @@ pub struct EventFilter {
     /// Subscribe to layout change events
     #[serde(default)]
     pub layout: bool,
+    /// Subscribe to mode change events
+    #[serde(default)]
+    pub mode: bool,
 }
 
 impl EventFilter {
@@ -31,6 +34,7 @@ impl EventFilter {
             display: true,
             tags: true,
             layout: true,
+            mode: true,
         }
     }
 
@@ -46,13 +50,14 @@ impl EventFilter {
             | StateEvent::DisplayUpdated { .. } => self.display,
             StateEvent::TagsChanged { .. } => self.tags,
             StateEvent::LayoutChanged { .. } => self.layout,
+            StateEvent::ModeChanged { .. } => self.mode,
             StateEvent::Snapshot { .. } => true, // Snapshots always pass filter
         }
     }
 
     /// Check if any filter is set
     pub fn any(&self) -> bool {
-        self.window || self.focus || self.display || self.tags || self.layout
+        self.window || self.focus || self.display || self.tags || self.layout || self.mode
     }
 }
 
@@ -133,6 +138,11 @@ pub enum StateEvent {
         layout: String,
     },
 
+    // Mode events
+    ModeChanged {
+        mode: String,
+    },
+
     // Full snapshot
     Snapshot {
         windows: Vec<WindowInfo>,
@@ -140,6 +150,7 @@ pub enum StateEvent {
         focused_window_id: Option<u32>,
         focused_display_id: u32,
         default_layout: String,
+        mode: String,
     },
 }
 
@@ -155,6 +166,7 @@ mod tests {
         assert!(filter.display);
         assert!(filter.tags);
         assert!(filter.layout);
+        assert!(filter.mode);
     }
 
     #[test]
@@ -272,11 +284,13 @@ mod tests {
             focused_window_id: Some(42),
             focused_display_id: 1,
             default_layout: "tatami".to_string(),
+            mode: "normal".to_string(),
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"snapshot\""));
         assert!(json.contains("\"focused_window_id\":42"));
         assert!(json.contains("\"default_layout\":\"tatami\""));
+        assert!(json.contains("\"mode\":\"normal\""));
     }
 
     #[test]

@@ -120,22 +120,26 @@ pub fn process_command(
                     .displays
                     .get(&state.focused_display)
                     .and_then(|d| d.current_layout.clone()),
+                mode: hotkey_manager.current_mode(),
             },
         }),
         Command::FocusedWindow => {
             CommandResult::with_response(Response::WindowId { id: state.focused })
         }
-        Command::ListBindings => {
-            let bindings: Vec<BindingInfo> = hotkey_manager
-                .list_bindings()
-                .into_iter()
-                .map(|(key, cmd)| BindingInfo {
-                    key,
-                    action: format!("{:?}", cmd),
-                })
-                .collect();
-            CommandResult::with_response(Response::Bindings { bindings })
-        }
+        Command::ListBindings { mode } => match hotkey_manager.list_bindings(mode.as_deref()) {
+            Ok(list) => {
+                let bindings: Vec<BindingInfo> = list
+                    .into_iter()
+                    .map(|(m, key, cmd)| BindingInfo {
+                        mode: m,
+                        key,
+                        action: format!("{:?}", cmd),
+                    })
+                    .collect();
+                CommandResult::with_response(Response::Bindings { bindings })
+            }
+            Err(e) => CommandResult::error(e),
+        },
 
         // Tag operations - mutate state, return effects
         Command::TagView { tags, output } => {
@@ -187,12 +191,27 @@ pub fn process_command(
             ])
         }
 
-        // Hotkey operations
-        Command::Bind { key, action } => match hotkey_manager.bind(key, *action.clone()) {
+        // Mode operations
+        Command::DeclareMode { name } => {
+            hotkey_manager.declare_mode(name);
+            CommandResult::ok()
+        }
+        Command::EnterMode { name } => match hotkey_manager.enter_mode(name) {
             Ok(()) => CommandResult::ok(),
             Err(e) => CommandResult::error(e),
         },
-        Command::Unbind { key } => match hotkey_manager.unbind(key) {
+        Command::GetMode => CommandResult::with_response(Response::Mode {
+            name: hotkey_manager.current_mode(),
+        }),
+
+        // Hotkey operations
+        Command::Bind { mode, key, action } => {
+            match hotkey_manager.bind(mode, key, *action.clone()) {
+                Ok(()) => CommandResult::ok(),
+                Err(e) => CommandResult::error(e),
+            }
+        }
+        Command::Unbind { mode, key } => match hotkey_manager.unbind(mode, key) {
             Ok(()) => CommandResult::ok(),
             Err(e) => CommandResult::error(e),
         },

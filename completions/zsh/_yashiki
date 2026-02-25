@@ -90,6 +90,7 @@ _yashiki_event_filters() {
         'display:Display add/remove/update events'
         'tags:Tag change events'
         'layout:Layout change events'
+        'mode:Mode change events'
     )
     _describe -t filters 'event filter' filters
 }
@@ -98,6 +99,9 @@ _yashiki_subcommands() {
     local commands=(
         'start:Start the yashiki daemon'
         'version:Show version information'
+        'declare-mode:Declare a keybinding mode'
+        'enter-mode:Switch to a keybinding mode'
+        'get-mode:Get the current keybinding mode'
         'bind:Bind a hotkey to a command'
         'unbind:Unbind a hotkey'
         'list-bindings:List all hotkey bindings'
@@ -160,6 +164,7 @@ _yashiki_bind_commands() {
         'layout-set-default:Set the default layout engine'
         'layout-set:Set layout engine for tags'
         'layout-cmd:Send command to layout engine'
+        'enter-mode:Switch to a keybinding mode'
         'exec:Execute a shell command'
         'exec-or-focus:Focus app if running, otherwise execute command'
         'quit:Quit the yashiki daemon'
@@ -169,16 +174,16 @@ _yashiki_bind_commands() {
 
 _yashiki_rule_options() {
     _arguments -s \
-        '--app-name=[Application name pattern]:pattern:' \
-        '--app-id=[Bundle identifier pattern]:pattern:' \
-        '--title=[Window title pattern]:pattern:' \
-        '--ax-id=[AXIdentifier pattern]:pattern:' \
-        '--subrole=[AXSubrole pattern]:pattern:' \
-        '--window-level=[Window level]:level:_yashiki_window_levels' \
-        '--close-button=[Close button state]:state:_yashiki_button_states' \
-        '--fullscreen-button=[Fullscreen button state]:state:_yashiki_button_states' \
-        '--minimize-button=[Minimize button state]:state:_yashiki_button_states' \
-        '--zoom-button=[Zoom button state]:state:_yashiki_button_states' \
+        '--app-name[Application name pattern]:pattern:' \
+        '--app-id[Bundle identifier pattern]:pattern:' \
+        '--title[Window title pattern]:pattern:' \
+        '--ax-id[AXIdentifier pattern]:pattern:' \
+        '--subrole[AXSubrole pattern]:pattern:' \
+        '--window-level[Window level]:level:_yashiki_window_levels' \
+        '--close-button[Close button state]:state:_yashiki_button_states' \
+        '--fullscreen-button[Fullscreen button state]:state:_yashiki_button_states' \
+        '--minimize-button[Minimize button state]:state:_yashiki_button_states' \
+        '--zoom-button[Zoom button state]:state:_yashiki_button_states' \
         '*:action:_yashiki_rule_actions'
 }
 
@@ -193,21 +198,30 @@ _yashiki() {
     case $state in
         args)
             case $line[1] in
-                start|version|list-bindings|tag-view-last|window-toggle-fullscreen|window-toggle-float|window-close|list-outputs|get-state|focused-window|exec-path|list-rules|get-cursor-warp|get-auto-raise|get-outer-gap|quit)
+                start|version|tag-view-last|window-toggle-fullscreen|window-toggle-float|window-close|list-outputs|get-state|focused-window|exec-path|list-rules|get-cursor-warp|get-auto-raise|get-outer-gap|get-mode|quit)
                     # No arguments
+                    ;;
+                declare-mode|enter-mode)
+                    _arguments '1:mode name:'
                     ;;
                 bind)
                     _arguments \
+                        '--mode[Keybinding mode (default: normal)]:mode:' \
                         '1:hotkey:' \
                         '2:command:_yashiki_bind_commands' \
                         '*:args:'
                     ;;
                 unbind)
-                    _arguments '1:hotkey:'
+                    _arguments \
+                        '--mode[Keybinding mode (default: normal)]:mode:' \
+                        '1:hotkey:'
+                    ;;
+                list-bindings)
+                    _arguments '--mode[Filter by mode]:mode:'
                     ;;
                 tag-view|tag-toggle)
                     _arguments \
-                        '--output=[Output ID or name]:output:' \
+                        '--output[Output ID or name]:output:' \
                         '1:tags bitmask:'
                     ;;
                 window-move-to-tag|window-toggle-tag)
@@ -220,25 +234,25 @@ _yashiki() {
                     _arguments '1:direction:_yashiki_output_directions'
                     ;;
                 retile)
-                    _arguments '--output=[Output ID or name]:output:'
+                    _arguments '--output[Output ID or name]:output:'
                     ;;
                 layout-set-default)
                     _arguments '1:layout:_yashiki_layouts'
                     ;;
                 layout-set)
                     _arguments \
-                        '--tags=[Tags bitmask]:tags:' \
-                        '--output=[Output ID or name]:output:' \
+                        '--tags[Tags bitmask]:tags:' \
+                        '--output[Output ID or name]:output:' \
                         '1:layout:_yashiki_layouts'
                     ;;
                 layout-get)
                     _arguments \
-                        '--tags=[Tags bitmask]:tags:' \
-                        '--output=[Output ID or name]:output:'
+                        '--tags[Tags bitmask]:tags:' \
+                        '--output[Output ID or name]:output:'
                     ;;
                 layout-cmd)
                     _arguments \
-                        '--layout=[Target layout engine]:layout:_yashiki_layouts' \
+                        '--layout[Target layout engine]:layout:_yashiki_layouts' \
                         '1:command:' \
                         '*:args:'
                     ;;
@@ -254,7 +268,7 @@ _yashiki() {
                     ;;
                 exec-or-focus)
                     _arguments \
-                        '--app-name=[Application name to focus]:app name:' \
+                        '--app-name[Application name to focus]:app name:' \
                         '1:shell command:'
                     ;;
                 set-exec-path)
@@ -273,7 +287,7 @@ _yashiki() {
                     ;;
                 set-auto-raise)
                     _arguments \
-                        '--delay=[Delay in milliseconds before raising]:delay (ms):' \
+                        '--delay[Delay in milliseconds before raising]:delay (ms):' \
                         '1:mode:_yashiki_auto_raise_modes'
                     ;;
                 set-outer-gap)
@@ -282,7 +296,7 @@ _yashiki() {
                 subscribe)
                     _arguments \
                         '--snapshot[Request snapshot on connection]' \
-                        '--filter=[Event filter]:filter:_yashiki_event_filters'
+                        '--filter[Event filter]:filter:_yashiki_event_filters'
                     ;;
             esac
             ;;

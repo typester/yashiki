@@ -86,10 +86,17 @@ impl EventEmitter {
             layout: layout.to_string(),
         });
     }
+
+    /// Emit a mode changed event
+    pub fn emit_mode_changed(&self, mode: &str) {
+        self.emit(StateEvent::ModeChanged {
+            mode: mode.to_string(),
+        });
+    }
 }
 
 /// Create a snapshot event from current state
-pub fn create_snapshot(state: &State) -> StateEvent {
+pub fn create_snapshot(state: &State, mode: &str) -> StateEvent {
     let windows: Vec<WindowInfo> = state
         .windows
         .values()
@@ -108,6 +115,7 @@ pub fn create_snapshot(state: &State) -> StateEvent {
         focused_window_id: state.focused,
         focused_display_id: state.focused_display,
         default_layout: state.default_layout.clone(),
+        mode: mode.to_string(),
     }
 }
 
@@ -229,7 +237,7 @@ mod tests {
         state.default_layout = "tatami".to_string();
 
         // Create snapshot
-        let snapshot = create_snapshot(&state);
+        let snapshot = create_snapshot(&state, "normal");
 
         // Verify snapshot
         match snapshot {
@@ -239,12 +247,14 @@ mod tests {
                 focused_window_id,
                 focused_display_id,
                 default_layout,
+                mode,
             } => {
                 assert_eq!(windows.len(), 2);
                 assert_eq!(displays.len(), 2);
                 assert_eq!(focused_window_id, Some(100));
                 assert_eq!(focused_display_id, 1);
                 assert_eq!(default_layout, "tatami");
+                assert_eq!(mode, "normal");
 
                 // Check that focused window has is_focused = true
                 let safari = windows.iter().find(|w| w.id == 100).unwrap();

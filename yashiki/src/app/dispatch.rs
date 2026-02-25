@@ -27,6 +27,7 @@ pub fn dispatch_command<S: WindowSystem, M: WindowManipulator>(
 ) -> Response {
     // Capture state before command for event emission
     let pre_state = capture_event_state(state);
+    let pre_mode = hotkey_manager.borrow().current_mode();
 
     // Process command and execute effects
     let response = handle_ipc_command(
@@ -42,6 +43,12 @@ pub fn dispatch_command<S: WindowSystem, M: WindowManipulator>(
 
     // Emit events based on state changes
     emit_state_change_events(event_emitter, state, &pre_state);
+
+    // Emit mode change event if mode changed
+    let post_mode = hotkey_manager.borrow().current_mode();
+    if pre_mode != post_mode {
+        event_emitter.emit_mode_changed(&post_mode);
+    }
 
     response
 }

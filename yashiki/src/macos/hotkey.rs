@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use core_foundation::base::TCFType;
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopSource};
@@ -80,7 +80,9 @@ pub fn format_hotkey(hotkey: &Hotkey) -> String {
 }
 
 pub struct HotkeyManager {
-    bindings: HashMap<Hotkey, Command>,
+    modes: HashMap<String, HashMap<Hotkey, Command>>,
+    declared_modes: HashSet<String>,
+    current_mode: Arc<RwLock<String>>,
     command_tx: mpsc::Sender<Command>,
     tap: Option<HotkeyTap>,
     dirty: bool,
@@ -92,8 +94,16 @@ impl HotkeyManager {
         command_tx: mpsc::Sender<Command>,
         runloop_source: Arc<AtomicPtr<std::ffi::c_void>>,
     ) -> Self {
+        let mut declared_modes = HashSet::new();
+        declared_modes.insert("normal".to_string());
+
+        let mut modes = HashMap::new();
+        modes.insert("normal".to_string(), HashMap::new());
+
         Self {
-            bindings: HashMap::new(),
+            modes,
+            declared_modes,
+            current_mode: Arc::new(RwLock::new("normal".to_string())),
             command_tx,
             tap: None,
             dirty: false,
@@ -101,33 +111,98 @@ impl HotkeyManager {
         }
     }
 
-    pub fn bind(&mut self, key_str: &str, command: Command) -> Result<(), String> {
+    pub fn declare_mode(&mut self, name: &str) {
+        self.declared_modes.insert(name.to_string());
+        self.modes.entry(name.to_string()).or_default();
+        tracing::info!("Declared mode: {}", name);
+    }
+
+    pub fn enter_mode(&mut self, name: &str) -> Result<(), String> {
+        if !self.declared_modes.contains(name) {
+            return Err(format!("Mode '{}' not declared", name));
+        }
+        *self.current_mode.write().unwrap() = name.to_string();
+        tracing::info!("Entered mode: {}", name);
+        Ok(())
+    }
+
+    pub fn current_mode(&self) -> String {
+        self.current_mode.read().unwrap().clone()
+    }
+
+    pub fn bind(&mut self, mode: &str, key_str: &str, command: Command) -> Result<(), String> {
+        if !self.declared_modes.contains(mode) {
+            return Err(format!("Mode '{}' not declared", mode));
+        }
         let hotkey = parse_hotkey(key_str)?;
-        tracing::info!("Binding {} to {:?}", key_str, command);
-        self.bindings.insert(hotkey, command);
+        tracing::info!("Binding {} to {:?} (mode: {})", key_str, command, mode);
+        self.modes
+            .entry(mode.to_string())
+            .or_default()
+            .insert(hotkey, command);
         self.dirty = true;
         Ok(())
     }
 
-    pub fn unbind(&mut self, key_str: &str) -> Result<(), String> {
+    pub fn unbind(&mut self, mode: &str, key_str: &str) -> Result<(), String> {
+        if !self.declared_modes.contains(mode) {
+            return Err(format!("Mode '{}' not declared", mode));
+        }
         let hotkey = parse_hotkey(key_str)?;
-        self.bindings.remove(&hotkey);
-        tracing::info!("Unbound {}", key_str);
+        if let Some(mode_bindings) = self.modes.get_mut(mode) {
+            mode_bindings.remove(&hotkey);
+        }
+        tracing::info!("Unbound {} (mode: {})", key_str, mode);
         self.dirty = true;
         Ok(())
     }
 
-    pub fn list_bindings(&self) -> Vec<(String, Command)> {
-        self.bindings
-            .iter()
-            .map(|(hotkey, cmd)| (format_hotkey(hotkey), cmd.clone()))
-            .collect()
+    pub fn list_bindings(
+        &self,
+        mode: Option<&str>,
+    ) -> Result<Vec<(String, String, Command)>, String> {
+        match mode {
+            Some(m) => {
+                if !self.declared_modes.contains(m) {
+                    return Err(format!("Mode '{}' not declared", m));
+                }
+                Ok(self
+                    .modes
+                    .get(m)
+                    .map(|bindings| {
+                        bindings
+                            .iter()
+                            .map(|(hotkey, cmd)| {
+                                (m.to_string(), format_hotkey(hotkey), cmd.clone())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default())
+            }
+            None => {
+                let mut result = Vec::new();
+                for (mode_name, bindings) in &self.modes {
+                    for (hotkey, cmd) in bindings {
+                        result.push((mode_name.clone(), format_hotkey(hotkey), cmd.clone()));
+                    }
+                }
+                Ok(result)
+            }
+        }
+    }
+
+    fn total_bindings(&self) -> usize {
+        self.modes.values().map(|b| b.len()).sum()
     }
 
     pub fn start(&mut self) -> Result<(), String> {
         self.tap = Some(self.create_tap()?);
         self.dirty = false;
-        tracing::info!("Hotkey tap started with {} bindings", self.bindings.len());
+        tracing::info!(
+            "Hotkey tap started with {} bindings across {} modes",
+            self.total_bindings(),
+            self.modes.len()
+        );
         Ok(())
     }
 
@@ -137,13 +212,18 @@ impl HotkeyManager {
         if self.dirty && self.tap.is_some() {
             self.tap = Some(self.create_tap()?);
             self.dirty = false;
-            tracing::info!("Hotkey tap updated with {} bindings", self.bindings.len());
+            tracing::info!(
+                "Hotkey tap updated with {} bindings across {} modes",
+                self.total_bindings(),
+                self.modes.len()
+            );
         }
         Ok(())
     }
 
     fn create_tap(&self) -> Result<HotkeyTap, String> {
-        let bindings = self.bindings.clone();
+        let all_bindings: HashMap<String, HashMap<Hotkey, Command>> = self.modes.clone();
+        let current_mode = Arc::clone(&self.current_mode);
         let tx = self.command_tx.clone();
         let source = Arc::clone(&self.runloop_source);
 
@@ -191,19 +271,27 @@ impl HotkeyManager {
                     modifiers,
                 };
 
-                if let Some(command) = bindings.get(&hotkey).cloned() {
-                    tracing::debug!("Hotkey matched: {:?} -> {:?}", hotkey, command);
-                    if tx.send(command).is_err() {
-                        tracing::error!("Failed to send command from hotkey");
-                    }
-                    // Signal CFRunLoopSource for immediate processing
-                    let source_ptr = source.load(Ordering::Acquire);
-                    if !source_ptr.is_null() {
-                        unsafe {
-                            CFRunLoopSourceSignal(source_ptr as CFRunLoopSourceRef);
+                let mode = current_mode.read().unwrap();
+                if let Some(mode_bindings) = all_bindings.get(mode.as_str()) {
+                    if let Some(command) = mode_bindings.get(&hotkey).cloned() {
+                        tracing::debug!(
+                            "Hotkey matched: {:?} -> {:?} (mode: {})",
+                            hotkey,
+                            command,
+                            mode
+                        );
+                        if tx.send(command).is_err() {
+                            tracing::error!("Failed to send command from hotkey");
                         }
+                        // Signal CFRunLoopSource for immediate processing
+                        let source_ptr = source.load(Ordering::Acquire);
+                        if !source_ptr.is_null() {
+                            unsafe {
+                                CFRunLoopSourceSignal(source_ptr as CFRunLoopSourceRef);
+                            }
+                        }
+                        return CallbackResult::Drop;
                     }
-                    return CallbackResult::Drop;
                 }
 
                 CallbackResult::Keep
