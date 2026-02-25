@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.11.6...yashiki-ipc-v0.12.0) - 2026-02-25
+
+### Added
+
+- [**breaking**] add keybinding mode system (river-style) ([#157](https://github.com/typester/yashiki/pull/157))
+
 ## [0.11.0](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.10.7...yashiki-ipc-v0.11.0) - 2026-02-10
 
 ### Fixed

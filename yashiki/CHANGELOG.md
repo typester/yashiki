@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/typester/yashiki/compare/yashiki-v0.11.6...yashiki-v0.12.0) - 2026-02-25
+
+### Added
+
+- [**breaking**] add keybinding mode system (river-style) ([#157](https://github.com/typester/yashiki/pull/157))
+- update focused_display via auto-raise when cursor moves to different display ([#156](https://github.com/typester/yashiki/pull/156))
+
+### Fixed
+
+- call activate_application for already-frontmost apps to fix keyboard focus ([#155](https://github.com/typester/yashiki/pull/155))
+
 ## [0.11.6](https://github.com/typester/yashiki/compare/yashiki-v0.11.5...yashiki-v0.11.6) - 2026-02-20
 
 ### Fixed
