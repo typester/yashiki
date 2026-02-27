@@ -220,7 +220,11 @@ pub fn focus_output(state: &mut State, direction: OutputDirection) -> Option<Foc
     }
 }
 
-pub fn send_to_output(state: &mut State, direction: OutputDirection) -> Option<SendToOutputResult> {
+pub fn send_to_output(
+    state: &mut State,
+    direction: OutputDirection,
+    current_tags: bool,
+) -> Option<SendToOutputResult> {
     let focused_id = state.focused?;
 
     if state.displays.len() <= 1 {
@@ -247,6 +251,7 @@ pub fn send_to_output(state: &mut State, direction: OutputDirection) -> Option<S
     let target_display = state.displays.get(&target_display_id)?;
     let target_frame_x = target_display.frame.x;
     let target_frame_y = target_display.frame.y;
+    let target_visible_tags = target_display.visible_tags;
 
     // Update window's display_id and frame position
     let window = state.windows.get_mut(&focused_id)?;
@@ -259,6 +264,18 @@ pub fn send_to_output(state: &mut State, direction: OutputDirection) -> Option<S
     window.display_id = target_display_id;
     // User intentionally moved the window - clear orphan state
     window.orphaned_from = None;
+
+    // If --current-tags is set, update window tags to match target display's visible tags
+    if current_tags {
+        tracing::debug!(
+            "Setting window {} tags from {:032b} to {:032b}",
+            window.id,
+            window.tags.mask(),
+            target_visible_tags.mask()
+        );
+        window.tags = target_visible_tags;
+    }
+
     // Set frame to target display's position (will be overwritten by retile if visible,
     // or saved to saved_frame if hidden - either way, correct display context)
     window.frame.x = target_frame_x;

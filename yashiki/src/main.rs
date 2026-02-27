@@ -250,6 +250,9 @@ struct OutputSendCmd {
     /// direction: next, prev
     #[argh(positional)]
     direction: String,
+    /// use destination output's current visible tags for the window
+    #[argh(switch, long = "current-tags")]
+    current_tags: bool,
 }
 
 /// Re-apply the current layout
@@ -879,6 +882,7 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
         }),
         SubCommand::OutputSend(cmd) => Ok(Command::OutputSend {
             direction: parse_output_direction(&cmd.direction)?,
+            current_tags: cmd.current_tags,
         }),
         SubCommand::Retile(cmd) => Ok(Command::Retile {
             output: parse_output_specifier(cmd.output),
@@ -1149,6 +1153,7 @@ fn parse_command(args: &[String]) -> Result<Command> {
             let cmd: OutputSendCmd = from_argh(cmd_name, &cmd_args)?;
             Ok(Command::OutputSend {
                 direction: parse_output_direction(&cmd.direction)?,
+                current_tags: cmd.current_tags,
             })
         }
         "retile" => {

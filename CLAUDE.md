@@ -110,7 +110,7 @@ yashiki window-toggle-fullscreen
 yashiki window-toggle-float
 yashiki window-close
 yashiki output-focus next|prev
-yashiki output-send next|prev
+yashiki output-send [--current-tags] next|prev  # --current-tags: make window visible immediately on target display
 yashiki retile [--output N]
 yashiki layout-set-default tatami
 yashiki layout-set [--tags N] [--output N] byobu
