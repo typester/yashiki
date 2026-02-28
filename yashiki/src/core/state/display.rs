@@ -267,8 +267,8 @@ pub fn send_to_output(
 
     // If --current-tags is set, update window tags to match target display's visible tags
     if current_tags {
-        tracing::debug!(
-            "Setting window {} tags from {:032b} to {:032b}",
+        tracing::info!(
+            "Setting window {} tags from {:?} to {:?}",
             window.id,
             window.tags.mask(),
             target_visible_tags.mask()
