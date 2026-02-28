@@ -49,6 +49,9 @@ Firefox creates temporary popup windows (dropdowns, autocomplete, etc.) that can
 # Ignore popup windows with AXUnknown subrole (dropdowns, autocomplete, etc.)
 yashiki rule-add --app-id org.mozilla.firefox --subrole AXUnknown ignore
 
+# Some popup windows added with none subrole
+yashiki rule-add --app-id org.mozilla.firefox --subrole none ignore
+
 # Float PiP (Picture-in-Picture) and other floating-level windows
 yashiki rule-add --app-id org.mozilla.firefox --window-level floating float
 ```
