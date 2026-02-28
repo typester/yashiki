@@ -551,6 +551,7 @@ yashiki rule-add --app-id com.mitchellh.ghostty --fullscreen-button disabled ign
 ```sh
 # Firefox popups
 yashiki rule-add --app-id org.mozilla.firefox --subrole AXUnknown ignore
+yashiki rule-add --app-id org.mozilla.firefox --subrole none ignore
 
 # Generic fix for all popups
 yashiki rule-add --subrole AXUnknown ignore
