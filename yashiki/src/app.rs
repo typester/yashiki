@@ -231,7 +231,7 @@ impl App {
             log_level_setter,
             current_log_level: RefCell::new(initial_log_level),
             is_file_logging,
-            last_app_terminated_at: Cell::new(None),
+            last_focused_window_destroyed_at: Cell::new(None),
         });
         let context_ptr = Box::into_raw(context) as *mut std::ffi::c_void;
 
@@ -819,9 +819,10 @@ impl App {
                         // process termination is confirmed by NSWorkspace notification
                         let had_focus = ctx.state.borrow().focused.is_some();
                         let changed = ctx.state.borrow_mut().remove_windows_for_pid(pid);
-                        ctx.last_app_terminated_at.set(Some(Instant::now()));
                         if changed {
                             if had_focus && ctx.state.borrow().focused.is_none() {
+                                ctx.last_focused_window_destroyed_at
+                                    .set(Some(Instant::now()));
                                 focus_visible_window_if_needed(&ctx.state, &ctx.window_manipulator);
                             }
                             do_retile(
@@ -1073,6 +1074,8 @@ impl App {
                 {
                     focused_window_was_destroyed = true;
                     pre_destroy_display = Some(pre_state.focused_display);
+                    ctx.last_focused_window_destroyed_at
+                        .set(Some(Instant::now()));
                 }
 
                 emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
@@ -1100,15 +1103,15 @@ impl App {
                     focus_visible_window_if_needed(&ctx.state, &ctx.window_manipulator);
                     needs_retile = true;
                 } else {
-                    // Check if an app was recently terminated - if so, this is likely
-                    // macOS auto-activation after termination, not a user action
-                    let recent_termination = ctx
-                        .last_app_terminated_at
+                    // Check if a focused window was recently destroyed (Cmd-Q or Cmd-W) -
+                    // if so, this is likely macOS auto-activation, not a user action
+                    let recent_destruction = ctx
+                        .last_focused_window_destroyed_at
                         .get()
                         .map(|t| t.elapsed() < std::time::Duration::from_secs(2))
                         .unwrap_or(false);
 
-                    if recent_termination {
+                    if recent_destruction {
                         // Suppress tag switch: restore focused_display and focus visible window
                         {
                             let mut state = ctx.state.borrow_mut();
