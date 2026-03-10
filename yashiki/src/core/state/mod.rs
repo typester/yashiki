@@ -103,7 +103,7 @@ impl FocusIntent {
     pub const SUPPRESSION_DURATION_MS: u128 = 200;
     /// Duration to suppress cross-display tag switches (longer, since cross-display
     /// focus redirect within this window is almost certainly spurious macOS behavior)
-    pub const CROSS_DISPLAY_SUPPRESSION_DURATION_MS: u128 = 500;
+    pub const CROSS_DISPLAY_SUPPRESSION_DURATION_MS: u128 = 1000;
 
     pub fn new(window_id: WindowId, pid: i32, display_id: DisplayId) -> Self {
         Self {
@@ -277,7 +277,12 @@ impl State {
         let display = self.displays.values().find(|d| {
             let f = &d.frame;
             x >= f.x && x < f.x + f.width as i32 && y >= f.y && y < f.y + f.height as i32
-        })?;
+        });
+
+        let Some(display) = display else {
+            tracing::trace!("find_window_at_point({}, {}): no display found", x, y);
+            return None;
+        };
 
         // Iterate in z-order (front-to-back) to find topmost managed window at point
         for &window_id in &self.window_z_order {
@@ -298,6 +303,30 @@ impl State {
             }
         }
 
+        let disp_id = display.id;
+        let visible_mask = display.visible_tags.mask();
+        let candidates: String = self
+            .windows
+            .values()
+            .filter(|w| {
+                w.display_id == disp_id && w.tags.intersects(display.visible_tags) && !w.is_hidden()
+            })
+            .map(|w| {
+                format!(
+                    "{}:({},{} {}x{})",
+                    w.id, w.frame.x, w.frame.y, w.frame.width, w.frame.height
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        tracing::debug!(
+            "find_window_at_point({}, {}): no window found on display {} (visible_tags={}, candidates: [{}])",
+            x,
+            y,
+            disp_id,
+            visible_mask,
+            candidates
+        );
         None
     }
 
@@ -3317,8 +3346,8 @@ mod tests {
         let mut state = State::new();
         state.sync_all(&ws);
 
-        // Set expired focus intent (>500ms)
-        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 550));
+        // Set expired focus intent (>1000ms)
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 1050));
 
         // Should return false when expired
         assert!(!state.should_suppress_cross_display_tag_switch(101));
@@ -3501,8 +3530,8 @@ mod tests {
         let mut state = State::new();
         state.sync_all(&ws);
 
-        // Set expired focus intent (501ms > 500ms cross-display threshold)
-        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 501));
+        // Set expired focus intent (1001ms > 1000ms cross-display threshold)
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 1001));
         state.focused_display = 2;
 
         // Should return focused_display since intent expired
@@ -3563,7 +3592,7 @@ mod tests {
     fn test_effective_focused_display_with_expired_intent() {
         let mut state = State::new();
         state.focused_display = 2;
-        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 501));
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 1001));
         assert_eq!(state.effective_focused_display(), 2);
     }
 

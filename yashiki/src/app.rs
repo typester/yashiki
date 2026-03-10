@@ -533,6 +533,11 @@ impl App {
                     }
                     None => {
                         // No window under cursor - check for display hover
+                        tracing::debug!(
+                            "Auto-raise: no window at ({}, {}), checking display hover",
+                            pos.x,
+                            pos.y
+                        );
                         let display_at_point =
                             ctx.state.borrow().find_display_at_point(pos.x, pos.y);
 
