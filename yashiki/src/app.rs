@@ -1033,6 +1033,47 @@ impl App {
                             emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
                             continue;
                         }
+
+                        // Check for cross-PID spurious focus change
+                        // (focus bounced to a hidden window of a different app, e.g., Dia browser)
+                        let cross_pid_refocus_info = ctx
+                            .state
+                            .borrow()
+                            .should_suppress_tag_switch_for_hidden_window(focused_id)
+                            .then(|| {
+                                let s = ctx.state.borrow();
+                                s.focus_intent.as_ref().and_then(|intent| {
+                                    s.windows
+                                        .get(&intent.window_id)
+                                        .map(|w| (intent.window_id, w.pid, intent.display_id))
+                                })
+                            })
+                            .flatten();
+
+                        if let Some((intended_id, _pid, intended_display)) = cross_pid_refocus_info
+                        {
+                            tracing::info!(
+                                "Suppressing cross-PID spurious focus change (intended: {})",
+                                intended_id
+                            );
+                            // Only revert internal state — do NOT call refocus_window here.
+                            // Refocusing triggers new FocusedWindowChanged events from macOS,
+                            // creating an infinite focus-bounce loop with apps like Dia browser.
+                            {
+                                let mut state = ctx.state.borrow_mut();
+                                state.set_focused(Some(intended_id));
+                                if state.focused_display != intended_display {
+                                    tracing::debug!(
+                                        "Reverting focused_display: {} -> {}",
+                                        state.focused_display,
+                                        intended_display
+                                    );
+                                    state.focused_display = intended_display;
+                                }
+                            }
+                            emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
+                            continue;
+                        }
                     }
 
                     if let Some(focused_id) = focused_id {
