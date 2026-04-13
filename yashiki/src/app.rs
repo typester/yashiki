@@ -1,8 +1,9 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::Result;
 use core_foundation::base::TCFType;
@@ -26,7 +27,7 @@ mod sync_helper;
 
 use channels::{create_channels, run_async, IpcCommandWithResponse, MainChannels, SnapshotRequest};
 use dispatch::dispatch_command;
-use focus::{notify_layout_focus, switch_tag_for_focused_window};
+use focus::{focus_visible_window_if_needed, notify_layout_focus, switch_tag_for_focused_window};
 use retile::{do_retile, do_retile_display};
 use state_events::{capture_event_state, emit_state_change_events};
 use sync_helper::{process_new_windows, sync_and_process_new_windows, sync_focused_and_process};
@@ -67,6 +68,7 @@ struct RunLoopContext {
     log_level_setter: Option<LogLevelSetter>,
     current_log_level: RefCell<String>,
     is_file_logging: bool,
+    last_focused_window_destroyed_at: Cell<Option<Instant>>,
 }
 
 pub struct App {}
@@ -229,6 +231,7 @@ impl App {
             log_level_setter,
             current_log_level: RefCell::new(initial_log_level),
             is_file_logging,
+            last_focused_window_destroyed_at: Cell::new(None),
         });
         let context_ptr = Box::into_raw(context) as *mut std::ffi::c_void;
 
@@ -530,6 +533,11 @@ impl App {
                     }
                     None => {
                         // No window under cursor - check for display hover
+                        tracing::debug!(
+                            "Auto-raise: no window at ({}, {}), checking display hover",
+                            pos.x,
+                            pos.y
+                        );
                         let display_at_point =
                             ctx.state.borrow().find_display_at_point(pos.x, pos.y);
 
@@ -814,8 +822,14 @@ impl App {
 
                         // Directly remove windows - no AX API check needed since
                         // process termination is confirmed by NSWorkspace notification
+                        let had_focus = ctx.state.borrow().focused.is_some();
                         let changed = ctx.state.borrow_mut().remove_windows_for_pid(pid);
                         if changed {
+                            if had_focus && ctx.state.borrow().focused.is_none() {
+                                ctx.last_focused_window_destroyed_at
+                                    .set(Some(Instant::now()));
+                                focus_visible_window_if_needed(&ctx.state, &ctx.window_manipulator);
+                            }
                             do_retile(
                                 &ctx.state,
                                 &ctx.layout_engine_manager,
@@ -928,6 +942,9 @@ impl App {
 
             // Process observer events and forward to tokio
             let mut needs_retile = false;
+            let mut pending_tag_switch_from: Option<(u32, u32)> = None; // (window_id, display_id)
+            let mut focused_window_was_destroyed = false;
+            let mut pre_destroy_display: Option<u32> = None;
             while let Ok(event) = ctx.observer_event_rx.try_recv() {
                 let pre_state = capture_event_state(&ctx.state);
 
@@ -1049,13 +1066,21 @@ impl App {
                         Some(prev_id) => Some(prev_id) != focused_id,
                         None => false,
                     };
-                    if focus_changed {
-                        let moves = switch_tag_for_focused_window(&ctx.state);
-                        if let Some(moves) = moves {
-                            ctx.window_manipulator.apply_window_moves(&moves);
-                            needs_retile = true;
-                        }
+                    if focus_changed && pending_tag_switch_from.is_none() {
+                        pending_tag_switch_from =
+                            pre_state.focused.map(|id| (id, pre_state.focused_display));
                     }
+                }
+
+                // Detect if a non-focus event destroyed the focused window
+                if !is_focus_event
+                    && pre_state.focused.is_some()
+                    && ctx.state.borrow().focused.is_none()
+                {
+                    focused_window_was_destroyed = true;
+                    pre_destroy_display = Some(pre_state.focused_display);
+                    ctx.last_focused_window_destroyed_at
+                        .set(Some(Instant::now()));
                 }
 
                 emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
@@ -1064,6 +1089,68 @@ impl App {
                     tracing::error!("Failed to forward event to tokio");
                 }
             }
+
+            // Deferred tag switch decision: now that all events in this batch are processed,
+            // we can check if the previously-focused window was destroyed (close) or still
+            // exists (user action like Dock click / Cmd+Tab)
+            if let Some((pre_focused_id, pre_display)) = pending_tag_switch_from {
+                let pre_state = capture_event_state(&ctx.state);
+                let was_destroyed = !ctx.state.borrow().windows.contains_key(&pre_focused_id);
+
+                if was_destroyed {
+                    // Window was closed: restore focused_display and focus a visible window
+                    {
+                        let mut state = ctx.state.borrow_mut();
+                        if state.focused_display != pre_display {
+                            state.focused_display = pre_display;
+                        }
+                    }
+                    focus_visible_window_if_needed(&ctx.state, &ctx.window_manipulator);
+                    needs_retile = true;
+                } else {
+                    // Check if a focused window was recently destroyed (Cmd-Q or Cmd-W) -
+                    // if so, this is likely macOS auto-activation, not a user action
+                    let recent_destruction = ctx
+                        .last_focused_window_destroyed_at
+                        .get()
+                        .map(|t| t.elapsed() < std::time::Duration::from_secs(2))
+                        .unwrap_or(false);
+
+                    if recent_destruction {
+                        // Suppress tag switch: restore focused_display and focus visible window
+                        {
+                            let mut state = ctx.state.borrow_mut();
+                            if state.focused_display != pre_display {
+                                state.focused_display = pre_display;
+                            }
+                        }
+                        focus_visible_window_if_needed(&ctx.state, &ctx.window_manipulator);
+                        needs_retile = true;
+                    } else {
+                        // Genuine user action (Dock click, Cmd+Tab): normal tag switch
+                        let moves = switch_tag_for_focused_window(&ctx.state);
+                        if let Some(moves) = moves {
+                            ctx.window_manipulator.apply_window_moves(&moves);
+                            needs_retile = true;
+                        }
+                    }
+                }
+                emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
+            } else if focused_window_was_destroyed {
+                // WindowDestroyed arrived first (focused already None):
+                // macOS may have set focus to a hidden window
+                let pre_state = capture_event_state(&ctx.state);
+                if let Some(pre_display) = pre_destroy_display {
+                    let mut state = ctx.state.borrow_mut();
+                    if state.focused_display != pre_display {
+                        state.focused_display = pre_display;
+                    }
+                }
+                focus_visible_window_if_needed(&ctx.state, &ctx.window_manipulator);
+                needs_retile = true;
+                emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
+            }
+
             if needs_retile {
                 do_retile(
                     &ctx.state,
