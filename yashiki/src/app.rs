@@ -1045,12 +1045,12 @@ impl App {
                                 s.focus_intent.as_ref().and_then(|intent| {
                                     s.windows
                                         .get(&intent.window_id)
-                                        .map(|w| (intent.window_id, w.pid, intent.display_id))
+                                        .map(|_| (intent.window_id, intent.display_id))
                                 })
                             })
                             .flatten();
 
-                        if let Some((intended_id, _pid, intended_display)) = cross_pid_refocus_info
+                        if let Some((intended_id, intended_display)) = cross_pid_refocus_info
                         {
                             tracing::info!(
                                 "Suppressing cross-PID spurious focus change (intended: {})",
