@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1](https://github.com/typester/yashiki/compare/yashiki-v0.12.0...yashiki-v0.12.1) - 2026-04-13
+
+### Fixed
+
+- suppress cross-PID spurious focus bounce on tag switch ([#165](https://github.com/typester/yashiki/pull/165))
+- suppress unintended tag switch from macOS auto-activation after app termination ([#161](https://github.com/typester/yashiki/pull/161))
+
 ## [0.12.0](https://github.com/typester/yashiki/compare/yashiki-v0.11.6...yashiki-v0.12.0) - 2026-02-25
 
 ### Added
