@@ -3462,6 +3462,144 @@ mod tests {
         assert!(state.should_suppress_cross_display_tag_switch(101));
     }
 
+    // should_suppress_tag_switch_for_hidden_window tests
+
+    #[test]
+    fn test_suppress_hidden_window_no_intent() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Dia", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "cmux", 200.0, 200.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // No focus intent set
+        assert!(state.focus_intent.is_none());
+        assert!(!state.should_suppress_tag_switch_for_hidden_window(101));
+    }
+
+    #[test]
+    fn test_suppress_hidden_window_expired() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Dia", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "cmux", 200.0, 200.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Make window 101 hidden
+        state.windows.get_mut(&101).unwrap().saved_frame = Some(Rect {
+            x: 200,
+            y: 200,
+            width: 800,
+            height: 600,
+        });
+
+        // Set expired focus intent (>200ms)
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 250));
+
+        assert!(!state.should_suppress_tag_switch_for_hidden_window(101));
+    }
+
+    #[test]
+    fn test_suppress_hidden_window_same_pid() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1000, "Firefox", 200.0, 200.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Make window 101 hidden
+        state.windows.get_mut(&101).unwrap().saved_frame = Some(Rect {
+            x: 200,
+            y: 200,
+            width: 800,
+            height: 600,
+        });
+
+        // Same PID - should be handled by check_spurious_focus_change instead
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 0));
+
+        assert!(!state.should_suppress_tag_switch_for_hidden_window(101));
+    }
+
+    #[test]
+    fn test_suppress_hidden_window_intended_window() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Dia", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Focus went to the intended window itself - normal case, don't suppress
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 0));
+
+        assert!(!state.should_suppress_tag_switch_for_hidden_window(100));
+    }
+
+    #[test]
+    fn test_suppress_hidden_window_cross_pid_visible() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Dia", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "cmux", 200.0, 200.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Window 101 is visible (no saved_frame) - don't suppress
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 0));
+
+        assert!(!state.should_suppress_tag_switch_for_hidden_window(101));
+    }
+
+    #[test]
+    fn test_suppress_hidden_window_cross_pid_hidden() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Dia", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "cmux", 200.0, 200.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Make window 101 hidden (simulates tag switch hiding cmux)
+        state.windows.get_mut(&101).unwrap().saved_frame = Some(Rect {
+            x: 200,
+            y: 200,
+            width: 800,
+            height: 600,
+        });
+
+        // Cross-PID + hidden window within suppression window → suppress
+        state.focus_intent = Some(FocusIntent::with_elapsed_ms(100, 1000, 1, 0));
+
+        assert!(state.should_suppress_tag_switch_for_hidden_window(101));
+    }
+
     #[test]
     fn test_should_suppress_rehide_no_intent() {
         let state = State::new();
