@@ -1050,8 +1050,7 @@ impl App {
                             })
                             .flatten();
 
-                        if let Some((intended_id, intended_display)) = cross_pid_refocus_info
-                        {
+                        if let Some((intended_id, intended_display)) = cross_pid_refocus_info {
                             tracing::info!(
                                 "Suppressing cross-PID spurious focus change (intended: {})",
                                 intended_id
@@ -1059,6 +1058,7 @@ impl App {
                             // Only revert internal state — do NOT call refocus_window here.
                             // Refocusing triggers new FocusedWindowChanged events from macOS,
                             // creating an infinite focus-bounce loop with apps like Dia browser.
+                            // Trade-off: macOS keyboard focus may temporarily remain on the previous app.
                             {
                                 let mut state = ctx.state.borrow_mut();
                                 state.set_focused(Some(intended_id));
