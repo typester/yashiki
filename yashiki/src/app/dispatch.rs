@@ -256,4 +256,115 @@ mod tests {
         assert!(matches!(response, Response::Ok));
         assert_eq!(state.borrow().visible_tags().mask(), 0b10);
     }
+
+    #[test]
+    fn test_dispatch_command_sequence() {
+        let (
+            state,
+            layout_manager,
+            hotkey_manager,
+            ws,
+            manipulator,
+            event_emitter,
+            observer_manager,
+        ) = setup_test_context();
+
+        // Create a sequence: switch to tag 2, then close focused window
+        let sequence = Command::Sequence {
+            commands: vec![
+                Command::TagView {
+                    tags: 0b10,
+                    output: None,
+                },
+                Command::WindowClose,
+            ],
+        };
+
+        let response = dispatch_command(
+            &sequence,
+            &state,
+            &layout_manager,
+            &hotkey_manager,
+            &ws,
+            &manipulator,
+            &event_emitter,
+            &observer_manager,
+        );
+
+        assert!(matches!(response, Response::Ok));
+        // Verify tag switched to 2
+        assert_eq!(state.borrow().visible_tags().mask(), 0b10);
+        // Verify close command was executed (would be in manipulator operations)
+        // Note: actual close verification would require checking manipulator operations
+    }
+
+    #[test]
+    fn test_dispatch_command_sequence_stops_on_error() {
+        use crate::platform::mock::MockWindowSystem;
+
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 0.0, 0.0, 960.0, 1080.0,
+            )]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        let state = RefCell::new(state);
+
+        let layout_engine_manager = RefCell::new(LayoutEngineManager::new());
+
+        let (tx, _rx) = std_mpsc::channel();
+        let dummy_source = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
+        let hotkey_manager = RefCell::new(HotkeyManager::new(tx, dummy_source));
+
+        let (event_tx, _event_rx) = std_mpsc::channel();
+        let event_emitter = EventEmitter::new(event_tx);
+
+        let manipulator = MockWindowManipulator::new();
+
+        let (observer_event_tx, _observer_event_rx) = std_mpsc::channel::<Event>();
+        let observer_source_ptr = Arc::new(AtomicPtr::new(ptr::null_mut()));
+        let observer_manager =
+            RefCell::new(ObserverManager::new(observer_event_tx, observer_source_ptr));
+
+        // Sequence with invalid command in the middle
+        let sequence = Command::Sequence {
+            commands: vec![
+                Command::TagView {
+                    tags: 0b10,
+                    output: None,
+                },
+                // This should fail - undeclared mode
+                Command::EnterMode {
+                    name: "nonexistent".to_string(),
+                },
+                // This should not execute
+                Command::TagView {
+                    tags: 0b100,
+                    output: None,
+                },
+            ],
+        };
+
+        let response = dispatch_command(
+            &sequence,
+            &state,
+            &layout_engine_manager,
+            &hotkey_manager,
+            &ws,
+            &manipulator,
+            &event_emitter,
+            &observer_manager,
+        );
+
+        // Should return error
+        assert!(matches!(response, Response::Error { .. }));
+
+        // First command should have executed (tag view to 0b10)
+        assert_eq!(state.borrow().visible_tags().mask(), 0b10);
+
+        // Third command should NOT have executed (still at 0b10, not 0b100)
+        assert_ne!(state.borrow().visible_tags().mask(), 0b100);
+    }
 }

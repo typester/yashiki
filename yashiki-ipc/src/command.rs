@@ -742,6 +742,11 @@ pub enum Command {
     },
     GetLogLevel,
 
+    // Sequencing
+    Sequence {
+        commands: Vec<Command>,
+    },
+
     // Control
     Quit,
 }

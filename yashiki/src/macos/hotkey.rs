@@ -135,11 +135,34 @@ impl HotkeyManager {
             return Err(format!("Mode '{}' not declared", mode));
         }
         let hotkey = parse_hotkey(key_str)?;
-        tracing::info!("Binding {} to {:?} (mode: {})", key_str, command, mode);
-        self.modes
-            .entry(mode.to_string())
-            .or_default()
-            .insert(hotkey, command);
+
+        let mode_bindings = self.modes.entry(mode.to_string()).or_default();
+
+        // Check if there's an existing binding for this hotkey
+        let new_command = if let Some(existing) = mode_bindings.get(&hotkey) {
+            // Append to existing sequence
+            match existing {
+                Command::Sequence { commands } => {
+                    let mut new_commands = commands.clone();
+                    new_commands.push(command);
+                    Command::Sequence {
+                        commands: new_commands,
+                    }
+                }
+                _ => {
+                    // Convert single command to sequence
+                    Command::Sequence {
+                        commands: vec![existing.clone(), command],
+                    }
+                }
+            }
+        } else {
+            // No existing binding, use command as-is
+            command
+        };
+
+        tracing::info!("Binding {} to {:?} (mode: {})", key_str, new_command, mode);
+        mode_bindings.insert(hotkey, new_command);
         self.dirty = true;
         Ok(())
     }
@@ -645,6 +668,191 @@ mod tests {
             let formatted = format_hotkey(&hotkey);
             let reparsed = parse_hotkey(&formatted).unwrap();
             assert_eq!(hotkey, reparsed, "Roundtrip failed for: {}", input);
+        }
+    }
+
+    #[test]
+    fn test_bind_creates_sequence_on_duplicate_key() {
+        use std::ptr;
+        use std::sync::atomic::AtomicPtr;
+        use std::sync::mpsc as std_mpsc;
+        use std::sync::Arc;
+
+        let (tx, _rx) = std_mpsc::channel();
+        let dummy_source = Arc::new(AtomicPtr::new(ptr::null_mut()));
+        let mut manager = HotkeyManager::new(tx, dummy_source);
+
+        // First bind
+        manager
+            .bind("normal", "alt-x", Command::WindowClose)
+            .unwrap();
+
+        // Second bind - should create sequence
+        manager
+            .bind(
+                "normal",
+                "alt-x",
+                Command::TagView {
+                    tags: 2,
+                    output: None,
+                },
+            )
+            .unwrap();
+
+        let bindings = manager.list_bindings(Some("normal")).unwrap();
+        assert_eq!(bindings.len(), 1);
+
+        // Verify it's a sequence
+        let (_, _, cmd) = &bindings[0];
+        match cmd {
+            Command::Sequence { commands } => {
+                assert_eq!(commands.len(), 2);
+                assert!(matches!(commands[0], Command::WindowClose));
+                assert!(matches!(commands[1], Command::TagView { tags: 2, .. }));
+            }
+            _ => panic!("Expected Sequence, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn test_bind_appends_to_existing_sequence() {
+        use std::ptr;
+        use std::sync::atomic::AtomicPtr;
+        use std::sync::mpsc as std_mpsc;
+        use std::sync::Arc;
+
+        let (tx, _rx) = std_mpsc::channel();
+        let dummy_source = Arc::new(AtomicPtr::new(ptr::null_mut()));
+        let mut manager = HotkeyManager::new(tx, dummy_source);
+
+        // Bind three commands to same key
+        manager
+            .bind("normal", "alt-x", Command::WindowClose)
+            .unwrap();
+        manager
+            .bind(
+                "normal",
+                "alt-x",
+                Command::TagView {
+                    tags: 2,
+                    output: None,
+                },
+            )
+            .unwrap();
+        manager
+            .bind("normal", "alt-x", Command::Retile { output: None })
+            .unwrap();
+
+        let bindings = manager.list_bindings(Some("normal")).unwrap();
+        assert_eq!(bindings.len(), 1);
+
+        // Verify all three commands are in the sequence
+        let (_, _, cmd) = &bindings[0];
+        match cmd {
+            Command::Sequence { commands } => {
+                assert_eq!(commands.len(), 3);
+                assert!(matches!(commands[0], Command::WindowClose));
+                assert!(matches!(commands[1], Command::TagView { tags: 2, .. }));
+                assert!(matches!(commands[2], Command::Retile { .. }));
+            }
+            _ => panic!("Expected Sequence, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn test_unbind_removes_entire_sequence() {
+        use std::ptr;
+        use std::sync::atomic::AtomicPtr;
+        use std::sync::mpsc as std_mpsc;
+        use std::sync::Arc;
+
+        let (tx, _rx) = std_mpsc::channel();
+        let dummy_source = Arc::new(AtomicPtr::new(ptr::null_mut()));
+        let mut manager = HotkeyManager::new(tx, dummy_source);
+
+        // Create a sequence
+        manager
+            .bind("normal", "alt-x", Command::WindowClose)
+            .unwrap();
+        manager
+            .bind(
+                "normal",
+                "alt-x",
+                Command::TagView {
+                    tags: 2,
+                    output: None,
+                },
+            )
+            .unwrap();
+
+        // Verify sequence exists
+        let bindings = manager.list_bindings(Some("normal")).unwrap();
+        assert_eq!(bindings.len(), 1);
+
+        // Unbind should remove entire sequence
+        manager.unbind("normal", "alt-x").unwrap();
+        let bindings = manager.list_bindings(Some("normal")).unwrap();
+        assert_eq!(bindings.len(), 0);
+    }
+
+    #[test]
+    fn test_bind_different_modes_dont_interfere() {
+        use std::ptr;
+        use std::sync::atomic::AtomicPtr;
+        use std::sync::mpsc as std_mpsc;
+        use std::sync::Arc;
+
+        let (tx, _rx) = std_mpsc::channel();
+        let dummy_source = Arc::new(AtomicPtr::new(ptr::null_mut()));
+        let mut manager = HotkeyManager::new(tx, dummy_source);
+
+        manager.declare_mode("resize");
+
+        // Bind same key in different modes
+        manager
+            .bind("normal", "alt-x", Command::WindowClose)
+            .unwrap();
+        manager
+            .bind(
+                "resize",
+                "alt-x",
+                Command::TagView {
+                    tags: 1,
+                    output: None,
+                },
+            )
+            .unwrap();
+
+        // Bind again in normal mode - should create sequence only in normal
+        manager
+            .bind(
+                "normal",
+                "alt-x",
+                Command::TagView {
+                    tags: 2,
+                    output: None,
+                },
+            )
+            .unwrap();
+
+        let normal_bindings = manager.list_bindings(Some("normal")).unwrap();
+        let resize_bindings = manager.list_bindings(Some("resize")).unwrap();
+
+        assert_eq!(normal_bindings.len(), 1);
+        assert_eq!(resize_bindings.len(), 1);
+
+        // Normal mode should have a sequence
+        match &normal_bindings[0].2 {
+            Command::Sequence { commands } => {
+                assert_eq!(commands.len(), 2);
+            }
+            _ => panic!("Expected Sequence in normal mode"),
+        }
+
+        // Resize mode should still be a single command
+        match &resize_bindings[0].2 {
+            Command::TagView { tags: 1, .. } => {}
+            _ => panic!("Expected single TagView in resize mode"),
         }
     }
 }

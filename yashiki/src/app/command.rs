@@ -602,6 +602,35 @@ pub fn process_command(
         // Log level - handled in ipc_source_callback (needs RunLoopContext)
         Command::SetLogLevel { .. } | Command::GetLogLevel => CommandResult::ok(),
 
+        // Sequencing
+        Command::Sequence { commands } => {
+            tracing::debug!("Executing sequence with {} commands", commands.len());
+
+            let mut all_effects = Vec::new();
+            let mut executed_count = 0;
+
+            for command in commands {
+                tracing::debug!("Executing command: {:?}", command);
+                executed_count += 1;
+
+                let result = process_command(state, hotkey_manager, command);
+
+                // If any command fails, stop sequence and return error
+                if let Response::Error { message } = result.response {
+                    tracing::info!("Sequence failed after {} commands", executed_count);
+                    return CommandResult::error(message);
+                }
+
+                all_effects.extend(result.effects);
+            }
+
+            tracing::info!(
+                "Sequence completed successfully ({} commands)",
+                executed_count
+            );
+            CommandResult::ok_with_effects(all_effects)
+        }
+
         // Control
         Command::Quit => {
             tracing::info!("Quit command received");

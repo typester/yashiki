@@ -284,6 +284,33 @@ Each group sorted alphabetically, blank lines between groups.
 - CGEventTap callback signals CFRunLoopSource for immediate processing
 - Default mode: `"normal"` (always exists, implicit)
 
+### Command Sequencing
+Multiple `bind` commands for the same hotkey automatically create a command sequence:
+
+```sh
+yashiki bind alt-x window-close
+yashiki bind alt-x tag-view 2
+yashiki bind alt-x retile
+# alt-x now executes all three commands in order
+```
+
+**Sequence execution:**
+- Commands execute in bind order
+- Each command sees state changes from previous commands
+- Sequence stops on first error (fail-fast)
+- `unbind` removes entire sequence
+
+**Implementation:**
+- `Command::Sequence { commands: Vec<Command> }` variant in yashiki-ipc
+- `HotkeyManager::bind()` checks for existing binding, creates/appends to sequence
+- `process_command()` recursively executes sequence commands, accumulating effects
+- No CLI changes required (backward compatible)
+
+**Related code:**
+- `yashiki-ipc/src/command.rs`: `Command::Sequence`
+- `macos/hotkey.rs`: `HotkeyManager::bind()` - sequence building
+- `app/command.rs`: `process_command()` - sequence execution
+
 ### Focus
 - `next`/`prev`: Stack-based (sorted by window ID)
 - `left`/`right`/`up`/`down`: Geometry-based (Manhattan distance)
