@@ -305,8 +305,11 @@ pub fn process_command(
         }
 
         // Send to output - returns displays that need retiling
-        Command::OutputSend { direction } => {
-            if let Some(result) = state.send_to_output(*direction) {
+        Command::OutputSend {
+            direction,
+            current_tags,
+        } => {
+            if let Some(result) = state.send_to_output(*direction, *current_tags) {
                 CommandResult::ok_with_effects(vec![
                     Effect::ApplyWindowMoves(result.window_moves),
                     Effect::RetileDisplays(vec![

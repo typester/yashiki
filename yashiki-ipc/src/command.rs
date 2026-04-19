@@ -624,6 +624,7 @@ pub enum Command {
     },
     OutputSend {
         direction: OutputDirection,
+        current_tags: bool,
     },
 
     // Layout operations

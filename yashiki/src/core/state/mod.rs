@@ -698,8 +698,12 @@ impl State {
         focus_output(self, direction)
     }
 
-    pub fn send_to_output(&mut self, direction: OutputDirection) -> Option<SendToOutputResult> {
-        send_to_output(self, direction)
+    pub fn send_to_output(
+        &mut self,
+        direction: OutputDirection,
+        current_tags: bool,
+    ) -> Option<SendToOutputResult> {
+        send_to_output(self, direction, current_tags)
     }
 
     // Layout operations - delegated to state/layout.rs
@@ -1906,7 +1910,7 @@ mod tests {
         assert_eq!(state.displays.get(&1).unwrap().visible_tags.mask(), 1);
         assert_eq!(state.displays.get(&2).unwrap().visible_tags.mask(), 1);
 
-        let result = state.send_to_output(OutputDirection::Next);
+        let result = state.send_to_output(OutputDirection::Next, false);
         assert!(result.is_some());
 
         let result = result.unwrap();
@@ -1945,7 +1949,7 @@ mod tests {
         state.displays.get_mut(&1).unwrap().visible_tags = Tag::new(2);
         state.displays.get_mut(&2).unwrap().visible_tags = Tag::new(1);
 
-        let result = state.send_to_output(OutputDirection::Next);
+        let result = state.send_to_output(OutputDirection::Next, false);
         assert!(result.is_some());
 
         let result = result.unwrap();
@@ -1982,7 +1986,7 @@ mod tests {
         assert!(state.displays.get(&1).unwrap().window_order.contains(&100));
         assert!(state.displays.get(&2).unwrap().window_order.contains(&101));
 
-        let result = state.send_to_output(OutputDirection::Next);
+        let result = state.send_to_output(OutputDirection::Next, false);
         assert!(result.is_some());
 
         // Window 100 should be removed from display 1's order and added to display 2's order
@@ -2017,7 +2021,7 @@ mod tests {
         assert!(state.windows.get(&100).unwrap().is_hidden());
 
         // Now send to output - target display shows tag 2, so window should become visible
-        let result = state.send_to_output(OutputDirection::Next);
+        let result = state.send_to_output(OutputDirection::Next, false);
         assert!(result.is_some());
 
         let result = result.unwrap();
@@ -2053,7 +2057,7 @@ mod tests {
         state.sync_all(&ws);
         state.focused_display = 1;
 
-        let result = state.send_to_output(OutputDirection::Next);
+        let result = state.send_to_output(OutputDirection::Next, false);
         assert!(result.is_some());
 
         // Window moved to display 2
@@ -2368,7 +2372,7 @@ mod tests {
         state.windows.get_mut(&100).unwrap().orphaned_from = Some(2);
 
         // User sends window to next output
-        let result = state.send_to_output(OutputDirection::Next);
+        let result = state.send_to_output(OutputDirection::Next, false);
         assert!(result.is_some());
 
         // orphaned_from should be cleared (user intentionally moved it)
@@ -2377,6 +2381,43 @@ mod tests {
     }
 
     #[test]
+    fn test_send_to_output_with_current_tags() {
+        // Test the --current-tags flag functionality
+        // Window on display 1 with tag 2, should be updated to target display's visible tags
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Set window to tag 2, display 1 shows tag 2, display 2 shows tag 3
+        state.windows.get_mut(&100).unwrap().tags = Tag::new(2);
+        state.displays.get_mut(&1).unwrap().visible_tags = Tag::new(2);
+        state.displays.get_mut(&2).unwrap().visible_tags = Tag::new(3);
+
+        // Send to next output with current_tags=true
+        let result = state.send_to_output(OutputDirection::Next, true);
+        assert!(result.is_some());
+
+        // Window should now have tag 3 (target display's visible tags)
+        assert_eq!(
+            state.windows.get(&100).unwrap().tags.mask(),
+            Tag::new(3).mask()
+        );
+        assert_eq!(state.windows.get(&100).unwrap().display_id, 2);
+        // Window should be visible now (no hide moves)
+        assert!(result.unwrap().window_moves.is_empty());
+    }
+
+    #[test]
+
     fn test_rapid_display_reconnect_preserves_window_position() {
         // Simulates sleep/wake: display removed then quickly re-added
         // Window should end up on its original display
