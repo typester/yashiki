@@ -1682,6 +1682,88 @@ mod tests {
     }
 
     #[test]
+    fn test_visible_picks_up_stragglers() {
+        // Resilience: a window present in state.windows that matches visible_tags
+        // must appear in visible_windows_on_display even when it is NOT in tag_orders.
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Wipe tag_orders entirely to simulate inconsistent state
+        state.displays.get_mut(&1).unwrap().tag_orders.clear();
+
+        let visible = state.visible_windows_on_display(1);
+        let visible_ids: Vec<WindowId> = visible.iter().map(|w| w.id).collect();
+        // All three windows from setup_mock_system are on tag 1 and visible
+        assert!(visible_ids.contains(&100));
+        assert!(visible_ids.contains(&101));
+        assert!(visible_ids.contains(&102));
+    }
+
+    #[test]
+    fn test_swap_auto_registers_in_tag_orders() {
+        // Resilience: even when neither focused nor target is in tag_orders,
+        // swap_window must auto-register and perform the swap.
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Wipe tag_orders
+        state.displays.get_mut(&1).unwrap().tag_orders.clear();
+
+        state.focused = Some(100);
+        let result = state.swap_window(Direction::Next);
+        assert!(result.is_some());
+
+        let order = state
+            .displays
+            .get(&1)
+            .unwrap()
+            .tag_orders
+            .get(&1)
+            .cloned()
+            .unwrap();
+        // 100 and the next stack window (find_swap_target_stack chooses by
+        // tag-order; with empty tag_orders the visible list is WindowID-ascending,
+        // so Next from 100 yields 101). Both must now be present in tag_orders
+        // and 101 should precede 100 after the swap.
+        assert!(order.contains(&100));
+        assert!(order.contains(&101));
+        let idx_100 = order.iter().position(|&id| id == 100).unwrap();
+        let idx_101 = order.iter().position(|&id| id == 101).unwrap();
+        assert!(idx_101 < idx_100);
+    }
+
+    #[test]
+    fn test_rule_tag_change_window_visible_after_view_tags() {
+        // Regression test for the issue observed in the daemon: a window whose
+        // tags were mutated directly (as rules do) must still appear in
+        // visible_windows_on_display after switching to the new tag.
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Simulate a rule mutating window.tags directly (no tag_orders sync).
+        // Window 100 moved from tag 1 to tag 2.
+        state.windows.get_mut(&100).unwrap().tags = Tag::from_mask(0b0010);
+
+        // Switch the display to view tag 2.
+        state.view_tags(0b0010);
+
+        // Window 100 must be visible despite not being in tag_orders[2].
+        let visible_ids: Vec<WindowId> = state
+            .visible_windows_on_display(1)
+            .iter()
+            .map(|w| w.id)
+            .collect();
+        assert!(
+            visible_ids.contains(&100),
+            "window 100 should be visible on tag 2 (visible={:?})",
+            visible_ids
+        );
+    }
+
+    #[test]
     fn test_float_nofloat_first_match_wins() {
         use yashiki_ipc::{GlobPattern, RuleAction, RuleMatcher, WindowRule};
 

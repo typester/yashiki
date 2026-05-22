@@ -272,11 +272,21 @@ pub fn visible_windows_on_display(state: &State, display_id: DisplayId) -> Vec<&
     let Some(display) = state.displays.get(&display_id) else {
         return vec![];
     };
+    let visible_tags = display.visible_tags;
+
+    let is_visible_candidate = |w: &Window| -> bool {
+        w.display_id == display_id
+            && w.is_tiled()
+            && !w.is_hidden()
+            && w.tags.intersects(visible_tags)
+    };
 
     let mut result: Vec<&Window> = Vec::new();
     let mut seen: HashSet<WindowId> = HashSet::new();
 
-    for tag_bit in display.visible_tags.iter_bits() {
+    // Pass 1: respect tag_orders. Walk visible tag bits ascending and emit windows
+    // that still satisfy the visibility filter against current State.windows.
+    for tag_bit in visible_tags.iter_bits() {
         let Some(order) = display.tag_orders.get(&tag_bit) else {
             continue;
         };
@@ -287,18 +297,28 @@ pub fn visible_windows_on_display(state: &State, display_id: DisplayId) -> Vec<&
             let Some(window) = state.windows.get(&id) else {
                 continue;
             };
-            if window.display_id != display_id {
-                continue;
-            }
-            if !window.is_tiled() || window.is_hidden() {
-                continue;
-            }
-            if !window.tags.intersects(display.visible_tags) {
+            if !is_visible_candidate(window) {
                 continue;
             }
             result.push(window);
         }
     }
+
+    // Pass 2: pick up stragglers — windows that match the filter but are not yet
+    // recorded in tag_orders (e.g. after a direct mutation of window.tags or
+    // window.display_id outside the tag_orders maintenance helpers). Stable order
+    // by WindowId.
+    let mut stragglers: Vec<&Window> = state
+        .windows
+        .values()
+        .filter(|w| is_visible_candidate(w) && !seen.contains(&w.id))
+        .collect();
+    stragglers.sort_by_key(|w| w.id);
+    for w in stragglers {
+        seen.insert(w.id);
+        result.push(w);
+    }
+
     result
 }
 

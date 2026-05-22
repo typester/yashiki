@@ -3,7 +3,7 @@ use crate::macos::DisplayId;
 use yashiki_ipc::Direction;
 
 use super::super::state::State;
-use super::layout::visible_windows_on_display;
+use super::layout::{add_to_tag_orders, visible_windows_on_display};
 
 pub fn focus_window(state: &State, direction: Direction) -> Option<(WindowId, i32)> {
     let visible: Vec<&Window> = visible_windows_on_display(state, state.focused_display);
@@ -118,6 +118,12 @@ pub fn swap_window(state: &mut State, direction: Direction) -> Option<DisplayId>
         );
         return None;
     }
+
+    // Auto-register stragglers: ensure both windows are present in tag_orders
+    // for every shared bit before locating positions. add_to_tag_orders is
+    // idempotent (pushes only if absent).
+    add_to_tag_orders(state, focused_id, display_id, shared);
+    add_to_tag_orders(state, target_id, display_id, shared);
 
     let display = state.displays.get_mut(&display_id)?;
 
