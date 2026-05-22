@@ -6,7 +6,7 @@ use yashiki_ipc::OutputDirection;
 
 use super::super::state::{DisplayChangeResult, FocusOutputResult, SendToOutputResult, State};
 use super::layout::{
-    add_to_window_order, compute_layout_changes_for_display, remove_from_window_order,
+    add_to_tag_orders, compute_layout_changes_for_display, remove_from_tag_orders,
     visible_windows_on_display,
 };
 use super::sync::sync_all;
@@ -263,6 +263,7 @@ pub fn send_to_output(state: &mut State, direction: OutputDirection) -> Option<S
     // or saved to saved_frame if hidden - either way, correct display context)
     window.frame.x = target_frame_x;
     window.frame.y = target_frame_y;
+    let window_tags = window.tags;
 
     // If window was already hidden, update saved_frame to target display position
     // so that when it becomes visible, it appears on the correct display
@@ -271,9 +272,9 @@ pub fn send_to_output(state: &mut State, direction: OutputDirection) -> Option<S
         saved.y = target_frame_y;
     }
 
-    // Update window_order (move from source to target)
-    remove_from_window_order(state, focused_id);
-    add_to_window_order(state, focused_id, target_display_id);
+    // Update tag_orders (move from source to target display)
+    remove_from_tag_orders(state, focused_id, source_display_id);
+    add_to_tag_orders(state, focused_id, target_display_id, window_tags);
 
     // Compute visibility changes for target display
     let moves = compute_layout_changes_for_display(state, target_display_id);

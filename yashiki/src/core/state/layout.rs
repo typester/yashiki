@@ -1,5 +1,7 @@
+use std::collections::HashSet;
+
 use super::super::window::Rect;
-use super::super::{Window, WindowId};
+use super::super::{Tag, Window, WindowId};
 use crate::macos::DisplayId;
 
 use super::super::state::{State, WindowMove};
@@ -270,39 +272,86 @@ pub fn visible_windows_on_display(state: &State, display_id: DisplayId) -> Vec<&
     let Some(display) = state.displays.get(&display_id) else {
         return vec![];
     };
-    let mut windows: Vec<&Window> = state
-        .windows
-        .values()
-        .filter(|w| {
-            w.display_id == display_id
-                && w.tags.intersects(display.visible_tags)
-                && !w.is_hidden()
-                && w.is_tiled()
-        })
-        .collect();
 
-    windows.sort_by_key(|w| {
-        display
-            .window_order
-            .iter()
-            .position(|&id| id == w.id)
-            .map(|p| (0, p))
-            .unwrap_or((1, w.id as usize))
-    });
-    windows
+    let mut result: Vec<&Window> = Vec::new();
+    let mut seen: HashSet<WindowId> = HashSet::new();
+
+    for tag_bit in display.visible_tags.iter_bits() {
+        let Some(order) = display.tag_orders.get(&tag_bit) else {
+            continue;
+        };
+        for &id in order {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(window) = state.windows.get(&id) else {
+                continue;
+            };
+            if window.display_id != display_id {
+                continue;
+            }
+            if !window.is_tiled() || window.is_hidden() {
+                continue;
+            }
+            if !window.tags.intersects(display.visible_tags) {
+                continue;
+            }
+            result.push(window);
+        }
+    }
+    result
 }
 
-pub fn add_to_window_order(state: &mut State, window_id: WindowId, display_id: DisplayId) {
-    if let Some(display) = state.displays.get_mut(&display_id) {
-        if !display.window_order.contains(&window_id) {
-            display.window_order.push(window_id);
+pub fn add_to_tag_orders(state: &mut State, window_id: WindowId, display_id: DisplayId, tags: Tag) {
+    let Some(display) = state.displays.get_mut(&display_id) else {
+        return;
+    };
+    for tag_bit in tags.iter_bits() {
+        let order = display.tag_orders.entry(tag_bit).or_default();
+        if !order.contains(&window_id) {
+            order.push(window_id);
         }
     }
 }
 
-pub fn remove_from_window_order(state: &mut State, window_id: WindowId) {
-    for display in state.displays.values_mut() {
-        display.window_order.retain(|&id| id != window_id);
+pub fn remove_from_tag_orders(state: &mut State, window_id: WindowId, display_id: DisplayId) {
+    let Some(display) = state.displays.get_mut(&display_id) else {
+        return;
+    };
+    display.tag_orders.retain(|_, order| {
+        order.retain(|&id| id != window_id);
+        !order.is_empty()
+    });
+}
+
+/// Update tag_orders when a window's tags change on the same display.
+/// Removes the window from tag_orders bits that were dropped, appends it to bits that were added.
+pub fn update_tag_orders_for_tag_change(
+    state: &mut State,
+    window_id: WindowId,
+    display_id: DisplayId,
+    old_tags: Tag,
+    new_tags: Tag,
+) {
+    let Some(display) = state.displays.get_mut(&display_id) else {
+        return;
+    };
+    let removed = Tag::from_mask(old_tags.mask() & !new_tags.mask());
+    let added = Tag::from_mask(new_tags.mask() & !old_tags.mask());
+
+    for tag_bit in removed.iter_bits() {
+        if let Some(order) = display.tag_orders.get_mut(&tag_bit) {
+            order.retain(|&id| id != window_id);
+            if order.is_empty() {
+                display.tag_orders.remove(&tag_bit);
+            }
+        }
+    }
+    for tag_bit in added.iter_bits() {
+        let order = display.tag_orders.entry(tag_bit).or_default();
+        if !order.contains(&window_id) {
+            order.push(window_id);
+        }
     }
 }
 

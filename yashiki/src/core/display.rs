@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::macos::DisplayId;
 
 use super::{Rect, Tag, WindowId};
@@ -10,7 +12,7 @@ pub struct Display {
     pub is_main: bool,
     pub visible_tags: Tag,
     pub previous_visible_tags: Tag,
-    pub window_order: Vec<WindowId>,
+    pub tag_orders: BTreeMap<u8, Vec<WindowId>>,
     pub current_layout: Option<String>,
     pub previous_layout: Option<String>,
 }
@@ -24,7 +26,7 @@ impl Display {
             is_main,
             visible_tags: Tag::new(1),
             previous_visible_tags: Tag::new(1),
-            window_order: Vec::new(),
+            tag_orders: BTreeMap::new(),
             current_layout: None,
             previous_layout: None,
         }

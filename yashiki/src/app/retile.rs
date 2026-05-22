@@ -130,13 +130,6 @@ fn retile_single_display<M: WindowManipulator>(
     let mut manager = layout_engine_manager.borrow_mut();
     match manager.request_layout(&layout_name, usable_width, usable_height, &window_ids) {
         Ok(geometries) => {
-            // Update window_order based on geometries order from layout engine
-            {
-                let mut state = state.borrow_mut();
-                if let Some(display) = state.displays.get_mut(&display_id) {
-                    display.window_order = geometries.iter().map(|g| g.id).collect();
-                }
-            }
             // Add outer gap offset to geometries before applying
             let adjusted_geometries: Vec<_> = geometries
                 .into_iter()

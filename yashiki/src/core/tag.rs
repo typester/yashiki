@@ -30,6 +30,12 @@ impl Tag {
         }
         Some(self.0.trailing_zeros() + 1)
     }
+
+    /// Returns an iterator over tag numbers (1..=32) of the set bits, in ascending order.
+    pub fn iter_bits(self) -> impl Iterator<Item = u8> {
+        let mask = self.0;
+        (1u8..=32).filter(move |n| mask & (1 << (n - 1)) != 0)
+    }
 }
 
 #[cfg(test)]
@@ -102,6 +108,35 @@ mod tests {
     fn test_equality() {
         assert_eq!(Tag::new(1), Tag::new(1));
         assert_ne!(Tag::new(1), Tag::new(2));
+    }
+
+    #[test]
+    fn test_iter_bits_single() {
+        assert_eq!(Tag::new(1).iter_bits().collect::<Vec<_>>(), vec![1]);
+        assert_eq!(Tag::new(5).iter_bits().collect::<Vec<_>>(), vec![5]);
+        assert_eq!(Tag::new(32).iter_bits().collect::<Vec<_>>(), vec![32]);
+    }
+
+    #[test]
+    fn test_iter_bits_multi_ascending() {
+        // tag1 | tag2 | tag4 = bits 0,1,3 -> tags 1,2,4
+        let t = Tag::from_mask(0b1011);
+        assert_eq!(t.iter_bits().collect::<Vec<_>>(), vec![1, 2, 4]);
+    }
+
+    #[test]
+    fn test_iter_bits_empty() {
+        let t = Tag::from_mask(0);
+        assert_eq!(t.iter_bits().collect::<Vec<_>>(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn test_iter_bits_all() {
+        let t = Tag::from_mask(u32::MAX);
+        assert_eq!(
+            t.iter_bits().collect::<Vec<_>>(),
+            (1u8..=32).collect::<Vec<_>>()
+        );
     }
 
     #[test]

@@ -1,20 +1,12 @@
-use super::super::{Window, WindowId};
+use super::super::{Tag, Window, WindowId};
 use crate::macos::DisplayId;
 use yashiki_ipc::Direction;
 
 use super::super::state::State;
+use super::layout::visible_windows_on_display;
 
 pub fn focus_window(state: &State, direction: Direction) -> Option<(WindowId, i32)> {
-    let visible_tags = state.visible_tags();
-    let visible: Vec<_> = state
-        .windows
-        .values()
-        .filter(|w| {
-            w.display_id == state.focused_display
-                && w.tags.intersects(visible_tags)
-                && !w.is_hidden()
-        })
-        .collect();
+    let visible: Vec<&Window> = visible_windows_on_display(state, state.focused_display);
 
     if visible.is_empty() {
         return None;
@@ -39,32 +31,23 @@ fn focus_window_stack(
         return None;
     }
 
-    let display = state.displays.get(&state.focused_display)?;
-    let mut sorted: Vec<_> = visible.iter().map(|w| (w.id, w.pid)).collect();
-    sorted.sort_by_key(|(id, _)| {
-        display
-            .window_order
-            .iter()
-            .position(|&wid| wid == *id)
-            .unwrap_or(usize::MAX)
-    });
-
     let current_idx = state
         .focused
-        .and_then(|id| sorted.iter().position(|(wid, _)| *wid == id));
+        .and_then(|id| visible.iter().position(|w| w.id == id));
 
     let next_idx = match current_idx {
         Some(idx) => {
             if forward {
-                (idx + 1) % sorted.len()
+                (idx + 1) % visible.len()
             } else {
-                (idx + sorted.len() - 1) % sorted.len()
+                (idx + visible.len() - 1) % visible.len()
             }
         }
         None => 0,
     };
 
-    Some(sorted[next_idx])
+    let w = visible[next_idx];
+    Some((w.id, w.pid))
 }
 
 fn focus_window_directional(
@@ -122,42 +105,44 @@ pub fn swap_window(state: &mut State, direction: Direction) -> Option<DisplayId>
     }
 
     let display_id = focused_window.display_id;
+    let focused_tags = focused_window.tags;
     let target_id = find_swap_target(state, direction)?;
 
-    if let Some(display) = state.displays.get_mut(&display_id) {
-        let focused_idx = display
-            .window_order
-            .iter()
-            .position(|&id| id == focused_id)?;
-        let target_idx = display
-            .window_order
-            .iter()
-            .position(|&id| id == target_id)?;
-        display.window_order.swap(focused_idx, target_idx);
-        tracing::info!(
-            "Swapped window {} with {} in direction {:?}",
+    let target_tags = state.windows.get(&target_id)?.tags;
+    let shared = Tag::from_mask(focused_tags.mask() & target_tags.mask());
+    if shared.mask() == 0 {
+        tracing::debug!(
+            "swap_window: focused {} and target {} share no tag, skipping",
             focused_id,
-            target_id,
-            direction
+            target_id
         );
-        Some(display_id)
-    } else {
-        None
+        return None;
     }
+
+    let display = state.displays.get_mut(&display_id)?;
+
+    for tag_bit in shared.iter_bits() {
+        let Some(order) = display.tag_orders.get_mut(&tag_bit) else {
+            continue;
+        };
+        let focused_idx = order.iter().position(|&id| id == focused_id);
+        let target_idx = order.iter().position(|&id| id == target_id);
+        if let (Some(fi), Some(ti)) = (focused_idx, target_idx) {
+            order.swap(fi, ti);
+        }
+    }
+    tracing::info!(
+        "Swapped window {} with {} in direction {:?} (shared tags mask={:#b})",
+        focused_id,
+        target_id,
+        direction,
+        shared.mask()
+    );
+    Some(display_id)
 }
 
 fn find_swap_target(state: &State, direction: Direction) -> Option<WindowId> {
-    let visible_tags = state.visible_tags();
-    let visible: Vec<_> = state
-        .windows
-        .values()
-        .filter(|w| {
-            w.display_id == state.focused_display
-                && w.tags.intersects(visible_tags)
-                && !w.is_hidden()
-                && w.is_tiled()
-        })
-        .collect();
+    let visible: Vec<&Window> = visible_windows_on_display(state, state.focused_display);
 
     if visible.len() <= 1 {
         return None;
@@ -175,26 +160,15 @@ fn find_swap_target(state: &State, direction: Direction) -> Option<WindowId> {
 
 fn find_swap_target_stack(state: &State, visible: &[&Window], forward: bool) -> Option<WindowId> {
     let focused_id = state.focused?;
-    let display = state.displays.get(&state.focused_display)?;
-
-    let mut sorted: Vec<_> = visible.iter().map(|w| w.id).collect();
-    sorted.sort_by_key(|&id| {
-        display
-            .window_order
-            .iter()
-            .position(|&wid| wid == id)
-            .unwrap_or(usize::MAX)
-    });
-
-    let current_idx = sorted.iter().position(|&id| id == focused_id)?;
+    let current_idx = visible.iter().position(|w| w.id == focused_id)?;
 
     let next_idx = if forward {
-        (current_idx + 1) % sorted.len()
+        (current_idx + 1) % visible.len()
     } else {
-        (current_idx + sorted.len() - 1) % sorted.len()
+        (current_idx + visible.len() - 1) % visible.len()
     };
 
-    Some(sorted[next_idx])
+    Some(visible[next_idx].id)
 }
 
 fn find_swap_target_directional(

@@ -7,9 +7,7 @@ use crate::platform::WindowSystem;
 
 use super::super::state::{IgnoredWindowInfo, State, WindowMove};
 
-use super::layout::{
-    add_to_window_order, compute_hide_position_for_display, remove_from_window_order,
-};
+use super::layout::{add_to_tag_orders, compute_hide_position_for_display, remove_from_tag_orders};
 use super::rules::{has_matching_non_ignore_rule, should_ignore_window_extended};
 
 /// Grace period during which recently ignored windows protect managed windows from removal.
@@ -397,6 +395,7 @@ pub fn sync_pid<W: WindowSystem>(
                 window.title,
                 window.app_name
             );
+            remove_from_tag_orders(state, window.id, window.display_id);
             if state.focused == Some(*id) {
                 state.focused = None;
             }
@@ -456,7 +455,10 @@ pub fn sync_pid<W: WindowSystem>(
                         window.window_level
                     );
                     state.ignored_windows.remove(&id);
+                    let window_id = window.id;
+                    let window_tags = window.tags;
                     state.windows.insert(window.id, window);
+                    add_to_tag_orders(state, window_id, display_id, window_tags);
                     added_window_ids.push(id);
                     changed = true;
                 }
@@ -499,7 +501,10 @@ pub fn sync_pid<W: WindowSystem>(
                         window.subrole,
                         window.window_level
                     );
+                    let window_id = window.id;
+                    let window_tags = window.tags;
                     state.windows.insert(window.id, window);
+                    add_to_tag_orders(state, window_id, display_id, window_tags);
                     added_window_ids.push(*id);
                     changed = true;
                 }
@@ -779,7 +784,8 @@ pub fn sync_with_window_infos<W: WindowSystem>(
                 window.title,
                 window.app_name
             );
-            remove_from_window_order(state, *id);
+            let display_id = window.display_id;
+            remove_from_tag_orders(state, *id, display_id);
             state.windows.remove(id);
         }
     }
@@ -833,7 +839,7 @@ pub fn sync_with_window_infos<W: WindowSystem>(
                         display_id
                     );
                     state.ignored_windows.remove(&id);
-                    add_to_window_order(state, window.id, display_id);
+                    add_to_tag_orders(state, window.id, display_id, window.tags);
                     added_window_ids.push(window.id);
                     state.windows.insert(window.id, window);
                 }
@@ -865,7 +871,7 @@ pub fn sync_with_window_infos<W: WindowSystem>(
 
         match try_create_window(state, ws, info, display_id) {
             Some(Ok(window)) => {
-                add_to_window_order(state, window.id, display_id);
+                add_to_tag_orders(state, window.id, display_id, window.tags);
                 added_window_ids.push(window.id);
                 state.windows.insert(window.id, window);
             }
