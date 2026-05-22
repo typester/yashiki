@@ -268,24 +268,27 @@ pub fn compute_layout_changes_for_display(
     moves
 }
 
-pub fn visible_windows_on_display(state: &State, display_id: DisplayId) -> Vec<&Window> {
+/// Walk windows on a display in tag_orders order, applying a combined filter
+/// of (on display + tags intersect visible_tags + not hidden) plus an `extra`
+/// predicate, then append any stragglers (windows matching the filter but not
+/// yet recorded in tag_orders) in stable WindowId order.
+fn windows_on_display_in_order<F: Fn(&Window) -> bool>(
+    state: &State,
+    display_id: DisplayId,
+    extra: F,
+) -> Vec<&Window> {
     let Some(display) = state.displays.get(&display_id) else {
         return vec![];
     };
     let visible_tags = display.visible_tags;
 
-    let is_visible_candidate = |w: &Window| -> bool {
-        w.display_id == display_id
-            && w.is_tiled()
-            && !w.is_hidden()
-            && w.tags.intersects(visible_tags)
+    let is_candidate = |w: &Window| -> bool {
+        w.display_id == display_id && !w.is_hidden() && w.tags.intersects(visible_tags) && extra(w)
     };
 
     let mut result: Vec<&Window> = Vec::new();
     let mut seen: HashSet<WindowId> = HashSet::new();
 
-    // Pass 1: respect tag_orders. Walk visible tag bits ascending and emit windows
-    // that still satisfy the visibility filter against current State.windows.
     for tag_bit in visible_tags.iter_bits() {
         let Some(order) = display.tag_orders.get(&tag_bit) else {
             continue;
@@ -297,21 +300,17 @@ pub fn visible_windows_on_display(state: &State, display_id: DisplayId) -> Vec<&
             let Some(window) = state.windows.get(&id) else {
                 continue;
             };
-            if !is_visible_candidate(window) {
+            if !is_candidate(window) {
                 continue;
             }
             result.push(window);
         }
     }
 
-    // Pass 2: pick up stragglers — windows that match the filter but are not yet
-    // recorded in tag_orders (e.g. after a direct mutation of window.tags or
-    // window.display_id outside the tag_orders maintenance helpers). Stable order
-    // by WindowId.
     let mut stragglers: Vec<&Window> = state
         .windows
         .values()
-        .filter(|w| is_visible_candidate(w) && !seen.contains(&w.id))
+        .filter(|w| is_candidate(w) && !seen.contains(&w.id))
         .collect();
     stragglers.sort_by_key(|w| w.id);
     for w in stragglers {
@@ -320,6 +319,20 @@ pub fn visible_windows_on_display(state: &State, display_id: DisplayId) -> Vec<&
     }
 
     result
+}
+
+/// Windows currently participating in the tile layout on the given display
+/// (excludes fullscreen and floating windows). Used by retile and swap.
+pub fn visible_windows_on_display(state: &State, display_id: DisplayId) -> Vec<&Window> {
+    windows_on_display_in_order(state, display_id, |w| w.is_tiled())
+}
+
+/// All currently-visible windows on the given display, regardless of tile/float/
+/// fullscreen state. Used by focus operations so directional / next focus can
+/// navigate to and from fullscreen and floating windows. Order follows
+/// tag_orders for stability.
+pub fn focusable_windows_on_display(state: &State, display_id: DisplayId) -> Vec<&Window> {
+    windows_on_display_in_order(state, display_id, |_| true)
 }
 
 pub fn add_to_tag_orders(state: &mut State, window_id: WindowId, display_id: DisplayId, tags: Tag) {

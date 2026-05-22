@@ -3,10 +3,10 @@ use crate::macos::DisplayId;
 use yashiki_ipc::Direction;
 
 use super::super::state::State;
-use super::layout::{add_to_tag_orders, visible_windows_on_display};
+use super::layout::{add_to_tag_orders, focusable_windows_on_display, visible_windows_on_display};
 
 pub fn focus_window(state: &State, direction: Direction) -> Option<(WindowId, i32)> {
-    let visible: Vec<&Window> = visible_windows_on_display(state, state.focused_display);
+    let visible: Vec<&Window> = focusable_windows_on_display(state, state.focused_display);
 
     if visible.is_empty() {
         return None;

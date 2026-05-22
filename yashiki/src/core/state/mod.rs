@@ -734,6 +734,10 @@ impl State {
         visible_windows_on_display(self, display_id)
     }
 
+    pub fn focusable_windows_on_display(&self, display_id: DisplayId) -> Vec<&Window> {
+        focusable_windows_on_display(self, display_id)
+    }
+
     pub(crate) fn compute_layout_changes(&mut self, display_id: DisplayId) -> Vec<WindowMove> {
         compute_layout_changes(self, display_id)
     }
@@ -985,6 +989,84 @@ mod tests {
 
         let (window_id, _pid) = result.unwrap();
         assert_eq!(window_id, 101);
+    }
+
+    #[test]
+    fn test_focus_window_directional_works_with_fullscreen_focused() {
+        // Window 100 is fullscreen (frame = display-wide), 101 and 102 are tiled.
+        // Direction::Right from 100 should still navigate to a window to the right.
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        state.windows.get_mut(&100).unwrap().is_fullscreen = true;
+        // Give 100 a fullscreen-ish frame so its center is roughly the display center.
+        state.windows.get_mut(&100).unwrap().frame = Rect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        state.focused = Some(100);
+
+        let result = state.focus_window(Direction::Right);
+        assert!(
+            result.is_some(),
+            "directional focus from fullscreen should not be None"
+        );
+    }
+
+    #[test]
+    fn test_focus_window_next_includes_fullscreen_and_floating() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        state.windows.get_mut(&100).unwrap().is_fullscreen = true;
+        state.windows.get_mut(&101).unwrap().is_floating = true;
+        state.focused = Some(100);
+
+        // Next from fullscreen 100 should land on one of the other visible windows
+        let next = state.focus_window(Direction::Next).unwrap();
+        assert!(next.0 == 101 || next.0 == 102);
+
+        // Cycling continues to include the floating window
+        state.focused = Some(next.0);
+        let next2 = state.focus_window(Direction::Next).unwrap();
+        // All three should be reachable via cycling
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(100);
+        visited.insert(next.0);
+        visited.insert(next2.0);
+        assert_eq!(visited.len(), 3);
+    }
+
+    #[test]
+    fn test_focusable_windows_on_display_includes_all() {
+        // focusable_windows_on_display includes tiled / floating / fullscreen,
+        // while visible_windows_on_display only returns tiled.
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        state.windows.get_mut(&100).unwrap().is_fullscreen = true;
+        state.windows.get_mut(&101).unwrap().is_floating = true;
+
+        let visible_ids: std::collections::HashSet<_> = state
+            .visible_windows_on_display(1)
+            .iter()
+            .map(|w| w.id)
+            .collect();
+        let focusable_ids: std::collections::HashSet<_> = state
+            .focusable_windows_on_display(1)
+            .iter()
+            .map(|w| w.id)
+            .collect();
+
+        // visible: only tiled (102)
+        assert_eq!(visible_ids, [102].into_iter().collect());
+        // focusable: all three
+        assert_eq!(focusable_ids, [100, 101, 102].into_iter().collect());
     }
 
     #[test]

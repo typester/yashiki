@@ -16,25 +16,16 @@ pub fn focus_visible_window_if_needed<M: WindowManipulator>(
             return;
         };
 
-        // Get all visible windows on display (including fullscreen and floating)
-        let all_visible: Vec<_> = state
-            .windows
-            .values()
-            .filter(|w| {
-                w.display_id == display_id
-                    && w.tags.intersects(display.visible_tags)
-                    && !w.is_hidden()
-            })
-            .collect();
+        let all_focusable = state.focusable_windows_on_display(display_id);
 
-        if all_visible.is_empty() {
+        if all_focusable.is_empty() {
             return;
         }
 
-        // Check if current focus is on a visible window
+        // Check if current focus is on a focusable window
         let focus_is_visible = state
             .focused
-            .map(|id| all_visible.iter().any(|w| w.id == id))
+            .map(|id| all_focusable.iter().any(|w| w.id == id))
             .unwrap_or(false);
 
         if focus_is_visible {
@@ -44,8 +35,9 @@ pub fn focus_visible_window_if_needed<M: WindowManipulator>(
         // Prefer the per-tag last-focused window: among the entries recorded
         // for currently-visible tag bits, pick the latest-timestamp candidate
         // that is still valid (window exists, on this display, has that tag,
-        // and is in the visible set).
-        let visible_ids: std::collections::HashSet<_> = all_visible.iter().map(|w| w.id).collect();
+        // and is in the focusable set).
+        let focusable_ids: std::collections::HashSet<_> =
+            all_focusable.iter().map(|w| w.id).collect();
         let restore_candidate = display
             .visible_tags
             .iter_bits()
@@ -55,7 +47,7 @@ pub fn focus_visible_window_if_needed<M: WindowManipulator>(
                 let bit_mask = 1u32 << (bit - 1);
                 if window.display_id != display_id
                     || (window.tags.mask() & bit_mask) == 0
-                    || !visible_ids.contains(id)
+                    || !focusable_ids.contains(id)
                 {
                     return None;
                 }
@@ -64,15 +56,8 @@ pub fn focus_visible_window_if_needed<M: WindowManipulator>(
             .max_by_key(|&(_, ts)| ts)
             .map(|(w, _)| w);
 
-        // Fallback: prefer fullscreen, then tiled, then anything visible.
-        let window = restore_candidate.or_else(|| {
-            all_visible
-                .iter()
-                .find(|w| w.is_fullscreen)
-                .or_else(|| all_visible.iter().find(|w| w.is_tiled()))
-                .or_else(|| all_visible.first())
-                .copied()
-        });
+        // Fallback: first window in tag_orders order (deterministic).
+        let window = restore_candidate.or_else(|| all_focusable.first().copied());
 
         match window {
             Some(w) => (
@@ -321,10 +306,18 @@ mod tests {
     }
 
     #[test]
-    fn test_restore_focus_falls_back_when_no_valid_entry() {
-        // last_focused_per_tag が空の状態で切替 → 既存のフォールバック動作
+    fn test_restore_focus_falls_back_to_tag_orders_first() {
+        // last_focused_per_tag が空の状態で切替 → tag_orders 先頭が選ばれる（決定的）
         let (state, manipulator) = setup_three_windows();
-        // Clear any records (sync_all may have recorded via set_focused for 100)
+        // Override tag_orders so 102 is first (different from WindowID ascending)
+        state
+            .borrow_mut()
+            .displays
+            .get_mut(&1)
+            .unwrap()
+            .tag_orders
+            .insert(1, vec![102, 100, 101]);
+        // Clear any focus records
         state
             .borrow_mut()
             .displays
@@ -337,8 +330,40 @@ mod tests {
 
         focus_visible_window_if_needed(&state, &manipulator);
 
-        // Fallback picks one of the three windows
-        let focused = state.borrow().focused;
-        assert!(matches!(focused, Some(100) | Some(101) | Some(102)));
+        // tag_orders[1] is [102, 100, 101] → fallback picks 102
+        assert_eq!(state.borrow().focused, Some(102));
+    }
+
+    #[test]
+    fn test_restore_focus_fallback_skips_fullscreen_preference() {
+        // last_focused_per_tag が空 + 102 が fullscreen + tag_orders 先頭が 100
+        // → 旧実装は fullscreen を優先したが、新実装は tag_orders 先頭の 100 を選ぶ
+        let (state, manipulator) = setup_three_windows();
+        state
+            .borrow_mut()
+            .displays
+            .get_mut(&1)
+            .unwrap()
+            .tag_orders
+            .insert(1, vec![100, 101, 102]);
+        state
+            .borrow_mut()
+            .windows
+            .get_mut(&102)
+            .unwrap()
+            .is_fullscreen = true;
+        state
+            .borrow_mut()
+            .displays
+            .get_mut(&1)
+            .unwrap()
+            .last_focused_per_tag
+            .clear();
+        state.borrow_mut().focused = Some(9999);
+
+        focus_visible_window_if_needed(&state, &manipulator);
+
+        // No more fullscreen preference: tag_orders[1] first = 100
+        assert_eq!(state.borrow().focused, Some(100));
     }
 }
