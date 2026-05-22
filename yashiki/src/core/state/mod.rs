@@ -647,9 +647,32 @@ impl State {
     }
 
     pub fn set_focused(&mut self, window_id: Option<WindowId>) {
-        if self.focused != window_id {
-            tracing::info!("Focus changed: {:?} -> {:?}", self.focused, window_id);
-            self.focused = window_id;
+        if self.focused == window_id {
+            return;
+        }
+        tracing::info!("Focus changed: {:?} -> {:?}", self.focused, window_id);
+        self.focused = window_id;
+
+        // Record per-tag last-focused for restoration on tag switch.
+        // We look up the window's display and tags, then write the entry for
+        // every visible tag bit the window currently has. Skipped when the
+        // window doesn't exist, has no display, or has no intersection with
+        // visible_tags (e.g. transient hidden-window focus events).
+        let Some(id) = window_id else { return };
+        let Some((display_id, window_tags)) = self.windows.get(&id).map(|w| (w.display_id, w.tags))
+        else {
+            return;
+        };
+        let Some(display) = self.displays.get_mut(&display_id) else {
+            return;
+        };
+        let intersect = Tag::from_mask(window_tags.mask() & display.visible_tags.mask());
+        if intersect.mask() == 0 {
+            return;
+        }
+        let now = Instant::now();
+        for tag_bit in intersect.iter_bits() {
+            display.last_focused_per_tag.insert(tag_bit, (id, now));
         }
     }
 
@@ -1761,6 +1784,74 @@ mod tests {
             "window 100 should be visible on tag 2 (visible={:?})",
             visible_ids
         );
+    }
+
+    #[test]
+    fn test_set_focused_records_last_focused_per_tag() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+        // visible_tags defaults to tag 1; all windows have tag 1
+        state.set_focused(Some(101));
+
+        let entry = state
+            .displays
+            .get(&1)
+            .unwrap()
+            .last_focused_per_tag
+            .get(&1)
+            .copied();
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().0, 101);
+    }
+
+    #[test]
+    fn test_set_focused_multi_tag_intersection() {
+        // Window with tags 1+2, display visible_tags 1+2 → record for both bits.
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        state.windows.get_mut(&101).unwrap().tags = Tag::from_mask(0b0011);
+        state.displays.get_mut(&1).unwrap().visible_tags = Tag::from_mask(0b0011);
+
+        state.set_focused(Some(101));
+
+        let display = state.displays.get(&1).unwrap();
+        let entry1 = display.last_focused_per_tag.get(&1).copied().unwrap();
+        let entry2 = display.last_focused_per_tag.get(&2).copied().unwrap();
+        assert_eq!(entry1.0, 101);
+        assert_eq!(entry2.0, 101);
+        // Timestamps recorded in the same call should be equal.
+        assert_eq!(entry1.1, entry2.1);
+    }
+
+    #[test]
+    fn test_set_focused_skips_when_no_intersection() {
+        // Window tags don't intersect display.visible_tags → no entry written
+        // for this specific focus event (existing entries unaffected).
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Clear any entries written by sync_all -> set_focused(100).
+        state
+            .displays
+            .get_mut(&1)
+            .unwrap()
+            .last_focused_per_tag
+            .clear();
+
+        // Window 101 only has tag 3; visible_tags stays at tag 1 (no intersect).
+        state.windows.get_mut(&101).unwrap().tags = Tag::from_mask(0b0100);
+        state.set_focused(Some(101));
+
+        assert!(state
+            .displays
+            .get(&1)
+            .unwrap()
+            .last_focused_per_tag
+            .is_empty());
     }
 
     #[test]
