@@ -171,8 +171,7 @@ mod tests {
 
     #[test]
     fn test_restore_focus_uses_last_focused_per_tag() {
-        // tag 1 で W1 (101) を最後に focus → tag 2 に切替後 tag 1 に戻ったとき
-        // 101 が復元されること
+        // Focus 101 on tag 1, switch away, switch back — 101 must be restored.
         let (state, manipulator) = setup_three_windows();
 
         // Record on tag 1: focus 101 (already on tag 1 by default)
@@ -206,8 +205,8 @@ mod tests {
 
     #[test]
     fn test_restore_focus_multi_bit_visible_picks_latest_timestamp() {
-        // tag 1 と 2 それぞれに別の窓を異なるタイムスタンプで focus 記録 →
-        // 1+2 同時表示で最新の方が選ばれる
+        // Focus distinct windows on tag 1 and tag 2 with a measurable time gap.
+        // When both tags are visible together, the latest-timestamp window wins.
         let (state, manipulator) = setup_three_windows();
 
         // Set up: 101 on tag 1, 102 on tag 2
@@ -258,7 +257,8 @@ mod tests {
 
     #[test]
     fn test_restore_focus_validates_window_still_has_tag() {
-        // 記録された窓を別タグへ移動 → 該当タグに戻っても古い記録は skip されフォールバック
+        // After the recorded window moves to a different tag, the stale entry
+        // must be skipped at validation time and the fallback path used.
         let (state, manipulator) = setup_three_windows();
 
         // Record 101 on tag 1
@@ -279,7 +279,8 @@ mod tests {
 
     #[test]
     fn test_restore_focus_falls_back_to_tag_orders_first() {
-        // last_focused_per_tag が空の状態で切替 → tag_orders 先頭が選ばれる（決定的）
+        // With last_focused_per_tag empty, the fallback must pick the first
+        // window in tag_orders (deterministic, not HashMap iteration order).
         let (state, manipulator) = setup_three_windows();
         // Override tag_orders so 102 is first (different from WindowID ascending)
         state
@@ -308,8 +309,9 @@ mod tests {
 
     #[test]
     fn test_restore_focus_fallback_skips_fullscreen_preference() {
-        // last_focused_per_tag が空 + 102 が fullscreen + tag_orders 先頭が 100
-        // → 旧実装は fullscreen を優先したが、新実装は tag_orders 先頭の 100 を選ぶ
+        // Empty last_focused_per_tag + a fullscreen window with tag_orders
+        // putting 100 first: the old implementation preferred fullscreen, the
+        // new one picks the first entry in tag_orders (100).
         let (state, manipulator) = setup_three_windows();
         state
             .borrow_mut()
