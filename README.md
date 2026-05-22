@@ -210,6 +210,13 @@ yashiki window-toggle-float      # Toggle floating state
 yashiki window-close             # Close focused window
 ```
 
+`window-swap` operates within a tag: the two windows must share at least one
+tag. When multiple tags are visible together (`tag-toggle`) and the focused
+window does not share any tag with the swap target, swap is a no-op. Use the
+layout engine to rearrange across tags in that case — e.g.
+`yashiki layout-cmd zoom` (tatami) to promote the focused window to the master
+slot.
+
 ### Multi-Monitor
 
 ```sh

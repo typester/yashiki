@@ -111,8 +111,11 @@ pub fn swap_window(state: &mut State, direction: Direction) -> Option<DisplayId>
     let target_tags = state.windows.get(&target_id)?.tags;
     let shared = Tag::from_mask(focused_tags.mask() & target_tags.mask());
     if shared.mask() == 0 {
-        tracing::debug!(
-            "swap_window: focused {} and target {} share no tag, skipping",
+        tracing::info!(
+            "swap_window: focused {} and target {} share no tag — \
+             cross-tag swap is not supported. In multi-tag visible mode, \
+             use 'layout-cmd zoom' (or similar layout-engine command) to \
+             rearrange across tags.",
             focused_id,
             target_id
         );
