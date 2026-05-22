@@ -755,6 +755,10 @@ impl State {
         send_to_output(self, direction)
     }
 
+    pub fn pick_focus_target(&self, display_id: DisplayId) -> Option<&Window> {
+        pick_focus_target(self, display_id)
+    }
+
     // Layout operations - delegated to state/layout.rs
 
     pub fn visible_windows_on_display(&self, display_id: DisplayId) -> Vec<&Window> {
@@ -1094,6 +1098,77 @@ mod tests {
         assert_eq!(visible_ids, [102].into_iter().collect());
         // focusable: all three
         assert_eq!(focusable_ids, [100, 101, 102].into_iter().collect());
+    }
+
+    #[test]
+    fn test_output_focus_restores_last_focused_per_tag() {
+        // Two displays, two windows on display 2. Focus 202 on display 2, switch
+        // back to display 1, then output-focus next → should restore 202, not 201.
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "A", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(201, 2001, "B", 2000.0, 100.0, 800.0, 600.0),
+                create_test_window(202, 2002, "C", 2000.0, 700.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Visit display 2 and focus 202 (the second window on display 2)
+        state.focused_display = 2;
+        state.set_focused(Some(202));
+
+        // Go back to display 1
+        state.focused_display = 1;
+        state.set_focused(Some(100));
+
+        // output-focus next should pick last-focused on display 2 (202), not 201
+        let result = state.focus_output(OutputDirection::Next);
+        match result.unwrap() {
+            FocusOutputResult::Window { window_id, .. } => assert_eq!(window_id, 202),
+            FocusOutputResult::EmptyDisplay { .. } => panic!("Expected Window result"),
+        }
+    }
+
+    #[test]
+    fn test_output_focus_falls_back_when_no_record() {
+        // Display 2 has windows but none was ever focused → fallback to first
+        // in focusable order (== tag_orders order, which mirrors WindowID here
+        // because sync_all inserts in ID order).
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "A", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(201, 2001, "B", 2000.0, 100.0, 800.0, 600.0),
+                create_test_window(202, 2002, "C", 2000.0, 700.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Ensure display 2 has no per-tag focus record
+        state
+            .displays
+            .get_mut(&2)
+            .unwrap()
+            .last_focused_per_tag
+            .clear();
+
+        let result = state.focus_output(OutputDirection::Next);
+        match result.unwrap() {
+            FocusOutputResult::Window { window_id, .. } => {
+                // First in tag_orders on display 2 should be 201 (inserted first)
+                assert_eq!(window_id, 201);
+            }
+            FocusOutputResult::EmptyDisplay { .. } => panic!("Expected Window result"),
+        }
     }
 
     #[test]

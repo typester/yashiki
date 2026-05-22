@@ -12,60 +12,32 @@ pub fn focus_visible_window_if_needed<M: WindowManipulator>(
     let (window_to_focus, cursor_warp_mode) = {
         let state = state.borrow();
         let display_id = state.focused_display;
-        let Some(display) = state.displays.get(&display_id) else {
+        if !state.displays.contains_key(&display_id) {
             return;
-        };
+        }
 
         let all_focusable = state.focusable_windows_on_display(display_id);
-
         if all_focusable.is_empty() {
             return;
         }
 
-        // Check if current focus is on a focusable window
+        // Skip if the current focused window is already focusable.
         let focus_is_visible = state
             .focused
             .map(|id| all_focusable.iter().any(|w| w.id == id))
             .unwrap_or(false);
-
         if focus_is_visible {
             return;
         }
 
-        // Prefer the per-tag last-focused window: among the entries recorded
-        // for currently-visible tag bits, pick the latest-timestamp candidate
-        // that is still valid (window exists, on this display, has that tag,
-        // and is in the focusable set).
-        let focusable_ids: std::collections::HashSet<_> =
-            all_focusable.iter().map(|w| w.id).collect();
-        let restore_candidate = display
-            .visible_tags
-            .iter_bits()
-            .filter_map(|bit| {
-                let (id, ts) = display.last_focused_per_tag.get(&bit)?;
-                let window = state.windows.get(id)?;
-                let bit_mask = 1u32 << (bit - 1);
-                if window.display_id != display_id
-                    || (window.tags.mask() & bit_mask) == 0
-                    || !focusable_ids.contains(id)
-                {
-                    return None;
-                }
-                Some((window, *ts))
-            })
-            .max_by_key(|&(_, ts)| ts)
-            .map(|(w, _)| w);
-
-        // Fallback: first window in tag_orders order (deterministic).
-        let window = restore_candidate.or_else(|| all_focusable.first().copied());
-
-        match window {
-            Some(w) => (
-                Some((w.id, w.pid, w.display_id, w.center())),
-                state.config.cursor_warp,
-            ),
-            None => return,
-        }
+        // Pick last-focused on this display, or the first focusable as fallback.
+        let Some(w) = state.pick_focus_target(display_id) else {
+            return;
+        };
+        (
+            Some((w.id, w.pid, w.display_id, w.center())),
+            state.config.cursor_warp,
+        )
     };
 
     if let Some((window_id, pid, display_id, (cx, cy))) = window_to_focus {

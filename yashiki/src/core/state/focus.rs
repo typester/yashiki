@@ -1,9 +1,50 @@
+use std::collections::HashSet;
+
 use super::super::{Tag, Window, WindowId};
 use crate::macos::DisplayId;
 use yashiki_ipc::Direction;
 
 use super::super::state::State;
 use super::layout::{add_to_tag_orders, focusable_windows_on_display, visible_windows_on_display};
+
+/// Pick the best focus target for a display's currently-visible tags.
+///
+/// Prefers the per-tag last-focused window (latest timestamp across visible
+/// tag bits, validated against the current `state.windows` — must exist, be on
+/// this display, still carry that tag bit, and be in the focusable set). Falls
+/// back to the first window in `focusable_windows_on_display` order (which
+/// follows `tag_orders`, so it matches the layout engine's preferred head —
+/// e.g. tatami master).
+///
+/// Returns `None` if there is nothing focusable on the display.
+pub fn pick_focus_target(state: &State, display_id: DisplayId) -> Option<&Window> {
+    let display = state.displays.get(&display_id)?;
+    let focusable = focusable_windows_on_display(state, display_id);
+    if focusable.is_empty() {
+        return None;
+    }
+
+    let focusable_ids: HashSet<WindowId> = focusable.iter().map(|w| w.id).collect();
+    let restore = display
+        .visible_tags
+        .iter_bits()
+        .filter_map(|bit| {
+            let (id, ts) = display.last_focused_per_tag.get(&bit)?;
+            let w = state.windows.get(id)?;
+            let bit_mask = 1u32 << (bit - 1);
+            if w.display_id != display_id
+                || (w.tags.mask() & bit_mask) == 0
+                || !focusable_ids.contains(id)
+            {
+                return None;
+            }
+            Some((w, *ts))
+        })
+        .max_by_key(|&(_, ts)| ts)
+        .map(|(w, _)| w);
+
+    restore.or_else(|| focusable.first().copied())
+}
 
 pub fn focus_window(state: &State, direction: Direction) -> Option<(WindowId, i32)> {
     let visible: Vec<&Window> = focusable_windows_on_display(state, state.focused_display);

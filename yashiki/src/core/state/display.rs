@@ -5,9 +5,9 @@ use crate::platform::WindowSystem;
 use yashiki_ipc::OutputDirection;
 
 use super::super::state::{DisplayChangeResult, FocusOutputResult, SendToOutputResult, State};
+use super::focus::pick_focus_target;
 use super::layout::{
     add_to_tag_orders, compute_layout_changes_for_display, remove_from_tag_orders,
-    visible_windows_on_display,
 };
 use super::sync::sync_all;
 
@@ -207,8 +207,7 @@ pub fn focus_output(state: &mut State, direction: OutputDirection) -> Option<Foc
     );
     state.focused_display = target_display_id;
 
-    let visible = visible_windows_on_display(state, target_display_id);
-    if let Some(w) = visible.first() {
+    if let Some(w) = pick_focus_target(state, target_display_id) {
         Some(FocusOutputResult::Window {
             window_id: w.id,
             pid: w.pid,
