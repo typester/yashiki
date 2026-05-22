@@ -236,6 +236,7 @@ pub fn compute_layout_changes_for_display(
             window.saved_frame = None;
             window.frame = saved;
         }
+        state.record_frame_write(window_id);
     }
 
     // Process hides (compute hide position per-window)
@@ -263,6 +264,7 @@ pub fn compute_layout_changes_for_display(
             window.frame.x = hide_x;
             window.frame.y = hide_y;
         }
+        state.record_frame_write(window_id);
     }
 
     moves

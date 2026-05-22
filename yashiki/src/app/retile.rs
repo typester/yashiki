@@ -98,6 +98,7 @@ fn retile_single_display<M: WindowManipulator>(
                 };
                 window.update_frame_if_visible(frame);
             }
+            state_mut.record_frame_write(window_id);
         }
     }
 
@@ -155,6 +156,7 @@ fn retile_single_display<M: WindowManipulator>(
                         };
                         window.update_frame_if_visible(frame);
                     }
+                    state.record_frame_write(geom.id);
                 }
             }
         }

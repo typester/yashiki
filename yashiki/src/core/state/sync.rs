@@ -528,7 +528,7 @@ pub fn sync_pid<W: WindowSystem>(
                 .unwrap_or_else(|| info.name.clone().unwrap_or_default());
             let new_frame = Rect::from_bounds(&info.bounds);
 
-            // Compute hide position and suppress_rehide check before mutable borrow
+            // Compute hide position and suppress flags before mutable borrow
             let (hide_pos, suppress_rehide) = state.windows.get(id).map_or((None, false), |w| {
                 let hide = compute_hide_position_for_display(
                     state,
@@ -539,6 +539,7 @@ pub fn sync_pid<W: WindowSystem>(
                 let suppress = state.should_suppress_rehide(w.pid);
                 (Some(hide), suppress)
             });
+            let suppress_frame_write = state.should_suppress_frame_write(*id);
 
             if let Some(window) = state.windows.get_mut(id) {
                 let title_changed = window.title != new_title;
@@ -547,30 +548,39 @@ pub fn sync_pid<W: WindowSystem>(
                     || window.frame.width != new_frame.width
                     || window.frame.height != new_frame.height;
 
-                if title_changed || frame_changed {
+                if title_changed {
+                    window.title = new_title;
+                }
+
+                if frame_changed {
                     tracing::debug!(
-                        "Window updated: [{}] {} ({}) pos=({},{}) -> ({},{})",
+                        "Window updated: [{}] {} ({}) pos=({},{}) -> ({},{}) (suppressed={})",
                         window.id,
                         window.title,
                         window.app_name,
                         window.frame.x,
                         window.frame.y,
                         new_frame.x,
-                        new_frame.y
+                        new_frame.y,
+                        suppress_frame_write
                     );
-                    window.title = new_title;
 
-                    if let Some((hide_x, hide_y)) = hide_pos {
-                        // Skip re-hide for windows of the app we just focused (prevents focus jumping)
-                        if !suppress_rehide {
-                            if let Some(mv) = check_window_rehide(
-                                window,
-                                new_frame.x,
-                                new_frame.y,
-                                hide_x,
-                                hide_y,
-                            ) {
-                                rehide_moves.push(mv);
+                    if !suppress_frame_write {
+                        if let Some((hide_x, hide_y)) = hide_pos {
+                            // Skip re-hide for windows of the app we just focused (prevents focus jumping)
+                            if !suppress_rehide {
+                                if let Some(mv) = check_window_rehide(
+                                    window,
+                                    new_frame.x,
+                                    new_frame.y,
+                                    hide_x,
+                                    hide_y,
+                                ) {
+                                    rehide_moves.push(mv);
+                                } else if !window.is_hidden() {
+                                    window.frame = new_frame;
+                                    // Don't update display_id based on position - let orphan handling manage it
+                                }
                             } else if !window.is_hidden() {
                                 window.frame = new_frame;
                                 // Don't update display_id based on position - let orphan handling manage it
@@ -579,9 +589,6 @@ pub fn sync_pid<W: WindowSystem>(
                             window.frame = new_frame;
                             // Don't update display_id based on position - let orphan handling manage it
                         }
-                    } else if !window.is_hidden() {
-                        window.frame = new_frame;
-                        // Don't update display_id based on position - let orphan handling manage it
                     }
                 }
             }
@@ -886,6 +893,7 @@ pub fn sync_with_window_infos<W: WindowSystem>(
 
     // Update existing managed windows
     for info in window_infos {
+        let suppress_frame_write = state.should_suppress_frame_write(info.window_id);
         if let Some(window) = state.windows.get_mut(&info.window_id) {
             let ext = ws.get_extended_attributes(info.window_id, info.pid, info.layer);
             let new_title = ext
@@ -893,7 +901,7 @@ pub fn sync_with_window_infos<W: WindowSystem>(
                 .clone()
                 .unwrap_or_else(|| info.name.clone().unwrap_or_default());
             window.title = new_title;
-            if !window.is_hidden() {
+            if !window.is_hidden() && !suppress_frame_write {
                 window.frame = Rect::from_bounds(&info.bounds);
                 // Don't update display_id based on position - let orphan handling manage it
             }

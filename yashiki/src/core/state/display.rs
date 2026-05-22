@@ -276,6 +276,9 @@ pub fn send_to_output(state: &mut State, direction: OutputDirection) -> Option<S
     remove_from_tag_orders(state, focused_id, source_display_id);
     add_to_tag_orders(state, focused_id, target_display_id, window_tags);
 
+    // We just programmatically moved the window — protect from sync overwrite.
+    state.record_frame_write(focused_id);
+
     // Compute visibility changes for target display
     let moves = compute_layout_changes_for_display(state, target_display_id);
 

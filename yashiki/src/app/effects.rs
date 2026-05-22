@@ -20,6 +20,10 @@ pub fn execute_effects<M: WindowManipulator>(
         match effect {
             Effect::ApplyWindowMoves(moves) => {
                 manipulator.apply_window_moves(&moves);
+                let mut s = state.borrow_mut();
+                for mv in &moves {
+                    s.record_frame_write(mv.window_id);
+                }
             }
             Effect::FocusWindow {
                 window_id,
@@ -72,6 +76,7 @@ pub fn execute_effects<M: WindowManipulator>(
                 y,
             } => {
                 manipulator.move_window_to_position(window_id, pid, x, y);
+                state.borrow_mut().record_frame_write(window_id);
             }
             Effect::SetWindowDimensions {
                 window_id,
@@ -80,6 +85,7 @@ pub fn execute_effects<M: WindowManipulator>(
                 height,
             } => {
                 manipulator.set_window_dimensions(window_id, pid, width, height);
+                state.borrow_mut().record_frame_write(window_id);
             }
             Effect::CloseWindow { window_id, pid } => {
                 manipulator.close_window(window_id, pid);
@@ -89,17 +95,25 @@ pub fn execute_effects<M: WindowManipulator>(
                 pid,
                 display_id,
             } => {
-                let state = state.borrow();
-                let outer_gap = state.config.outer_gap;
-                if let Some(display) = state.displays.get(&display_id) {
-                    manipulator.set_window_frame(
-                        window_id,
-                        pid,
-                        display.frame.x + outer_gap.left as i32,
-                        display.frame.y + outer_gap.top as i32,
-                        display.frame.width.saturating_sub(outer_gap.horizontal()),
-                        display.frame.height.saturating_sub(outer_gap.vertical()),
-                    );
+                let applied = {
+                    let state = state.borrow();
+                    let outer_gap = state.config.outer_gap;
+                    if let Some(display) = state.displays.get(&display_id) {
+                        manipulator.set_window_frame(
+                            window_id,
+                            pid,
+                            display.frame.x + outer_gap.left as i32,
+                            display.frame.y + outer_gap.top as i32,
+                            display.frame.width.saturating_sub(outer_gap.horizontal()),
+                            display.frame.height.saturating_sub(outer_gap.vertical()),
+                        );
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if applied {
+                    state.borrow_mut().record_frame_write(window_id);
                 }
             }
             Effect::Retile => {

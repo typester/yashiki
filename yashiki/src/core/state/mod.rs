@@ -141,6 +141,13 @@ pub struct AutoRaiseState {
     pub display_hover_start: Option<Instant>,
 }
 
+/// Duration during which a programmatically-set window frame is trusted over
+/// CGWindowList sync data. macOS's AX API moves are asynchronous, so the
+/// observer's `AXWindowMoved` event can fire before the move has actually
+/// taken effect, leaving CGWindowList returning the stale pre-move position.
+/// Within this window, sync skips frame overwrites for the affected windows.
+const FRAME_WRITE_SUPPRESS_MS: u128 = 500;
+
 pub struct State {
     pub windows: HashMap<WindowId, Window>,
     pub displays: HashMap<DisplayId, Display>,
@@ -163,6 +170,10 @@ pub struct State {
     /// Cached window z-order from CGWindowList (front-to-back).
     /// Updated on every sync operation. Contains both managed and ignored window IDs.
     pub window_z_order: Vec<WindowId>,
+    /// Windows whose frames were programmatically set recently. Used to
+    /// suppress sync's CGWindowList-based frame overwrite during the macOS AX
+    /// catch-up window. See [`FRAME_WRITE_SUPPRESS_MS`].
+    pub recent_frame_writes: HashMap<WindowId, Instant>,
 }
 
 impl State {
@@ -183,7 +194,23 @@ impl State {
             focus_intent: None,
             auto_raise_state: AutoRaiseState::default(),
             window_z_order: Vec::new(),
+            recent_frame_writes: HashMap::new(),
         }
+    }
+
+    /// Mark a window as having had its frame programmatically set right now.
+    /// Subsequent CGWindowList-based sync within `FRAME_WRITE_SUPPRESS_MS` will
+    /// skip overwriting this window's frame, protecting against the macOS AX
+    /// catch-up race where stale positions would clobber our intended state.
+    pub fn record_frame_write(&mut self, window_id: WindowId) {
+        self.recent_frame_writes.insert(window_id, Instant::now());
+    }
+
+    pub fn should_suppress_frame_write(&self, window_id: WindowId) -> bool {
+        self.recent_frame_writes
+            .get(&window_id)
+            .map(|ts| ts.elapsed().as_millis() < FRAME_WRITE_SUPPRESS_MS)
+            .unwrap_or(false)
     }
 
     pub fn set_default_layout(&mut self, layout: String) {
@@ -1934,6 +1961,93 @@ mod tests {
             .unwrap()
             .last_focused_per_tag
             .is_empty());
+    }
+
+    #[test]
+    fn test_record_frame_write_marks_window() {
+        let mut state = State::new();
+        assert!(!state.should_suppress_frame_write(42));
+        state.record_frame_write(42);
+        assert!(state.should_suppress_frame_write(42));
+    }
+
+    #[test]
+    fn test_should_suppress_frame_write_returns_false_for_unrecorded() {
+        let state = State::new();
+        assert!(!state.should_suppress_frame_write(42));
+    }
+
+    #[test]
+    fn test_should_suppress_frame_write_expires() {
+        let mut state = State::new();
+        // Backdate the entry beyond the suppression window
+        state.recent_frame_writes.insert(
+            42,
+            Instant::now() - Duration::from_millis((FRAME_WRITE_SUPPRESS_MS + 100) as u64),
+        );
+        assert!(!state.should_suppress_frame_write(42));
+    }
+
+    #[test]
+    fn test_sync_skips_frame_update_during_suppression() {
+        // Set up: window 100 at (0,0). State expects new position (500, 500)
+        // (programmatically set by us). macOS still reports (0,0).
+        // After sync, state.frame should remain (500, 500), not regress to (0,0).
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "App", 0.0, 0.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Simulate retile: we just programmatically set the frame to (500, 500).
+        state.windows.get_mut(&100).unwrap().frame = Rect {
+            x: 500,
+            y: 500,
+            width: 800,
+            height: 600,
+        };
+        state.record_frame_write(100);
+
+        // macOS hasn't caught up — sync still sees the old (0, 0). Trigger sync.
+        state.sync_all(&ws);
+
+        // state.frame must NOT be reverted to (0, 0).
+        let f = state.windows.get(&100).unwrap().frame;
+        assert_eq!((f.x, f.y), (500, 500), "frame must remain at our value");
+    }
+
+    #[test]
+    fn test_sync_updates_frame_after_suppression_expires() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "App", 0.0, 0.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Programmatically set frame to (500, 500) and backdate the record so
+        // the suppression window has elapsed.
+        state.windows.get_mut(&100).unwrap().frame = Rect {
+            x: 500,
+            y: 500,
+            width: 800,
+            height: 600,
+        };
+        state.recent_frame_writes.insert(
+            100,
+            Instant::now() - Duration::from_millis((FRAME_WRITE_SUPPRESS_MS + 100) as u64),
+        );
+
+        // macOS reports (0, 0). sync should now accept it.
+        state.sync_all(&ws);
+
+        let f = state.windows.get(&100).unwrap().frame;
+        assert_eq!((f.x, f.y), (0, 0));
     }
 
     #[test]
