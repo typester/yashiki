@@ -5,9 +5,9 @@ use crate::platform::WindowSystem;
 use yashiki_ipc::OutputDirection;
 
 use super::super::state::{DisplayChangeResult, FocusOutputResult, SendToOutputResult, State};
+use super::focus::pick_focus_target;
 use super::layout::{
-    add_to_window_order, compute_layout_changes_for_display, remove_from_window_order,
-    visible_windows_on_display,
+    add_to_tag_orders, compute_layout_changes_for_display, remove_from_tag_orders,
 };
 use super::sync::sync_all;
 
@@ -207,8 +207,7 @@ pub fn focus_output(state: &mut State, direction: OutputDirection) -> Option<Foc
     );
     state.focused_display = target_display_id;
 
-    let visible = visible_windows_on_display(state, target_display_id);
-    if let Some(w) = visible.first() {
+    if let Some(w) = pick_focus_target(state, target_display_id) {
         Some(FocusOutputResult::Window {
             window_id: w.id,
             pid: w.pid,
@@ -263,6 +262,7 @@ pub fn send_to_output(state: &mut State, direction: OutputDirection) -> Option<S
     // or saved to saved_frame if hidden - either way, correct display context)
     window.frame.x = target_frame_x;
     window.frame.y = target_frame_y;
+    let window_tags = window.tags;
 
     // If window was already hidden, update saved_frame to target display position
     // so that when it becomes visible, it appears on the correct display
@@ -271,9 +271,12 @@ pub fn send_to_output(state: &mut State, direction: OutputDirection) -> Option<S
         saved.y = target_frame_y;
     }
 
-    // Update window_order (move from source to target)
-    remove_from_window_order(state, focused_id);
-    add_to_window_order(state, focused_id, target_display_id);
+    // Update tag_orders (move from source to target display)
+    remove_from_tag_orders(state, focused_id, source_display_id);
+    add_to_tag_orders(state, focused_id, target_display_id, window_tags);
+
+    // We just programmatically moved the window — protect from sync overwrite.
+    state.record_frame_write(focused_id);
 
     // Compute visibility changes for target display
     let moves = compute_layout_changes_for_display(state, target_display_id);

@@ -1,5 +1,7 @@
+use std::collections::HashSet;
+
 use super::super::window::Rect;
-use super::super::{Window, WindowId};
+use super::super::{Tag, Window, WindowId};
 use crate::macos::DisplayId;
 
 use super::super::state::{State, WindowMove};
@@ -234,6 +236,7 @@ pub fn compute_layout_changes_for_display(
             window.saved_frame = None;
             window.frame = saved;
         }
+        state.record_frame_write(window_id);
     }
 
     // Process hides (compute hide position per-window)
@@ -261,48 +264,129 @@ pub fn compute_layout_changes_for_display(
             window.frame.x = hide_x;
             window.frame.y = hide_y;
         }
+        state.record_frame_write(window_id);
     }
 
     moves
 }
 
-pub fn visible_windows_on_display(state: &State, display_id: DisplayId) -> Vec<&Window> {
+/// Walk windows on a display in tag_orders order, applying a combined filter
+/// of (on display + tags intersect visible_tags + not hidden) plus an `extra`
+/// predicate, then append any stragglers (windows matching the filter but not
+/// yet recorded in tag_orders) in stable WindowId order.
+fn windows_on_display_in_order<F: Fn(&Window) -> bool>(
+    state: &State,
+    display_id: DisplayId,
+    extra: F,
+) -> Vec<&Window> {
     let Some(display) = state.displays.get(&display_id) else {
         return vec![];
     };
-    let mut windows: Vec<&Window> = state
+    let visible_tags = display.visible_tags;
+
+    let is_candidate = |w: &Window| -> bool {
+        w.display_id == display_id && !w.is_hidden() && w.tags.intersects(visible_tags) && extra(w)
+    };
+
+    let mut result: Vec<&Window> = Vec::new();
+    let mut seen: HashSet<WindowId> = HashSet::new();
+
+    for tag_bit in visible_tags.iter_bits() {
+        let Some(order) = display.tag_orders.get(&tag_bit) else {
+            continue;
+        };
+        for &id in order {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(window) = state.windows.get(&id) else {
+                continue;
+            };
+            if !is_candidate(window) {
+                continue;
+            }
+            result.push(window);
+        }
+    }
+
+    let mut stragglers: Vec<&Window> = state
         .windows
         .values()
-        .filter(|w| {
-            w.display_id == display_id
-                && w.tags.intersects(display.visible_tags)
-                && !w.is_hidden()
-                && w.is_tiled()
-        })
+        .filter(|w| is_candidate(w) && !seen.contains(&w.id))
         .collect();
+    stragglers.sort_by_key(|w| w.id);
+    for w in stragglers {
+        seen.insert(w.id);
+        result.push(w);
+    }
 
-    windows.sort_by_key(|w| {
-        display
-            .window_order
-            .iter()
-            .position(|&id| id == w.id)
-            .map(|p| (0, p))
-            .unwrap_or((1, w.id as usize))
-    });
-    windows
+    result
 }
 
-pub fn add_to_window_order(state: &mut State, window_id: WindowId, display_id: DisplayId) {
-    if let Some(display) = state.displays.get_mut(&display_id) {
-        if !display.window_order.contains(&window_id) {
-            display.window_order.push(window_id);
+/// Windows currently participating in the tile layout on the given display
+/// (excludes fullscreen and floating windows). Used by retile and swap.
+pub fn visible_windows_on_display(state: &State, display_id: DisplayId) -> Vec<&Window> {
+    windows_on_display_in_order(state, display_id, |w| w.is_tiled())
+}
+
+/// All currently-visible windows on the given display, regardless of tile/float/
+/// fullscreen state. Used by focus operations so directional / next focus can
+/// navigate to and from fullscreen and floating windows. Order follows
+/// tag_orders for stability.
+pub fn focusable_windows_on_display(state: &State, display_id: DisplayId) -> Vec<&Window> {
+    windows_on_display_in_order(state, display_id, |_| true)
+}
+
+pub fn add_to_tag_orders(state: &mut State, window_id: WindowId, display_id: DisplayId, tags: Tag) {
+    let Some(display) = state.displays.get_mut(&display_id) else {
+        return;
+    };
+    for tag_bit in tags.iter_bits() {
+        let order = display.tag_orders.entry(tag_bit).or_default();
+        if !order.contains(&window_id) {
+            order.push(window_id);
         }
     }
 }
 
-pub fn remove_from_window_order(state: &mut State, window_id: WindowId) {
-    for display in state.displays.values_mut() {
-        display.window_order.retain(|&id| id != window_id);
+pub fn remove_from_tag_orders(state: &mut State, window_id: WindowId, display_id: DisplayId) {
+    let Some(display) = state.displays.get_mut(&display_id) else {
+        return;
+    };
+    display.tag_orders.retain(|_, order| {
+        order.retain(|&id| id != window_id);
+        !order.is_empty()
+    });
+}
+
+/// Update tag_orders when a window's tags change on the same display.
+/// Removes the window from tag_orders bits that were dropped, appends it to bits that were added.
+pub fn update_tag_orders_for_tag_change(
+    state: &mut State,
+    window_id: WindowId,
+    display_id: DisplayId,
+    old_tags: Tag,
+    new_tags: Tag,
+) {
+    let Some(display) = state.displays.get_mut(&display_id) else {
+        return;
+    };
+    let removed = Tag::from_mask(old_tags.mask() & !new_tags.mask());
+    let added = Tag::from_mask(new_tags.mask() & !old_tags.mask());
+
+    for tag_bit in removed.iter_bits() {
+        if let Some(order) = display.tag_orders.get_mut(&tag_bit) {
+            order.retain(|&id| id != window_id);
+            if order.is_empty() {
+                display.tag_orders.remove(&tag_bit);
+            }
+        }
+    }
+    for tag_bit in added.iter_bits() {
+        let order = display.tag_orders.entry(tag_bit).or_default();
+        if !order.contains(&window_id) {
+            order.push(window_id);
+        }
     }
 }
 

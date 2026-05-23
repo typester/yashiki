@@ -141,6 +141,13 @@ pub struct AutoRaiseState {
     pub display_hover_start: Option<Instant>,
 }
 
+/// Duration during which a programmatically-set window frame is trusted over
+/// CGWindowList sync data. macOS's AX API moves are asynchronous, so the
+/// observer's `AXWindowMoved` event can fire before the move has actually
+/// taken effect, leaving CGWindowList returning the stale pre-move position.
+/// Within this window, sync skips frame overwrites for the affected windows.
+const FRAME_WRITE_SUPPRESS_MS: u128 = 500;
+
 pub struct State {
     pub windows: HashMap<WindowId, Window>,
     pub displays: HashMap<DisplayId, Display>,
@@ -163,6 +170,10 @@ pub struct State {
     /// Cached window z-order from CGWindowList (front-to-back).
     /// Updated on every sync operation. Contains both managed and ignored window IDs.
     pub window_z_order: Vec<WindowId>,
+    /// Windows whose frames were programmatically set recently. Used to
+    /// suppress sync's CGWindowList-based frame overwrite during the macOS AX
+    /// catch-up window. See [`FRAME_WRITE_SUPPRESS_MS`].
+    pub recent_frame_writes: HashMap<WindowId, Instant>,
 }
 
 impl State {
@@ -183,7 +194,23 @@ impl State {
             focus_intent: None,
             auto_raise_state: AutoRaiseState::default(),
             window_z_order: Vec::new(),
+            recent_frame_writes: HashMap::new(),
         }
+    }
+
+    /// Mark a window as having had its frame programmatically set right now.
+    /// Subsequent CGWindowList-based sync within `FRAME_WRITE_SUPPRESS_MS` will
+    /// skip overwriting this window's frame, protecting against the macOS AX
+    /// catch-up race where stale positions would clobber our intended state.
+    pub fn record_frame_write(&mut self, window_id: WindowId) {
+        self.recent_frame_writes.insert(window_id, Instant::now());
+    }
+
+    pub fn should_suppress_frame_write(&self, window_id: WindowId) -> bool {
+        self.recent_frame_writes
+            .get(&window_id)
+            .map(|ts| ts.elapsed().as_millis() < FRAME_WRITE_SUPPRESS_MS)
+            .unwrap_or(false)
     }
 
     pub fn set_default_layout(&mut self, layout: String) {
@@ -520,8 +547,11 @@ impl State {
         }
 
         for id in &window_ids {
+            let display_id = self.windows.get(id).map(|w| w.display_id);
             self.windows.remove(id);
-            remove_from_window_order(self, *id);
+            if let Some(display_id) = display_id {
+                remove_from_tag_orders(self, *id, display_id);
+            }
             if self.focused == Some(*id) {
                 self.focused = None;
             }
@@ -644,9 +674,32 @@ impl State {
     }
 
     pub fn set_focused(&mut self, window_id: Option<WindowId>) {
-        if self.focused != window_id {
-            tracing::info!("Focus changed: {:?} -> {:?}", self.focused, window_id);
-            self.focused = window_id;
+        if self.focused == window_id {
+            return;
+        }
+        tracing::info!("Focus changed: {:?} -> {:?}", self.focused, window_id);
+        self.focused = window_id;
+
+        // Record per-tag last-focused for restoration on tag switch.
+        // We look up the window's display and tags, then write the entry for
+        // every visible tag bit the window currently has. Skipped when the
+        // window doesn't exist, has no display, or has no intersection with
+        // visible_tags (e.g. transient hidden-window focus events).
+        let Some(id) = window_id else { return };
+        let Some((display_id, window_tags)) = self.windows.get(&id).map(|w| (w.display_id, w.tags))
+        else {
+            return;
+        };
+        let Some(display) = self.displays.get_mut(&display_id) else {
+            return;
+        };
+        let intersect = Tag::from_mask(window_tags.mask() & display.visible_tags.mask());
+        if intersect.mask() == 0 {
+            return;
+        }
+        let now = Instant::now();
+        for tag_bit in intersect.iter_bits() {
+            display.last_focused_per_tag.insert(tag_bit, (id, now));
         }
     }
 
@@ -702,10 +755,18 @@ impl State {
         send_to_output(self, direction)
     }
 
+    pub fn pick_focus_target(&self, display_id: DisplayId) -> Option<&Window> {
+        pick_focus_target(self, display_id)
+    }
+
     // Layout operations - delegated to state/layout.rs
 
     pub fn visible_windows_on_display(&self, display_id: DisplayId) -> Vec<&Window> {
         visible_windows_on_display(self, display_id)
+    }
+
+    pub fn focusable_windows_on_display(&self, display_id: DisplayId) -> Vec<&Window> {
+        focusable_windows_on_display(self, display_id)
     }
 
     pub(crate) fn compute_layout_changes(&mut self, display_id: DisplayId) -> Vec<WindowMove> {
@@ -896,17 +957,17 @@ mod tests {
     }
 
     #[test]
-    fn test_focus_window_next_follows_window_order() {
+    fn test_focus_window_next_follows_tag_order() {
         let ws = setup_mock_system();
         let mut state = State::new();
         state.sync_all(&ws);
 
-        // Override window_order to differ from WindowId order
-        // WindowId order: [100, 101, 102], window_order: [102, 100, 101]
+        // Override tag 1's order to differ from WindowId order
+        // WindowId order: [100, 101, 102], tag_orders[1]: [102, 100, 101]
         let display = state.displays.get_mut(&state.focused_display).unwrap();
-        display.window_order = vec![102, 100, 101];
+        display.tag_orders.insert(1, vec![102, 100, 101]);
 
-        // focused=100 (index 1 in window_order), Next → 101 (index 2)
+        // focused=100 (index 1 in tag_orders[1]), Next → 101 (index 2)
         state.focused = Some(100);
         let result = state.focus_window(Direction::Next);
         assert_eq!(result.unwrap().0, 101);
@@ -923,14 +984,14 @@ mod tests {
     }
 
     #[test]
-    fn test_focus_window_prev_follows_window_order() {
+    fn test_focus_window_prev_follows_tag_order() {
         let ws = setup_mock_system();
         let mut state = State::new();
         state.sync_all(&ws);
 
-        // Override window_order: [102, 100, 101]
+        // Override tag 1's order: [102, 100, 101]
         let display = state.displays.get_mut(&state.focused_display).unwrap();
-        display.window_order = vec![102, 100, 101];
+        display.tag_orders.insert(1, vec![102, 100, 101]);
 
         // focused=102 (index 0, first), Prev → 101 (index 2, wrap)
         state.focused = Some(102);
@@ -959,6 +1020,155 @@ mod tests {
 
         let (window_id, _pid) = result.unwrap();
         assert_eq!(window_id, 101);
+    }
+
+    #[test]
+    fn test_focus_window_directional_works_with_fullscreen_focused() {
+        // Window 100 is fullscreen (frame = display-wide), 101 and 102 are tiled.
+        // Direction::Right from 100 should still navigate to a window to the right.
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        state.windows.get_mut(&100).unwrap().is_fullscreen = true;
+        // Give 100 a fullscreen-ish frame so its center is roughly the display center.
+        state.windows.get_mut(&100).unwrap().frame = Rect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        state.focused = Some(100);
+
+        let result = state.focus_window(Direction::Right);
+        assert!(
+            result.is_some(),
+            "directional focus from fullscreen should not be None"
+        );
+    }
+
+    #[test]
+    fn test_focus_window_next_includes_fullscreen_and_floating() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        state.windows.get_mut(&100).unwrap().is_fullscreen = true;
+        state.windows.get_mut(&101).unwrap().is_floating = true;
+        state.focused = Some(100);
+
+        // Next from fullscreen 100 should land on one of the other visible windows
+        let next = state.focus_window(Direction::Next).unwrap();
+        assert!(next.0 == 101 || next.0 == 102);
+
+        // Cycling continues to include the floating window
+        state.focused = Some(next.0);
+        let next2 = state.focus_window(Direction::Next).unwrap();
+        // All three should be reachable via cycling
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(100);
+        visited.insert(next.0);
+        visited.insert(next2.0);
+        assert_eq!(visited.len(), 3);
+    }
+
+    #[test]
+    fn test_focusable_windows_on_display_includes_all() {
+        // focusable_windows_on_display includes tiled / floating / fullscreen,
+        // while visible_windows_on_display only returns tiled.
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        state.windows.get_mut(&100).unwrap().is_fullscreen = true;
+        state.windows.get_mut(&101).unwrap().is_floating = true;
+
+        let visible_ids: std::collections::HashSet<_> = state
+            .visible_windows_on_display(1)
+            .iter()
+            .map(|w| w.id)
+            .collect();
+        let focusable_ids: std::collections::HashSet<_> = state
+            .focusable_windows_on_display(1)
+            .iter()
+            .map(|w| w.id)
+            .collect();
+
+        // visible: only tiled (102)
+        assert_eq!(visible_ids, [102].into_iter().collect());
+        // focusable: all three
+        assert_eq!(focusable_ids, [100, 101, 102].into_iter().collect());
+    }
+
+    #[test]
+    fn test_output_focus_restores_last_focused_per_tag() {
+        // Two displays, two windows on display 2. Focus 202 on display 2, switch
+        // back to display 1, then output-focus next → should restore 202, not 201.
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "A", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(201, 2001, "B", 2000.0, 100.0, 800.0, 600.0),
+                create_test_window(202, 2002, "C", 2000.0, 700.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Visit display 2 and focus 202 (the second window on display 2)
+        state.focused_display = 2;
+        state.set_focused(Some(202));
+
+        // Go back to display 1
+        state.focused_display = 1;
+        state.set_focused(Some(100));
+
+        // output-focus next should pick last-focused on display 2 (202), not 201
+        let result = state.focus_output(OutputDirection::Next);
+        match result.unwrap() {
+            FocusOutputResult::Window { window_id, .. } => assert_eq!(window_id, 202),
+            FocusOutputResult::EmptyDisplay { .. } => panic!("Expected Window result"),
+        }
+    }
+
+    #[test]
+    fn test_output_focus_falls_back_when_no_record() {
+        // Display 2 has windows but none was ever focused → fallback to first
+        // in focusable order (== tag_orders order, which mirrors WindowID here
+        // because sync_all inserts in ID order).
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "A", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(201, 2001, "B", 2000.0, 100.0, 800.0, 600.0),
+                create_test_window(202, 2002, "C", 2000.0, 700.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Ensure display 2 has no per-tag focus record
+        state
+            .displays
+            .get_mut(&2)
+            .unwrap()
+            .last_focused_per_tag
+            .clear();
+
+        let result = state.focus_output(OutputDirection::Next);
+        match result.unwrap() {
+            FocusOutputResult::Window { window_id, .. } => {
+                // First in tag_orders on display 2 should be 201 (inserted first)
+                assert_eq!(window_id, 201);
+            }
+            FocusOutputResult::EmptyDisplay { .. } => panic!("Expected Window result"),
+        }
     }
 
     #[test]
@@ -1435,14 +1645,14 @@ mod tests {
         state.focused = Some(100);
 
         let display = state.displays.get(&1).unwrap();
-        let initial_order = display.window_order.clone();
+        let initial_order = display.tag_orders.get(&1).cloned().unwrap_or_default();
 
         let result = state.swap_window(Direction::Next);
         assert!(result.is_some());
         assert_eq!(result.unwrap(), 1);
 
         let display = state.displays.get(&1).unwrap();
-        let new_order = &display.window_order;
+        let new_order = display.tag_orders.get(&1).cloned().unwrap_or_default();
 
         let old_100_idx = initial_order.iter().position(|&id| id == 100).unwrap();
         let new_100_idx = new_order.iter().position(|&id| id == 100).unwrap();
@@ -1518,18 +1728,401 @@ mod tests {
         assert_eq!(result.unwrap(), 1);
 
         let display = state.displays.get(&1).unwrap();
-        let idx_100 = display
-            .window_order
-            .iter()
-            .position(|&id| id == 100)
-            .unwrap();
-        let idx_101 = display
-            .window_order
-            .iter()
-            .position(|&id| id == 101)
-            .unwrap();
+        let order = display.tag_orders.get(&1).unwrap();
+        let idx_100 = order.iter().position(|&id| id == 100).unwrap();
+        let idx_101 = order.iter().position(|&id| id == 101).unwrap();
 
         assert!(idx_101 < idx_100);
+    }
+
+    #[test]
+    fn test_swap_persists_across_tag_switch() {
+        // Regression test for issue #168: window-swap order must survive tag switches.
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // All three windows (100, 101, 102) are on tag 1 by default
+        state.focused = Some(100);
+        // Swap 100 ↔ 101 in the stack (forward)
+        let result = state.swap_window(Direction::Next);
+        assert!(result.is_some());
+
+        let order_after_swap = state
+            .displays
+            .get(&1)
+            .unwrap()
+            .tag_orders
+            .get(&1)
+            .cloned()
+            .unwrap();
+        // Find indices to verify 101 came before 100 after the swap
+        let idx_100 = order_after_swap.iter().position(|&id| id == 100).unwrap();
+        let idx_101 = order_after_swap.iter().position(|&id| id == 101).unwrap();
+        assert!(idx_101 < idx_100);
+
+        // Switch to tag 2 (empty), then back to tag 1
+        state.view_tags(0b0010);
+        state.view_tags(0b0001);
+
+        // tag_orders[1] should be unchanged: swap persisted
+        let order_after_round_trip = state
+            .displays
+            .get(&1)
+            .unwrap()
+            .tag_orders
+            .get(&1)
+            .cloned()
+            .unwrap();
+        assert_eq!(order_after_swap, order_after_round_trip);
+    }
+
+    #[test]
+    fn test_swap_no_op_when_no_shared_tag() {
+        // visible_tags = 0b011 (tags 1+2). Window 100 only on tag 1, window 101 only on tag 2.
+        // They are both visible but share no tag → swap_window should be a no-op.
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "A", 0.0, 0.0, 960.0, 1080.0),
+                create_test_window(101, 1001, "B", 960.0, 0.0, 960.0, 1080.0),
+            ])
+            .with_focused(Some(100));
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Reassign tags so they don't overlap
+        state.windows.get_mut(&100).unwrap().tags = Tag::from_mask(0b0001);
+        state.windows.get_mut(&101).unwrap().tags = Tag::from_mask(0b0010);
+        // Rebuild tag_orders to reflect the new tag layout
+        let display = state.displays.get_mut(&1).unwrap();
+        display.tag_orders.clear();
+        display.tag_orders.insert(1, vec![100]);
+        display.tag_orders.insert(2, vec![101]);
+        display.visible_tags = Tag::from_mask(0b0011);
+
+        state.focused = Some(100);
+        let result = state.swap_window(Direction::Next);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_swap_in_multiple_shared_tags() {
+        // Both windows are on tags 1 AND 2. Swap must be reflected in BOTH tag_orders.
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "A", 0.0, 0.0, 960.0, 1080.0),
+                create_test_window(101, 1001, "B", 960.0, 0.0, 960.0, 1080.0),
+            ])
+            .with_focused(Some(100));
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Assign both windows to tags 1+2
+        let combined = Tag::from_mask(0b0011);
+        state.windows.get_mut(&100).unwrap().tags = combined;
+        state.windows.get_mut(&101).unwrap().tags = combined;
+        let display = state.displays.get_mut(&1).unwrap();
+        display.tag_orders.clear();
+        display.tag_orders.insert(1, vec![100, 101]);
+        display.tag_orders.insert(2, vec![100, 101]);
+        display.visible_tags = Tag::from_mask(0b0001);
+
+        state.focused = Some(100);
+        let result = state.swap_window(Direction::Next);
+        assert!(result.is_some());
+
+        let display = state.displays.get(&1).unwrap();
+        assert_eq!(display.tag_orders.get(&1).unwrap(), &vec![101, 100]);
+        assert_eq!(display.tag_orders.get(&2).unwrap(), &vec![101, 100]);
+    }
+
+    #[test]
+    fn test_add_to_tag_orders_multi_tag_window() {
+        // A window with tags 0b011 should appear in both tag_orders[1] and tag_orders[2].
+        use layout::add_to_tag_orders;
+
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)]);
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        add_to_tag_orders(&mut state, 200, 1, Tag::from_mask(0b0011));
+
+        let display = state.displays.get(&1).unwrap();
+        assert!(display.tag_orders.get(&1).unwrap().contains(&200));
+        assert!(display.tag_orders.get(&2).unwrap().contains(&200));
+    }
+
+    #[test]
+    fn test_update_tag_orders_on_tag_change() {
+        // move_focused_to_tags should remove the window from old tag_orders and append to new ones.
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "A", 0.0, 0.0, 960.0, 1080.0,
+            )])
+            .with_focused(Some(100));
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Initial: window 100 is on tag 1 (default)
+        assert!(state
+            .displays
+            .get(&1)
+            .unwrap()
+            .tag_orders
+            .get(&1)
+            .unwrap()
+            .contains(&100));
+
+        // Move to tag 2 only
+        state.move_focused_to_tags(0b0010);
+
+        let display = state.displays.get(&1).unwrap();
+        assert!(
+            display.tag_orders.get(&1).is_none()
+                || !display.tag_orders.get(&1).unwrap().contains(&100)
+        );
+        assert!(display.tag_orders.get(&2).unwrap().contains(&100));
+    }
+
+    #[test]
+    fn test_visible_picks_up_stragglers() {
+        // Resilience: a window present in state.windows that matches visible_tags
+        // must appear in visible_windows_on_display even when it is NOT in tag_orders.
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Wipe tag_orders entirely to simulate inconsistent state
+        state.displays.get_mut(&1).unwrap().tag_orders.clear();
+
+        let visible = state.visible_windows_on_display(1);
+        let visible_ids: Vec<WindowId> = visible.iter().map(|w| w.id).collect();
+        // All three windows from setup_mock_system are on tag 1 and visible
+        assert!(visible_ids.contains(&100));
+        assert!(visible_ids.contains(&101));
+        assert!(visible_ids.contains(&102));
+    }
+
+    #[test]
+    fn test_swap_auto_registers_in_tag_orders() {
+        // Resilience: even when neither focused nor target is in tag_orders,
+        // swap_window must auto-register and perform the swap.
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Wipe tag_orders
+        state.displays.get_mut(&1).unwrap().tag_orders.clear();
+
+        state.focused = Some(100);
+        let result = state.swap_window(Direction::Next);
+        assert!(result.is_some());
+
+        let order = state
+            .displays
+            .get(&1)
+            .unwrap()
+            .tag_orders
+            .get(&1)
+            .cloned()
+            .unwrap();
+        // 100 and the next stack window (find_swap_target_stack chooses by
+        // tag-order; with empty tag_orders the visible list is WindowID-ascending,
+        // so Next from 100 yields 101). Both must now be present in tag_orders
+        // and 101 should precede 100 after the swap.
+        assert!(order.contains(&100));
+        assert!(order.contains(&101));
+        let idx_100 = order.iter().position(|&id| id == 100).unwrap();
+        let idx_101 = order.iter().position(|&id| id == 101).unwrap();
+        assert!(idx_101 < idx_100);
+    }
+
+    #[test]
+    fn test_rule_tag_change_window_visible_after_view_tags() {
+        // Regression test for the issue observed in the daemon: a window whose
+        // tags were mutated directly (as rules do) must still appear in
+        // visible_windows_on_display after switching to the new tag.
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Simulate a rule mutating window.tags directly (no tag_orders sync).
+        // Window 100 moved from tag 1 to tag 2.
+        state.windows.get_mut(&100).unwrap().tags = Tag::from_mask(0b0010);
+
+        // Switch the display to view tag 2.
+        state.view_tags(0b0010);
+
+        // Window 100 must be visible despite not being in tag_orders[2].
+        let visible_ids: Vec<WindowId> = state
+            .visible_windows_on_display(1)
+            .iter()
+            .map(|w| w.id)
+            .collect();
+        assert!(
+            visible_ids.contains(&100),
+            "window 100 should be visible on tag 2 (visible={:?})",
+            visible_ids
+        );
+    }
+
+    #[test]
+    fn test_set_focused_records_last_focused_per_tag() {
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+        // visible_tags defaults to tag 1; all windows have tag 1
+        state.set_focused(Some(101));
+
+        let entry = state
+            .displays
+            .get(&1)
+            .unwrap()
+            .last_focused_per_tag
+            .get(&1)
+            .copied();
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().0, 101);
+    }
+
+    #[test]
+    fn test_set_focused_multi_tag_intersection() {
+        // Window with tags 1+2, display visible_tags 1+2 → record for both bits.
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        state.windows.get_mut(&101).unwrap().tags = Tag::from_mask(0b0011);
+        state.displays.get_mut(&1).unwrap().visible_tags = Tag::from_mask(0b0011);
+
+        state.set_focused(Some(101));
+
+        let display = state.displays.get(&1).unwrap();
+        let entry1 = display.last_focused_per_tag.get(&1).copied().unwrap();
+        let entry2 = display.last_focused_per_tag.get(&2).copied().unwrap();
+        assert_eq!(entry1.0, 101);
+        assert_eq!(entry2.0, 101);
+        // Timestamps recorded in the same call should be equal.
+        assert_eq!(entry1.1, entry2.1);
+    }
+
+    #[test]
+    fn test_set_focused_skips_when_no_intersection() {
+        // Window tags don't intersect display.visible_tags → no entry written
+        // for this specific focus event (existing entries unaffected).
+        let ws = setup_mock_system();
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Clear any entries written by sync_all -> set_focused(100).
+        state
+            .displays
+            .get_mut(&1)
+            .unwrap()
+            .last_focused_per_tag
+            .clear();
+
+        // Window 101 only has tag 3; visible_tags stays at tag 1 (no intersect).
+        state.windows.get_mut(&101).unwrap().tags = Tag::from_mask(0b0100);
+        state.set_focused(Some(101));
+
+        assert!(state
+            .displays
+            .get(&1)
+            .unwrap()
+            .last_focused_per_tag
+            .is_empty());
+    }
+
+    #[test]
+    fn test_record_frame_write_marks_window() {
+        let mut state = State::new();
+        assert!(!state.should_suppress_frame_write(42));
+        state.record_frame_write(42);
+        assert!(state.should_suppress_frame_write(42));
+    }
+
+    #[test]
+    fn test_should_suppress_frame_write_returns_false_for_unrecorded() {
+        let state = State::new();
+        assert!(!state.should_suppress_frame_write(42));
+    }
+
+    #[test]
+    fn test_should_suppress_frame_write_expires() {
+        let mut state = State::new();
+        // Backdate the entry beyond the suppression window
+        state.recent_frame_writes.insert(
+            42,
+            Instant::now() - Duration::from_millis((FRAME_WRITE_SUPPRESS_MS + 100) as u64),
+        );
+        assert!(!state.should_suppress_frame_write(42));
+    }
+
+    #[test]
+    fn test_sync_skips_frame_update_during_suppression() {
+        // Set up: window 100 at (0,0). State expects new position (500, 500)
+        // (programmatically set by us). macOS still reports (0,0).
+        // After sync, state.frame should remain (500, 500), not regress to (0,0).
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "App", 0.0, 0.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Simulate retile: we just programmatically set the frame to (500, 500).
+        state.windows.get_mut(&100).unwrap().frame = Rect {
+            x: 500,
+            y: 500,
+            width: 800,
+            height: 600,
+        };
+        state.record_frame_write(100);
+
+        // macOS hasn't caught up — sync still sees the old (0, 0). Trigger sync.
+        state.sync_all(&ws);
+
+        // state.frame must NOT be reverted to (0, 0).
+        let f = state.windows.get(&100).unwrap().frame;
+        assert_eq!((f.x, f.y), (500, 500), "frame must remain at our value");
+    }
+
+    #[test]
+    fn test_sync_updates_frame_after_suppression_expires() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "App", 0.0, 0.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Programmatically set frame to (500, 500) and backdate the record so
+        // the suppression window has elapsed.
+        state.windows.get_mut(&100).unwrap().frame = Rect {
+            x: 500,
+            y: 500,
+            width: 800,
+            height: 600,
+        };
+        state.recent_frame_writes.insert(
+            100,
+            Instant::now() - Duration::from_millis((FRAME_WRITE_SUPPRESS_MS + 100) as u64),
+        );
+
+        // macOS reports (0, 0). sync should now accept it.
+        state.sync_all(&ws);
+
+        let f = state.windows.get(&100).unwrap().frame;
+        assert_eq!((f.x, f.y), (0, 0));
     }
 
     #[test]
@@ -1962,8 +2555,8 @@ mod tests {
     }
 
     #[test]
-    fn test_send_to_output_updates_window_order() {
-        // Verify window_order is updated on both displays
+    fn test_send_to_output_updates_tag_orders() {
+        // Verify tag_orders is updated on both displays
         let ws = MockWindowSystem::new()
             .with_displays(vec![
                 create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
@@ -1978,16 +2571,25 @@ mod tests {
         let mut state = State::new();
         state.sync_all(&ws);
 
+        let in_tag_orders = |state: &State, display_id: DisplayId, window_id: WindowId| -> bool {
+            state
+                .displays
+                .get(&display_id)
+                .and_then(|d| d.tag_orders.get(&1))
+                .map(|order| order.contains(&window_id))
+                .unwrap_or(false)
+        };
+
         // Window 100 is on display 1, window 101 is on display 2
-        assert!(state.displays.get(&1).unwrap().window_order.contains(&100));
-        assert!(state.displays.get(&2).unwrap().window_order.contains(&101));
+        assert!(in_tag_orders(&state, 1, 100));
+        assert!(in_tag_orders(&state, 2, 101));
 
         let result = state.send_to_output(OutputDirection::Next);
         assert!(result.is_some());
 
-        // Window 100 should be removed from display 1's order and added to display 2's order
-        assert!(!state.displays.get(&1).unwrap().window_order.contains(&100));
-        assert!(state.displays.get(&2).unwrap().window_order.contains(&100));
+        // Window 100 should be removed from display 1's tag order and added to display 2's
+        assert!(!in_tag_orders(&state, 1, 100));
+        assert!(in_tag_orders(&state, 2, 100));
     }
 
     #[test]
@@ -2569,7 +3171,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_windows_for_pid_updates_window_order() {
+    fn test_remove_windows_for_pid_updates_tag_orders() {
         let ws = MockWindowSystem::new()
             .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
             .with_windows(vec![
@@ -2582,19 +3184,21 @@ mod tests {
         let mut state = State::new();
         state.sync_all(&ws);
 
-        // Verify initial window order
+        // Verify initial tag_orders for default tag (1)
         let display = state.displays.get(&1).unwrap();
-        assert!(display.window_order.contains(&100));
-        assert!(display.window_order.contains(&101));
-        assert!(display.window_order.contains(&102));
+        let order = display.tag_orders.get(&1).cloned().unwrap_or_default();
+        assert!(order.contains(&100));
+        assert!(order.contains(&101));
+        assert!(order.contains(&102));
 
         state.remove_windows_for_pid(1000);
 
-        // Verify window order is updated
+        // Verify tag_orders is updated
         let display = state.displays.get(&1).unwrap();
-        assert!(!display.window_order.contains(&100));
-        assert!(!display.window_order.contains(&101));
-        assert!(display.window_order.contains(&102));
+        let order = display.tag_orders.get(&1).cloned().unwrap_or_default();
+        assert!(!order.contains(&100));
+        assert!(!order.contains(&101));
+        assert!(order.contains(&102));
     }
 
     #[test]

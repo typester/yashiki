@@ -2,7 +2,7 @@ use super::super::{Tag, WindowId};
 use crate::macos::DisplayId;
 
 use super::super::state::{State, WindowMove};
-use super::layout::compute_layout_changes_for_display;
+use super::layout::{compute_layout_changes_for_display, update_tag_orders_for_tag_change};
 
 pub fn view_tags(state: &mut State, tags: u32) -> Vec<WindowMove> {
     view_tags_on_display(state, tags, state.focused_display)
@@ -87,13 +87,15 @@ pub fn move_focused_to_tags(state: &mut State, tags: u32) -> Vec<WindowMove> {
         return vec![];
     };
     let new_tags = Tag::from_mask(tags);
-    let display_id = if let Some(window) = state.windows.get_mut(&focused_id) {
+    let (display_id, old_tags) = if let Some(window) = state.windows.get_mut(&focused_id) {
         tracing::info!("Move window {} to tags {}", window.id, new_tags.mask());
+        let old = window.tags;
         window.tags = new_tags;
-        window.display_id
+        (window.display_id, old)
     } else {
         return vec![];
     };
+    update_tag_orders_for_tag_change(state, focused_id, display_id, old_tags, new_tags);
     compute_layout_changes_for_display(state, display_id)
 }
 
@@ -102,7 +104,8 @@ pub fn toggle_focused_window_tags(state: &mut State, tags: u32) -> Vec<WindowMov
         return vec![];
     };
     let tag = Tag::from_mask(tags);
-    let display_id = if let Some(window) = state.windows.get_mut(&focused_id) {
+    let (display_id, old_tags, new_tags) = if let Some(window) = state.windows.get_mut(&focused_id)
+    {
         let new_tags = window.tags.toggle(tag);
         if new_tags.mask() == 0 {
             return vec![];
@@ -113,11 +116,13 @@ pub fn toggle_focused_window_tags(state: &mut State, tags: u32) -> Vec<WindowMov
             window.tags.mask(),
             new_tags.mask()
         );
+        let old = window.tags;
         window.tags = new_tags;
-        window.display_id
+        (window.display_id, old, new_tags)
     } else {
         return vec![];
     };
+    update_tag_orders_for_tag_change(state, focused_id, display_id, old_tags, new_tags);
     compute_layout_changes_for_display(state, display_id)
 }
 
