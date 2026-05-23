@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/typester/yashiki/compare/yashiki-v0.12.1...yashiki-v0.13.0) - 2026-05-23
+
+### Fixed
+
+- [**breaking**] per-tag window order, plus focus refinements ([#168](https://github.com/typester/yashiki/pull/168)) ([#169](https://github.com/typester/yashiki/pull/169))
+
 ## [0.12.1](https://github.com/typester/yashiki/compare/yashiki-v0.12.0...yashiki-v0.12.1) - 2026-04-13
 
 ### Fixed
