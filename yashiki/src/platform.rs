@@ -349,6 +349,34 @@ impl WindowManipulator for MacOSWindowManipulator {
                                 activate_application(pid);
                             }
                         }
+                        // Firefox restores its last-focused window as key on AXFrontmost,
+                        // ignoring the set_main/raise above. Re-issue them so the requested
+                        // window becomes key. No-op for apps that already respected the
+                        // earlier calls.
+                        match ax_win.set_main(true) {
+                            Ok(()) => tracing::debug!(
+                                "Re-set main window {} (pid {}) after AXFrontmost",
+                                window_id,
+                                pid
+                            ),
+                            Err(e) => tracing::warn!(
+                                "Failed to re-set main window {} after AXFrontmost: {}",
+                                window_id,
+                                e
+                            ),
+                        }
+                        match ax_win.raise() {
+                            Ok(()) => tracing::debug!(
+                                "Re-raised window {} (pid {}) after AXFrontmost",
+                                window_id,
+                                pid
+                            ),
+                            Err(e) => tracing::warn!(
+                                "Failed to re-raise window {} after AXFrontmost: {}",
+                                window_id,
+                                e
+                            ),
+                        }
                     } else {
                         // Already frontmost: AXFrontmost is a no-op when the app is already
                         // frontmost, so it won't change the key window (Firefox ignores
