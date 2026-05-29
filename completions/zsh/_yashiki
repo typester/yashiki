@@ -269,6 +269,7 @@ _yashiki() {
                 exec-or-focus)
                     _arguments \
                         '--app-name[Application name to focus]:app name:' \
+                        '--cycle[Cycle to next window of the app if one is already focused]' \
                         '1:shell command:'
                     ;;
                 set-exec-path)
