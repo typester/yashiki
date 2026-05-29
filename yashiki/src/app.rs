@@ -1634,10 +1634,14 @@ mod tests {
     }
 
     fn focused_window_id(result: &crate::effect::CommandResult) -> u32 {
-        match result.effects.first() {
-            Some(Effect::FocusWindow { window_id, .. }) => *window_id,
-            other => panic!("Expected FocusWindow effect, got {:?}", other),
-        }
+        result
+            .effects
+            .iter()
+            .find_map(|e| match e {
+                Effect::FocusWindow { window_id, .. } => Some(*window_id),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("No FocusWindow effect found in {:?}", result.effects))
     }
 
     #[test]
@@ -1712,6 +1716,60 @@ mod tests {
         );
 
         assert_eq!(focused_window_id(&result), 32);
+    }
+
+    #[test]
+    fn test_exec_or_focus_switches_tag_on_target_window_display() {
+        // Regression: cycling to a hidden window on a different display must switch
+        // the tag on that target display, not the currently focused one.
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(32, 1337, "Ghostty", 0.0, 0.0, 960.0, 1080.0),
+                create_test_window(1005, 1337, "Ghostty", 1920.0, 0.0, 960.0, 1080.0),
+            ])
+            .with_focused(Some(32));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Put the two Ghostty windows on different tags so they live on separate
+        // tags as well as separate displays.
+        state.windows.get_mut(&1005).unwrap().tags = crate::core::Tag::from_mask(2);
+        // Display 1 keeps tag 1 visible (where 32 lives, visible).
+        // Display 2 also shows tag 1, so 1005 (on tag 2) is hidden there.
+        state.focused = Some(32);
+        state.focused_display = 1;
+
+        let (tx, _rx) = std_mpsc::channel();
+        let dummy_source = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
+        let mut hotkey_manager = HotkeyManager::new(tx, dummy_source);
+
+        let display1_tags_before = state.displays.get(&1).unwrap().visible_tags.mask();
+
+        let result = process_command(
+            &mut state,
+            &mut hotkey_manager,
+            &Command::ExecOrFocus {
+                app_name: "Ghostty".to_string(),
+                command: "open -a Ghostty".to_string(),
+                cycle: true,
+            },
+        );
+
+        assert!(matches!(result.response, Response::Ok));
+        assert_eq!(focused_window_id(&result), 1005);
+
+        // Display 2 (where 1005 lives) must now show tag 2.
+        assert_eq!(state.displays.get(&2).unwrap().visible_tags.mask(), 2);
+        // Display 1 (the originally focused one) must not be modified.
+        assert_eq!(
+            state.displays.get(&1).unwrap().visible_tags.mask(),
+            display1_tags_before
+        );
     }
 
     #[test]

@@ -474,16 +474,19 @@ pub fn process_command(
                         is_output_change: false,
                     }])
                 } else {
-                    // Window is hidden, switch to its tag first
+                    // Window is hidden, switch to its tag first on the window's own
+                    // display (not the focused one — the target window may live on a
+                    // different display).
                     if let Some(tag) = window_tags.first_tag() {
                         tracing::info!(
-                            "Switching to tag {} and focusing window for app '{}' (window_id={}, pid={})",
+                            "Switching to tag {} on display {} and focusing window for app '{}' (window_id={}, pid={})",
                             tag,
+                            window_display_id,
                             app_name,
                             window_id,
                             pid
                         );
-                        let moves = state.view_tags(1 << (tag - 1));
+                        let moves = state.view_tags_on_display(1 << (tag - 1), window_display_id);
                         CommandResult::ok_with_effects(vec![
                             Effect::ApplyWindowMoves(moves),
                             Effect::Retile,
