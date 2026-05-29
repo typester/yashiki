@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- [**breaking**] add --cycle option to exec-or-focus ([#173](https://github.com/typester/yashiki/pull/173))
+- add --cycle option to exec-or-focus ([#173](https://github.com/typester/yashiki/pull/173))
 
 ## [0.13.1](https://github.com/typester/yashiki/compare/yashiki-v0.13.0...yashiki-v0.13.1) - 2026-05-28
 
@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- [**breaking**] per-tag window order, plus focus refinements ([#168](https://github.com/typester/yashiki/pull/168)) ([#169](https://github.com/typester/yashiki/pull/169))
+- per-tag window order, plus focus refinements ([#168](https://github.com/typester/yashiki/pull/168)) ([#169](https://github.com/typester/yashiki/pull/169))
 
 ## [0.12.1](https://github.com/typester/yashiki/compare/yashiki-v0.12.0...yashiki-v0.12.1) - 2026-04-13
 
