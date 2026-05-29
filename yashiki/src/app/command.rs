@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use crate::core::{FocusOutputResult, State};
+use crate::core::{FocusOutputResult, State, Window};
 use crate::effect::{CommandResult, Effect};
 use crate::macos::HotkeyManager;
 use crate::platform::WindowSystem;
@@ -424,13 +424,32 @@ pub fn process_command(
                 }])
             }
         }
-        Command::ExecOrFocus { app_name, command } => {
-            // Check if a window with the given app_name exists
-            let existing_window = state
+        Command::ExecOrFocus {
+            app_name,
+            command,
+            cycle,
+        } => {
+            // Collect matching windows sorted by window id (ascending) so selection
+            // is deterministic regardless of HashMap iteration order.
+            let mut candidates: Vec<&Window> = state
                 .windows
                 .values()
-                .find(|w| w.app_name == *app_name)
-                .map(|w| (w.id, w.pid, w.tags, w.display_id, w.is_hidden()));
+                .filter(|w| w.app_name == *app_name)
+                .collect();
+            candidates.sort_by_key(|w| w.id);
+
+            let target_window = if *cycle {
+                state
+                    .focused
+                    .and_then(|fid| candidates.iter().position(|w| w.id == fid))
+                    .map(|idx| candidates[(idx + 1) % candidates.len()])
+                    .or_else(|| candidates.first().copied())
+            } else {
+                candidates.first().copied()
+            };
+
+            let existing_window =
+                target_window.map(|w| (w.id, w.pid, w.tags, w.display_id, w.is_hidden()));
 
             if let Some((window_id, pid, window_tags, window_display_id, is_hidden)) =
                 existing_window

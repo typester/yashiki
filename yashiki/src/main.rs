@@ -358,6 +358,9 @@ struct ExecOrFocusCmd {
     /// application name to focus
     #[argh(option)]
     app_name: String,
+    /// cycle to the next window of the app if one is already focused
+    #[argh(switch)]
+    cycle: bool,
     /// shell command to execute if app is not running
     #[argh(positional)]
     command: String,
@@ -912,6 +915,7 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
         SubCommand::ExecOrFocus(cmd) => Ok(Command::ExecOrFocus {
             app_name: cmd.app_name,
             command: cmd.command,
+            cycle: cmd.cycle,
         }),
         SubCommand::ExecPath(_) => Ok(Command::GetExecPath),
         SubCommand::SetExecPath(cmd) => Ok(Command::SetExecPath { path: cmd.path }),
@@ -1206,6 +1210,7 @@ fn parse_command(args: &[String]) -> Result<Command> {
             Ok(Command::ExecOrFocus {
                 app_name: cmd.app_name,
                 command: cmd.command,
+                cycle: cmd.cycle,
             })
         }
         "exec-path" => Ok(Command::GetExecPath),

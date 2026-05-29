@@ -1564,6 +1564,7 @@ mod tests {
             &Command::ExecOrFocus {
                 app_name: "Safari".to_string(),
                 command: "open -a Safari".to_string(),
+                cycle: false,
             },
         );
 
@@ -1595,6 +1596,7 @@ mod tests {
             &Command::ExecOrFocus {
                 app_name: "Slack".to_string(), // App not in our mock windows
                 command: "open -a Slack".to_string(),
+                cycle: false,
             },
         );
 
@@ -1608,6 +1610,108 @@ mod tests {
             }
             _ => panic!("Expected ExecCommand effect, got {:?}", result.effects[0]),
         }
+    }
+
+    fn setup_state_with_multiple_ghostty(focused: Option<u32>) -> (State, HotkeyManager) {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(1005, 1337, "Ghostty", 0.0, 0.0, 960.0, 1080.0),
+                create_test_window(32, 1337, "Ghostty", 960.0, 0.0, 960.0, 1080.0),
+                create_test_window(500, 2000, "Ghostty", 0.0, 0.0, 480.0, 540.0),
+                create_test_window(200, 3000, "Safari", 0.0, 540.0, 480.0, 540.0),
+            ])
+            .with_focused(focused);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        let (tx, _rx) = std_mpsc::channel();
+        let dummy_source = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
+        let hotkey_manager = HotkeyManager::new(tx, dummy_source);
+
+        (state, hotkey_manager)
+    }
+
+    fn focused_window_id(result: &crate::effect::CommandResult) -> u32 {
+        match result.effects.first() {
+            Some(Effect::FocusWindow { window_id, .. }) => *window_id,
+            other => panic!("Expected FocusWindow effect, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_exec_or_focus_picks_lowest_window_id() {
+        // Regression test: multiple windows of the same app must deterministically
+        // focus the one with the smallest window_id (not whatever HashMap yields first).
+        let (mut state, mut hotkey_manager) = setup_state_with_multiple_ghostty(Some(200));
+
+        let result = process_command(
+            &mut state,
+            &mut hotkey_manager,
+            &Command::ExecOrFocus {
+                app_name: "Ghostty".to_string(),
+                command: "open -a Ghostty".to_string(),
+                cycle: false,
+            },
+        );
+
+        assert!(matches!(result.response, Response::Ok));
+        assert_eq!(focused_window_id(&result), 32);
+    }
+
+    #[test]
+    fn test_exec_or_focus_cycle_advances_to_next() {
+        // 32 is focused -> cycle picks the next id (500).
+        let (mut state, mut hotkey_manager) = setup_state_with_multiple_ghostty(Some(32));
+
+        let result = process_command(
+            &mut state,
+            &mut hotkey_manager,
+            &Command::ExecOrFocus {
+                app_name: "Ghostty".to_string(),
+                command: "open -a Ghostty".to_string(),
+                cycle: true,
+            },
+        );
+
+        assert_eq!(focused_window_id(&result), 500);
+    }
+
+    #[test]
+    fn test_exec_or_focus_cycle_wraps_around() {
+        // 1005 is the largest matching id -> cycle wraps to the smallest (32).
+        let (mut state, mut hotkey_manager) = setup_state_with_multiple_ghostty(Some(1005));
+
+        let result = process_command(
+            &mut state,
+            &mut hotkey_manager,
+            &Command::ExecOrFocus {
+                app_name: "Ghostty".to_string(),
+                command: "open -a Ghostty".to_string(),
+                cycle: true,
+            },
+        );
+
+        assert_eq!(focused_window_id(&result), 32);
+    }
+
+    #[test]
+    fn test_exec_or_focus_cycle_with_no_focused_match() {
+        // Safari is focused (different app) -> cycle starts at the smallest Ghostty id.
+        let (mut state, mut hotkey_manager) = setup_state_with_multiple_ghostty(Some(200));
+
+        let result = process_command(
+            &mut state,
+            &mut hotkey_manager,
+            &Command::ExecOrFocus {
+                app_name: "Ghostty".to_string(),
+                command: "open -a Ghostty".to_string(),
+                cycle: true,
+            },
+        );
+
+        assert_eq!(focused_window_id(&result), 32);
     }
 
     #[test]
