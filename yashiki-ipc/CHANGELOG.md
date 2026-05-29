@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.13.1...yashiki-ipc-v0.14.0) - 2026-05-29
+
+### Added
+
+- add --cycle option to exec-or-focus ([#173](https://github.com/typester/yashiki/pull/173))
+
 ## [0.12.0](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.11.6...yashiki-ipc-v0.12.0) - 2026-02-25
 
 ### Added
