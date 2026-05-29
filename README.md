@@ -250,7 +250,8 @@ yashiki list-outputs             # List all displays
 yashiki get-state                # Get current state
 yashiki exec "open -a Safari"    # Execute command
 yashiki exec --track "borders"   # Execute and terminate on yashiki quit
-yashiki exec-or-focus --app-name Safari "open -a Safari"  # Focus or launch
+yashiki exec-or-focus --app-name Safari "open -a Safari"           # Focus or launch
+yashiki exec-or-focus --app-name Safari --cycle "open -a Safari"   # Cycle through windows of the app
 ```
 
 The `--track` option is useful for launching companion tools like [JankyBorders](https://github.com/FelixKratz/JankyBorders) that should run alongside yashiki:

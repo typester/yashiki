@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use crate::core::{FocusOutputResult, State};
+use crate::core::{FocusOutputResult, State, Window};
 use crate::effect::{CommandResult, Effect};
 use crate::macos::HotkeyManager;
 use crate::platform::WindowSystem;
@@ -424,13 +424,32 @@ pub fn process_command(
                 }])
             }
         }
-        Command::ExecOrFocus { app_name, command } => {
-            // Check if a window with the given app_name exists
-            let existing_window = state
+        Command::ExecOrFocus {
+            app_name,
+            command,
+            cycle,
+        } => {
+            // Collect matching windows sorted by window id (ascending) so selection
+            // is deterministic regardless of HashMap iteration order.
+            let mut candidates: Vec<&Window> = state
                 .windows
                 .values()
-                .find(|w| w.app_name == *app_name)
-                .map(|w| (w.id, w.pid, w.tags, w.display_id, w.is_hidden()));
+                .filter(|w| w.app_name == *app_name)
+                .collect();
+            candidates.sort_by_key(|w| w.id);
+
+            let target_window = if *cycle {
+                state
+                    .focused
+                    .and_then(|fid| candidates.iter().position(|w| w.id == fid))
+                    .map(|idx| candidates[(idx + 1) % candidates.len()])
+                    .or_else(|| candidates.first().copied())
+            } else {
+                candidates.first().copied()
+            };
+
+            let existing_window =
+                target_window.map(|w| (w.id, w.pid, w.tags, w.display_id, w.is_hidden()));
 
             if let Some((window_id, pid, window_tags, window_display_id, is_hidden)) =
                 existing_window
@@ -455,16 +474,17 @@ pub fn process_command(
                         is_output_change: false,
                     }])
                 } else {
-                    // Window is hidden, switch to its tag first
+                    // Window is hidden — switch tag on the window's own display, not the focused one (they may differ).
                     if let Some(tag) = window_tags.first_tag() {
                         tracing::info!(
-                            "Switching to tag {} and focusing window for app '{}' (window_id={}, pid={})",
+                            "Switching to tag {} on display {} and focusing window for app '{}' (window_id={}, pid={})",
                             tag,
+                            window_display_id,
                             app_name,
                             window_id,
                             pid
                         );
-                        let moves = state.view_tags(1 << (tag - 1));
+                        let moves = state.view_tags_on_display(1 << (tag - 1), window_display_id);
                         CommandResult::ok_with_effects(vec![
                             Effect::ApplyWindowMoves(moves),
                             Effect::Retile,

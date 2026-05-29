@@ -694,6 +694,8 @@ pub enum Command {
     ExecOrFocus {
         app_name: String,
         command: String,
+        #[serde(default)]
+        cycle: bool,
     },
 
     // Exec path
