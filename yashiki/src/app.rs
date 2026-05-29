@@ -1720,8 +1720,7 @@ mod tests {
 
     #[test]
     fn test_exec_or_focus_switches_tag_on_target_window_display() {
-        // Regression: cycling to a hidden window on a different display must switch
-        // the tag on that target display, not the currently focused one.
+        // Regression: cycling to a hidden window on a different display must switch the tag on that target display, not the currently focused one.
         let ws = MockWindowSystem::new()
             .with_displays(vec![
                 create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
@@ -1736,11 +1735,9 @@ mod tests {
         let mut state = State::new();
         state.sync_all(&ws);
 
-        // Put the two Ghostty windows on different tags so they live on separate
-        // tags as well as separate displays.
+        // Put the two Ghostty windows on different tags so they live on separate tags as well as separate displays.
         state.windows.get_mut(&1005).unwrap().tags = crate::core::Tag::from_mask(2);
-        // Display 1 keeps tag 1 visible (where 32 lives, visible).
-        // Display 2 also shows tag 1, so 1005 (on tag 2) is hidden there.
+        // Display 1 keeps tag 1 visible (where 32 lives, visible). Display 2 also shows tag 1, so 1005 (on tag 2) is hidden there.
         state.focused = Some(32);
         state.focused_display = 1;
 

@@ -474,9 +474,7 @@ pub fn process_command(
                         is_output_change: false,
                     }])
                 } else {
-                    // Window is hidden, switch to its tag first on the window's own
-                    // display (not the focused one — the target window may live on a
-                    // different display).
+                    // Window is hidden — switch tag on the window's own display, not the focused one (they may differ).
                     if let Some(tag) = window_tags.first_tag() {
                         tracing::info!(
                             "Switching to tag {} on display {} and focusing window for app '{}' (window_id={}, pid={})",
