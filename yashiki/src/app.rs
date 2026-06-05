@@ -12,8 +12,12 @@ use core_foundation_sys::runloop::{
     CFRunLoopAddSource, CFRunLoopGetMain, CFRunLoopSourceContext, CFRunLoopSourceCreate,
 };
 use objc2::rc::Retained;
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSEvent, NSEventType};
-use objc2_foundation::MainThreadMarker;
+use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadOnly};
+use objc2_app_kit::{
+    NSApplication, NSApplicationActivationPolicy, NSEvent, NSEventType, NSMenu, NSMenuItem,
+    NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
+};
+use objc2_foundation::{MainThreadMarker, NSObject, NSObjectProtocol, NSString};
 use tokio::sync::mpsc;
 
 mod channels;
@@ -33,6 +37,7 @@ use state_events::{capture_event_state, emit_state_change_events};
 use sync_helper::{process_new_windows, sync_and_process_new_windows, sync_focused_and_process};
 
 use crate::core::State;
+use crate::core::Tag;
 use crate::event::Event;
 use crate::event_emitter::{create_snapshot, EventEmitter};
 use crate::layout::LayoutEngineManager;
@@ -44,6 +49,125 @@ use crate::macos::{
 use crate::pid;
 use crate::platform::{MacOSWindowManipulator, MacOSWindowSystem, WindowManipulator};
 use yashiki_ipc::Command;
+
+/// Format visible tag mask into a menu bar label.
+/// Single tag → "1", multi-tag → "1+3", empty → "–".
+fn format_visible_tags(tags: Tag) -> String {
+    let mut label = String::new();
+    for tag in tags.iter_bits() {
+        if !label.is_empty() {
+            label.push('+');
+        }
+        label.push_str(&tag.to_string());
+    }
+    if label.is_empty() {
+        label.push('\u{2013}');
+    }
+    label
+}
+
+/// Return the visible tags of the focused display, or zero mask if absent.
+fn active_menu_bar_tags(state: &State) -> Tag {
+    state
+        .displays
+        .get(&state.focused_display)
+        .map(|d| d.visible_tags)
+        .unwrap_or(Tag::from_mask(0))
+}
+
+
+// Target object for the status item menu's Quit action.
+// Must be retained because NSMenuItem.target is weak.
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[ivars = Cell<*const RunLoopContext>]
+    struct StatusMenuTarget;
+
+    unsafe impl NSObjectProtocol for StatusMenuTarget {}
+
+    impl StatusMenuTarget {
+        #[unsafe(method(quit:))]
+        fn quit(&self, _sender: &NSMenuItem) {
+            let ctx = self.ivars().get();
+            if ctx.is_null() {
+                tracing::error!("Status menu Quit invoked before run loop context was initialized");
+                return;
+            }
+            unsafe { (&*ctx).quit() };
+        }
+    }
+);
+
+struct MenuBarTagItem {
+    item: Retained<NSStatusItem>,
+    _target: Retained<StatusMenuTarget>,
+    last_title: RefCell<String>,
+}
+
+impl MenuBarTagItem {
+    fn new(mtm: MainThreadMarker, state: &State) -> Self {
+        let status_bar = NSStatusBar::systemStatusBar();
+        let item = status_bar.statusItemWithLength(NSVariableStatusItemLength);
+        item.setVisible(true);
+
+        let title = format_visible_tags(active_menu_bar_tags(state));
+        if let Some(button) = item.button(mtm) {
+            button.setTitle(&NSString::from_str(&title));
+        }
+
+        // Build minimal menu: name, version, separator, Quit.
+        let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str("Yashiki"));
+        menu.setAutoenablesItems(false);
+
+        menu.addItem(&NSMenuItem::sectionHeaderWithTitle(
+            &NSString::from_str("Yashiki"),
+            mtm,
+        ));
+
+        let version = NSMenuItem::new(mtm);
+        version.setTitle(&NSString::from_str(concat!("v", env!("CARGO_PKG_VERSION"))));
+        version.setEnabled(false);
+        menu.addItem(&version);
+
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+
+        let target: Retained<StatusMenuTarget> = {
+            let this = mtm.alloc::<StatusMenuTarget>();
+            let this = this.set_ivars(Cell::new(std::ptr::null()));
+            unsafe { msg_send![super(this), init] }
+        };
+
+        let quit = NSMenuItem::new(mtm);
+        quit.setTitle(&NSString::from_str("Quit Yashiki"));
+        quit.setKeyEquivalent(&NSString::from_str("q"));
+        unsafe { quit.setAction(Some(sel!(quit:))) };
+        unsafe { quit.setTarget(Some(&target)) };
+        menu.addItem(&quit);
+
+        item.setMenu(Some(&menu));
+
+        Self {
+            item,
+            _target: target,
+            last_title: RefCell::new(title),
+        }
+    }
+
+    fn set_context(&self, ctx: *const RunLoopContext) {
+        self._target.ivars().set(ctx);
+    }
+
+    fn update_from_state(&self, mtm: MainThreadMarker, state: &State) {
+        let title = format_visible_tags(active_menu_bar_tags(state));
+        if title == *self.last_title.borrow() {
+            return;
+        }
+        if let Some(button) = self.item.button(mtm) {
+            button.setTitle(&NSString::from_str(&title));
+        }
+        *self.last_title.borrow_mut() = title;
+    }
+}
 
 pub type LogLevelSetter = Box<dyn Fn(&str) -> Result<(), String>>;
 
@@ -69,6 +193,37 @@ struct RunLoopContext {
     current_log_level: RefCell<String>,
     is_file_logging: bool,
     last_focused_window_destroyed_at: Cell<Option<Instant>>,
+    status_item: MenuBarTagItem,
+}
+
+impl RunLoopContext {
+    fn emit_state_change_events(&self, pre_state: &state_events::PreEventState) {
+        emit_state_change_events(&self.event_emitter, &self.state, pre_state);
+        if let Some(mtm) = MainThreadMarker::new() {
+            self.status_item
+                .update_from_state(mtm, &self.state.borrow());
+        }
+    }
+
+    fn quit(&self) {
+        for process in self.state.borrow().tracked_processes.iter() {
+            self.window_manipulator.terminate_process(process.pid);
+        }
+        self.ns_app.stop(None);
+        if let Some(event) = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
+            NSEventType::ApplicationDefined,
+            objc2_foundation::NSPoint::new(0.0, 0.0),
+            objc2_app_kit::NSEventModifierFlags::empty(),
+            0.0,
+            0,
+            None,
+            0,
+            0,
+            0,
+        ) {
+            self.ns_app.postEvent_atStart(&event, true);
+        }
+    }
 }
 
 pub struct App {}
@@ -200,7 +355,6 @@ impl App {
         if let Err(e) = hotkey_manager.start() {
             tracing::warn!("Failed to start hotkey tap: {}", e);
         }
-
         // Create shared pointer for mouse CFRunLoopSource
         let mouse_source_ptr = Arc::new(AtomicPtr::new(ptr::null_mut()));
         let mouse_source_clone = Arc::clone(&mouse_source_ptr);
@@ -208,6 +362,9 @@ impl App {
         // Create mouse tracker (initially stopped, will be started via IPC)
         let (mouse_event_tx, mouse_event_rx) = std_mpsc::channel::<MousePosition>();
         let mouse_tracker = MouseTracker::new(mouse_event_tx, mouse_source_clone);
+
+        // Create native menu bar tag indicator
+        let status_item = MenuBarTagItem::new(mtm, &state.borrow());
 
         // Create shared context for IPC/hotkey/display sources
         let context = Box::new(RunLoopContext {
@@ -232,8 +389,12 @@ impl App {
             current_log_level: RefCell::new(initial_log_level),
             is_file_logging,
             last_focused_window_destroyed_at: Cell::new(None),
+            status_item,
         });
-        let context_ptr = Box::into_raw(context) as *mut std::ffi::c_void;
+
+        let context_raw = Box::into_raw(context);
+        unsafe { (*context_raw).status_item.set_context(context_raw) };
+        let context_ptr = context_raw as *mut std::ffi::c_void;
 
         // Create CFRunLoopSource for IPC commands (immediate processing)
         extern "C" fn ipc_source_callback(info: *const std::ffi::c_void) {
@@ -293,27 +454,13 @@ impl App {
 
                 // Handle Quit command after sending response
                 if matches!(cmd, Command::Quit) {
-                    // Terminate all tracked processes
-                    for process in ctx.state.borrow().tracked_processes.iter() {
-                        ctx.window_manipulator.terminate_process(process.pid);
-                    }
-                    // Stop NSApplication and post a dummy event to exit run() immediately
-                    ctx.ns_app.stop(None);
-                    // Post dummy event to wake up NSApp.run()
-                    if let Some(event) = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
-                        NSEventType::ApplicationDefined,
-                        objc2_foundation::NSPoint::new(0.0, 0.0),
-                        objc2_app_kit::NSEventModifierFlags::empty(),
-                        0.0,
-                        0,
-                        None,
-                        0,
-                        0,
-                        0,
-                    ) {
-                        ctx.ns_app.postEvent_atStart(&event, true);
-                    }
+                    ctx.quit();
                 }
+            }
+
+            // Refresh menu bar tag indicator after commands may have changed state
+            if let Some(mtm) = MainThreadMarker::new() {
+                ctx.status_item.update_from_state(mtm, &ctx.state.borrow());
             }
 
             // Apply pending hotkey binding changes
@@ -392,6 +539,11 @@ impl App {
                     &ctx.event_emitter,
                     &ctx.observer_manager,
                 );
+            }
+
+            // Refresh menu bar tag indicator after hotkey commands
+            if let Some(mtm) = MainThreadMarker::new() {
+                ctx.status_item.update_from_state(mtm, &ctx.state.borrow());
             }
         }
 
@@ -496,11 +648,7 @@ impl App {
                                         );
                                         ctx.window_manipulator.focus_window(window_id, pid);
                                         ctx.state.borrow_mut().set_focused(Some(window_id));
-                                        emit_state_change_events(
-                                            &ctx.event_emitter,
-                                            &ctx.state,
-                                            &pre_state,
-                                        );
+                                        ctx.emit_state_change_events(&pre_state);
                                         // Clear hover state after focusing
                                         ctx.state.borrow_mut().auto_raise_state.hover_start = None;
                                     } else {
@@ -514,11 +662,7 @@ impl App {
                                             drop(state);
                                             let pre_state = capture_event_state(&ctx.state);
                                             ctx.state.borrow_mut().focused_display = display_id;
-                                            emit_state_change_events(
-                                                &ctx.event_emitter,
-                                                &ctx.state,
-                                                &pre_state,
-                                            );
+                                            ctx.emit_state_change_events(&pre_state);
                                             ctx.state.borrow_mut().auto_raise_state.hover_start =
                                                 None;
                                         }
@@ -564,11 +708,7 @@ impl App {
                                                 pos.x,
                                                 pos.y
                                             );
-                                            emit_state_change_events(
-                                                &ctx.event_emitter,
-                                                &ctx.state,
-                                                &pre_state,
-                                            );
+                                            ctx.emit_state_change_events(&pre_state);
                                             let mut state = ctx.state.borrow_mut();
                                             state.auto_raise_state.display_hover_start = None;
                                         }
@@ -697,7 +837,7 @@ impl App {
                 }
 
                 // Emit state change events (DisplayFocused, WindowUpdated, WindowDestroyed, TagsChanged, etc.)
-                emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
+                ctx.emit_state_change_events(&pre_state);
             }
         }
 
@@ -812,7 +952,7 @@ impl App {
                             );
                         }
 
-                        emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
+                        ctx.emit_state_change_events(&pre_state);
                     }
                     WorkspaceEvent::AppTerminated { pid } => {
                         let pre_state = capture_event_state(&ctx.state);
@@ -837,7 +977,7 @@ impl App {
                             );
                         }
 
-                        emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
+                        ctx.emit_state_change_events(&pre_state);
                     }
                     WorkspaceEvent::AppActivated { pid } => {
                         // Only sync if we don't have an observer OR we don't have windows
@@ -888,7 +1028,7 @@ impl App {
                                 );
                             }
 
-                            emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
+                            ctx.emit_state_change_events(&pre_state);
                         } else {
                             tracing::debug!("App activated (already tracked), pid {}", pid);
                         }
@@ -1047,7 +1187,7 @@ impl App {
                             }
                             // Emit events for any state changes (e.g., windows added/removed
                             // by handle_event) before skipping further focus handling
-                            emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
+                            ctx.emit_state_change_events(&pre_state);
                             continue;
                         }
 
@@ -1088,7 +1228,7 @@ impl App {
                                     state.focused_display = intended_display;
                                 }
                             }
-                            emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
+                            ctx.emit_state_change_events(&pre_state);
                             continue;
                         }
                     }
@@ -1124,7 +1264,7 @@ impl App {
                         .set(Some(Instant::now()));
                 }
 
-                emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
+                ctx.emit_state_change_events(&pre_state);
 
                 if ctx.event_tx.blocking_send(event).is_err() {
                     tracing::error!("Failed to forward event to tokio");
@@ -1176,7 +1316,7 @@ impl App {
                         }
                     }
                 }
-                emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
+                ctx.emit_state_change_events(&pre_state);
             } else if focused_window_was_destroyed {
                 // WindowDestroyed arrived first (focused already None):
                 // macOS may have set focus to a hidden window
@@ -1189,7 +1329,7 @@ impl App {
                 }
                 focus_visible_window_if_needed(&ctx.state, &ctx.window_manipulator);
                 needs_retile = true;
-                emit_state_change_events(&ctx.event_emitter, &ctx.state, &pre_state);
+                ctx.emit_state_change_events(&pre_state);
             }
 
             if needs_retile {
@@ -2302,5 +2442,77 @@ mod tests {
         let (cx, cy) = rect.center();
         assert_eq!(cx, 500); // 100 + 800/2
         assert_eq!(cy, 500); // 200 + 600/2
+    }
+
+    // ── Menu bar tag indicator tests ──
+
+    // ── label formatting ──
+
+    #[test]
+    fn menu_bar_tag_format_single() {
+        assert_eq!(format_visible_tags(crate::core::Tag::new(1)), "1");
+        assert_eq!(format_visible_tags(crate::core::Tag::new(9)), "9");
+    }
+
+    #[test]
+    fn menu_bar_tag_format_multi() {
+        let tags = crate::core::Tag::new(1).toggle(crate::core::Tag::new(3));
+        assert_eq!(format_visible_tags(tags), "1+3");
+    }
+
+    #[test]
+    fn menu_bar_tag_format_empty() {
+        assert_eq!(
+            format_visible_tags(crate::core::Tag::from_mask(0)),
+            "\u{2013}"
+        );
+    }
+
+    // ── focused-display selection ──
+
+    #[test]
+    fn menu_bar_tag_follows_focused_display() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 0.0, 0.0, 960.0, 1080.0,
+            )]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        // Both displays start on tag 1 (default). Switch display 2 to tag 3.
+        state.displays.get_mut(&2).unwrap().visible_tags = crate::core::Tag::new(3);
+
+        // focused_display is 1 (sync_all sets it to main display = 1)
+        assert_eq!(format_visible_tags(active_menu_bar_tags(&state)), "1");
+
+        // Switch focus to display 2
+        state.focused_display = 2;
+        assert_eq!(format_visible_tags(active_menu_bar_tags(&state)), "3");
+    }
+
+    #[test]
+    fn menu_bar_tag_ignores_non_focused_display_change() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 0.0, 0.0, 960.0, 1080.0,
+            )]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        assert_eq!(state.focused_display, 1);
+
+        // Change display 2's tag while display 1 is focused
+        state.displays.get_mut(&2).unwrap().visible_tags = crate::core::Tag::new(5);
+
+        // Label should still show display 1's tag (not display 2's change)
+        assert_eq!(format_visible_tags(active_menu_bar_tags(&state)), "1");
     }
 }
