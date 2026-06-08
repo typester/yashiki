@@ -52,7 +52,7 @@ use crate::macos::{
 };
 use crate::pid;
 use crate::platform::{MacOSWindowManipulator, MacOSWindowSystem, WindowManipulator};
-use yashiki_ipc::Command;
+use yashiki_ipc::{Command, MenuBarMode};
 
 /// Format visible tag mask into a menu bar label.
 /// Single tag → "1", multi-tag → "1+3", empty → "–".
@@ -223,6 +223,11 @@ impl MenuBarTagItem {
         self._target.ivars().set(ctx);
     }
 
+    /// Remove the status item from the menu bar. Dropping alone does not unregister it.
+    fn remove(&self) {
+        NSStatusBar::systemStatusBar().removeStatusItem(&self.item);
+    }
+
     fn update_from_state(&self, mtm: MainThreadMarker, state: &State) {
         let segments = menu_bar_segments(state);
         let key = menu_bar_cache_key(&segments);
@@ -260,15 +265,49 @@ struct RunLoopContext {
     current_log_level: RefCell<String>,
     is_file_logging: bool,
     last_focused_window_destroyed_at: Cell<Option<Instant>>,
-    status_item: MenuBarTagItem,
+    status_item: RefCell<Option<MenuBarTagItem>>,
 }
 
 impl RunLoopContext {
     fn emit_state_change_events(&self, pre_state: &state_events::PreEventState) {
         emit_state_change_events(&self.event_emitter, &self.state, pre_state);
         if let Some(mtm) = MainThreadMarker::new() {
-            self.status_item
-                .update_from_state(mtm, &self.state.borrow());
+            self.refresh_menu_bar(mtm);
+        }
+    }
+
+    /// Refresh the menu bar indicator content. No-op when disabled (status item absent) — no rendering work.
+    fn refresh_menu_bar(&self, mtm: MainThreadMarker) {
+        if let Some(item) = self.status_item.borrow().as_ref() {
+            item.update_from_state(mtm, &self.state.borrow());
+        }
+    }
+
+    /// Create/remove the status item to match `config.menu_bar`. Deferred until init completes; idempotent.
+    fn sync_menu_bar_presence(&self, mtm: MainThreadMarker) {
+        let (init_done, enabled) = {
+            let s = self.state.borrow();
+            (
+                s.config.init_completed,
+                matches!(s.config.menu_bar, MenuBarMode::Enabled),
+            )
+        };
+        if !init_done {
+            return;
+        }
+        let mut slot = self.status_item.borrow_mut();
+        match (enabled, slot.is_some()) {
+            (true, false) => {
+                let item = MenuBarTagItem::new(mtm, &self.state.borrow());
+                item.set_context(self as *const RunLoopContext);
+                *slot = Some(item);
+            }
+            (false, true) => {
+                if let Some(item) = slot.take() {
+                    item.remove();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -430,8 +469,8 @@ impl App {
         let (mouse_event_tx, mouse_event_rx) = std_mpsc::channel::<MousePosition>();
         let mouse_tracker = MouseTracker::new(mouse_event_tx, mouse_source_clone);
 
-        // Create native menu bar tag indicator
-        let status_item = MenuBarTagItem::new(mtm, &state.borrow());
+        // Created lazily once init completes (see ApplyRules handling); disabled never instantiates it.
+        let status_item = RefCell::new(None);
 
         // Create shared context for IPC/hotkey/display sources
         let context = Box::new(RunLoopContext {
@@ -460,7 +499,6 @@ impl App {
         });
 
         let context_raw = Box::into_raw(context);
-        unsafe { (*context_raw).status_item.set_context(context_raw) };
         let context_ptr = context_raw as *mut std::ffi::c_void;
 
         // Create CFRunLoopSource for IPC commands (immediate processing)
@@ -525,9 +563,10 @@ impl App {
                 }
             }
 
-            // Refresh menu bar tag indicator after commands may have changed state
+            // Sync menu bar indicator presence/content after commands (lazy create on init).
             if let Some(mtm) = MainThreadMarker::new() {
-                ctx.status_item.update_from_state(mtm, &ctx.state.borrow());
+                ctx.sync_menu_bar_presence(mtm);
+                ctx.refresh_menu_bar(mtm);
             }
 
             // Apply pending hotkey binding changes
@@ -608,9 +647,10 @@ impl App {
                 );
             }
 
-            // Refresh menu bar tag indicator after hotkey commands
+            // Sync menu bar indicator presence/content after hotkey commands.
             if let Some(mtm) = MainThreadMarker::new() {
-                ctx.status_item.update_from_state(mtm, &ctx.state.borrow());
+                ctx.sync_menu_bar_presence(mtm);
+                ctx.refresh_menu_bar(mtm);
             }
         }
 

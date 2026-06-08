@@ -283,6 +283,17 @@ yashiki set-auto-raise enabled --delay 100  # Wait 100ms before focusing (useful
 yashiki get-auto-raise                    # Get current mode and delay
 ```
 
+### Menu Bar Tag Indicator
+
+A native macOS menu bar indicator showing each display's visible tags (e.g. `1 | 2`, focused display
+highlighted). Disable it if you use an external status bar instead.
+
+```sh
+yashiki set-menu-bar-status enabled       # Show the indicator (default)
+yashiki set-menu-bar-status disabled      # Hide it (no status item created)
+yashiki get-menu-bar-status               # Get current status
+```
+
 ### Outer Gap
 
 Control the gap between windows and screen edges. Applied globally to all layouts and fullscreen windows.

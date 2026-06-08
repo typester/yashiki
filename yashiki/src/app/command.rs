@@ -606,6 +606,16 @@ pub fn process_command(
             delay_ms: state.config.auto_raise_delay_ms,
         }),
 
+        // Menu bar tag indicator
+        Command::SetMenuBarStatus { mode } => {
+            tracing::info!("Set menu bar status: {:?}", mode);
+            state.config.menu_bar = *mode;
+            CommandResult::ok()
+        }
+        Command::GetMenuBarStatus => CommandResult::with_response(Response::MenuBarStatus {
+            mode: state.config.menu_bar,
+        }),
+
         // Outer gap
         Command::SetOuterGap { values } => match OuterGap::from_args(values) {
             Some(gap) => {
