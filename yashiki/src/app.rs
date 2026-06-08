@@ -14,10 +14,13 @@ use core_foundation_sys::runloop::{
 use objc2::rc::Retained;
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSEvent, NSEventType, NSMenu, NSMenuItem,
-    NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
+    NSApplication, NSApplicationActivationPolicy, NSColor, NSEvent, NSEventType, NSFont,
+    NSFontAttributeName, NSForegroundColorAttributeName, NSMenu, NSMenuItem, NSStatusBar,
+    NSStatusItem, NSVariableStatusItemLength,
 };
-use objc2_foundation::{MainThreadMarker, NSObject, NSObjectProtocol, NSString};
+use objc2_foundation::{
+    MainThreadMarker, NSMutableAttributedString, NSObject, NSObjectProtocol, NSRange, NSString,
+};
 use tokio::sync::mpsc;
 
 mod channels;
@@ -36,6 +39,7 @@ use retile::{do_retile, do_retile_display};
 use state_events::{capture_event_state, emit_state_change_events};
 use sync_helper::{process_new_windows, sync_and_process_new_windows, sync_focused_and_process};
 
+use crate::core::Display;
 use crate::core::State;
 use crate::core::Tag;
 use crate::event::Event;
@@ -66,15 +70,76 @@ fn format_visible_tags(tags: Tag) -> String {
     label
 }
 
-/// Return the visible tags of the focused display, or zero mask if absent.
-fn active_menu_bar_tags(state: &State) -> Tag {
-    state
-        .displays
-        .get(&state.focused_display)
-        .map(|d| d.visible_tags)
-        .unwrap_or(Tag::from_mask(0))
+/// One menu bar segment: a single display's visible-tags label and whether it is focused.
+struct MenuBarSegment {
+    label: String,
+    focused: bool,
 }
 
+/// Build a menu bar segment per display, ordered left-to-right by frame.x (top-to-bottom on ties).
+fn menu_bar_segments(state: &State) -> Vec<MenuBarSegment> {
+    let mut displays: Vec<&Display> = state.displays.values().collect();
+    displays.sort_by_key(|d| (d.frame.x, d.frame.y));
+    displays
+        .iter()
+        .map(|d| MenuBarSegment {
+            label: format_visible_tags(d.visible_tags),
+            focused: d.id == state.focused_display,
+        })
+        .collect()
+}
+
+const MENU_BAR_SEPARATOR: &str = " | ";
+
+/// Cache key for the rendered segments; focused ones are bracketed so focus moves invalidate it.
+fn menu_bar_cache_key(segments: &[MenuBarSegment]) -> String {
+    if segments.is_empty() {
+        return String::from("\u{2013}");
+    }
+    segments
+        .iter()
+        .map(|s| {
+            if s.focused {
+                format!("[{}]", s.label)
+            } else {
+                s.label.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+/// Build attributed title: menu bar font throughout, focused in `labelColor`, others dimmed to `secondaryLabelColor`.
+fn build_menu_bar_title(segments: &[MenuBarSegment]) -> Retained<NSMutableAttributedString> {
+    let title = NSMutableAttributedString::new();
+    let font = NSFont::menuBarFontOfSize(0.0);
+    let focused_color = NSColor::labelColor();
+    let dim_color = NSColor::secondaryLabelColor();
+
+    let append = |text: &str, focused: bool| {
+        let piece = NSMutableAttributedString::from_nsstring(&NSString::from_str(text));
+        let range = NSRange::new(0, text.encode_utf16().count());
+        let color: &NSColor = if focused { &focused_color } else { &dim_color };
+        unsafe {
+            piece.addAttribute_value_range(NSFontAttributeName, &font, range);
+            piece.addAttribute_value_range(NSForegroundColorAttributeName, color, range);
+        }
+        title.appendAttributedString(&piece);
+    };
+
+    if segments.is_empty() {
+        append("\u{2013}", true);
+        return title;
+    }
+
+    for (i, segment) in segments.iter().enumerate() {
+        if i > 0 {
+            append(MENU_BAR_SEPARATOR, false);
+        }
+        append(&segment.label, segment.focused);
+    }
+    title
+}
 
 // Target object for the status item menu's Quit action.
 // Must be retained because NSMenuItem.target is weak.
@@ -101,7 +166,7 @@ define_class!(
 struct MenuBarTagItem {
     item: Retained<NSStatusItem>,
     _target: Retained<StatusMenuTarget>,
-    last_title: RefCell<String>,
+    last_key: RefCell<String>,
 }
 
 impl MenuBarTagItem {
@@ -110,9 +175,10 @@ impl MenuBarTagItem {
         let item = status_bar.statusItemWithLength(NSVariableStatusItemLength);
         item.setVisible(true);
 
-        let title = format_visible_tags(active_menu_bar_tags(state));
+        let segments = menu_bar_segments(state);
+        let last_key = menu_bar_cache_key(&segments);
         if let Some(button) = item.button(mtm) {
-            button.setTitle(&NSString::from_str(&title));
+            button.setAttributedTitle(&build_menu_bar_title(&segments));
         }
 
         // Build minimal menu: name, version, separator, Quit.
@@ -149,7 +215,7 @@ impl MenuBarTagItem {
         Self {
             item,
             _target: target,
-            last_title: RefCell::new(title),
+            last_key: RefCell::new(last_key),
         }
     }
 
@@ -158,14 +224,15 @@ impl MenuBarTagItem {
     }
 
     fn update_from_state(&self, mtm: MainThreadMarker, state: &State) {
-        let title = format_visible_tags(active_menu_bar_tags(state));
-        if title == *self.last_title.borrow() {
+        let segments = menu_bar_segments(state);
+        let key = menu_bar_cache_key(&segments);
+        if key == *self.last_key.borrow() {
             return;
         }
         if let Some(button) = self.item.button(mtm) {
-            button.setTitle(&NSString::from_str(&title));
+            button.setAttributedTitle(&build_menu_bar_title(&segments));
         }
-        *self.last_title.borrow_mut() = title;
+        *self.last_key.borrow_mut() = key;
     }
 }
 
@@ -2468,51 +2535,120 @@ mod tests {
         );
     }
 
-    // ── focused-display selection ──
+    // ── multi-display segments ──
 
-    #[test]
-    fn menu_bar_tag_follows_focused_display() {
-        let ws = MockWindowSystem::new()
-            .with_displays(vec![
-                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
-                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
-            ])
-            .with_windows(vec![create_test_window(
-                100, 1000, "Safari", 0.0, 0.0, 960.0, 1080.0,
-            )]);
-
-        let mut state = State::new();
-        state.sync_all(&ws);
-        // Both displays start on tag 1 (default). Switch display 2 to tag 3.
-        state.displays.get_mut(&2).unwrap().visible_tags = crate::core::Tag::new(3);
-
-        // focused_display is 1 (sync_all sets it to main display = 1)
-        assert_eq!(format_visible_tags(active_menu_bar_tags(&state)), "1");
-
-        // Switch focus to display 2
-        state.focused_display = 2;
-        assert_eq!(format_visible_tags(active_menu_bar_tags(&state)), "3");
+    fn segment_tuple(s: &MenuBarSegment) -> (&str, bool) {
+        (s.label.as_str(), s.focused)
     }
 
     #[test]
-    fn menu_bar_tag_ignores_non_focused_display_change() {
+    fn menu_bar_segments_single_display() {
         let ws = MockWindowSystem::new()
-            .with_displays(vec![
-                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
-                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
-            ])
-            .with_windows(vec![create_test_window(
-                100, 1000, "Safari", 0.0, 0.0, 960.0, 1080.0,
-            )]);
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)]);
 
         let mut state = State::new();
         state.sync_all(&ws);
+
+        let segments = menu_bar_segments(&state);
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segment_tuple(&segments[0]), ("1", true));
+        assert_eq!(menu_bar_cache_key(&segments), "[1]");
+    }
+
+    #[test]
+    fn menu_bar_segments_left_to_right() {
+        let ws = MockWindowSystem::new().with_displays(vec![
+            create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+            create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+        ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        state.displays.get_mut(&2).unwrap().visible_tags = crate::core::Tag::new(2);
+        // focused_display is the main display (1)
         assert_eq!(state.focused_display, 1);
 
-        // Change display 2's tag while display 1 is focused
-        state.displays.get_mut(&2).unwrap().visible_tags = crate::core::Tag::new(5);
+        let segments = menu_bar_segments(&state);
+        assert_eq!(
+            segments.iter().map(segment_tuple).collect::<Vec<_>>(),
+            vec![("1", true), ("2", false)]
+        );
+        assert_eq!(menu_bar_cache_key(&segments), "[1]|2");
+    }
 
-        // Label should still show display 1's tag (not display 2's change)
-        assert_eq!(format_visible_tags(active_menu_bar_tags(&state)), "1");
+    #[test]
+    fn menu_bar_segments_ordered_by_position_not_id() {
+        // Display id 2 is physically on the left (x=0), id 1 on the right.
+        let ws = MockWindowSystem::new().with_displays(vec![
+            create_test_display(2, 0.0, 0.0, 1920.0, 1080.0),
+            create_test_display(1, 1920.0, 0.0, 1920.0, 1080.0),
+        ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        state.displays.get_mut(&2).unwrap().visible_tags = crate::core::Tag::new(3);
+        state.displays.get_mut(&1).unwrap().visible_tags = crate::core::Tag::new(4);
+
+        // Left (id 2, tag 3) must come before right (id 1, tag 4) regardless of id.
+        let segments = menu_bar_segments(&state);
+        assert_eq!(
+            segments
+                .iter()
+                .map(|s| s.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["3", "4"]
+        );
+    }
+
+    #[test]
+    fn menu_bar_segments_vertical_tiebreak() {
+        // Same x, stacked vertically: top (y=0) before bottom (y=1080).
+        let ws = MockWindowSystem::new().with_displays(vec![
+            create_test_display(1, 0.0, 1080.0, 1920.0, 1080.0),
+            create_test_display(2, 0.0, 0.0, 1920.0, 1080.0),
+        ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        state.displays.get_mut(&1).unwrap().visible_tags = crate::core::Tag::new(5);
+        state.displays.get_mut(&2).unwrap().visible_tags = crate::core::Tag::new(6);
+
+        let segments = menu_bar_segments(&state);
+        // id 2 (y=0, top) first, then id 1 (y=1080).
+        assert_eq!(
+            segments
+                .iter()
+                .map(|s| s.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["6", "5"]
+        );
+    }
+
+    #[test]
+    fn menu_bar_segments_focus_moves() {
+        let ws = MockWindowSystem::new().with_displays(vec![
+            create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+            create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+        ]);
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+        state.displays.get_mut(&2).unwrap().visible_tags = crate::core::Tag::new(2);
+
+        state.focused_display = 2;
+        let segments = menu_bar_segments(&state);
+        assert_eq!(
+            segments.iter().map(segment_tuple).collect::<Vec<_>>(),
+            vec![("1", false), ("2", true)]
+        );
+        assert_eq!(menu_bar_cache_key(&segments), "1|[2]");
+    }
+
+    #[test]
+    fn menu_bar_segments_empty() {
+        let state = State::new();
+        let segments = menu_bar_segments(&state);
+        assert!(segments.is_empty());
+        assert_eq!(menu_bar_cache_key(&segments), "\u{2013}");
     }
 }
