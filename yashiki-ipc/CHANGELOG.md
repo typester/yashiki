@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- [**breaking**] add native menu bar workspace indicator ([#176](https://github.com/typester/yashiki/pull/176))
+- add native menu bar workspace indicator ([#176](https://github.com/typester/yashiki/pull/176))
 
 ## [0.14.0](https://github.com/typester/yashiki/compare/yashiki-ipc-v0.13.1...yashiki-ipc-v0.14.0) - 2026-05-29
 
