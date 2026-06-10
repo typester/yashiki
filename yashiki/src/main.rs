@@ -20,8 +20,8 @@ use app::LogLevelSetter;
 use ipc::IpcClient;
 use yashiki_ipc::{
     AutoRaiseMode, ButtonInfo, ButtonState, Command, CursorWarpMode, Direction, EventFilter,
-    GlobPattern, OutputDirection, OutputSpecifier, Response, RuleAction, RuleMatcher, WindowLevel,
-    WindowLevelName, WindowLevelOther, WindowRule, WindowStatus,
+    GlobPattern, MenuBarMode, OutputDirection, OutputSpecifier, Response, RuleAction, RuleMatcher,
+    WindowLevel, WindowLevelName, WindowLevelOther, WindowRule, WindowStatus,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -77,6 +77,8 @@ enum SubCommand {
     GetCursorWarp(GetCursorWarpCmd),
     SetAutoRaise(SetAutoRaiseCmd),
     GetAutoRaise(GetAutoRaiseCmd),
+    SetMenuBarStatus(SetMenuBarStatusCmd),
+    GetMenuBarStatus(GetMenuBarStatusCmd),
     SetOuterGap(SetOuterGapCmd),
     GetOuterGap(GetOuterGapCmd),
     SetLogLevel(SetLogLevelCmd),
@@ -506,6 +508,20 @@ struct SetAutoRaiseCmd {
 #[argh(subcommand, name = "get-auto-raise")]
 struct GetAutoRaiseCmd {}
 
+/// Set menu bar tag indicator status
+#[derive(FromArgs)]
+#[argh(subcommand, name = "set-menu-bar-status")]
+struct SetMenuBarStatusCmd {
+    /// mode: enabled, disabled
+    #[argh(positional)]
+    mode: String,
+}
+
+/// Get current menu bar tag indicator status
+#[derive(FromArgs)]
+#[argh(subcommand, name = "get-menu-bar-status")]
+struct GetMenuBarStatusCmd {}
+
 /// Set the outer gap (gap between windows and screen edges)
 #[derive(FromArgs)]
 #[argh(subcommand, name = "set-outer-gap")]
@@ -821,6 +837,13 @@ fn run_cli(subcmd: SubCommand) -> Result<()> {
                 println!("{}", mode_str);
             }
         }
+        Response::MenuBarStatus { mode } => {
+            let mode_str = match mode {
+                MenuBarMode::Enabled => "enabled",
+                MenuBarMode::Disabled => "disabled",
+            };
+            println!("{}", mode_str);
+        }
         Response::OuterGap { outer_gap } => {
             println!("{}", outer_gap);
         }
@@ -1041,6 +1064,11 @@ fn to_command(subcmd: SubCommand) -> Result<Command> {
             Ok(Command::SetAutoRaise { mode, delay_ms })
         }
         SubCommand::GetAutoRaise(_) => Ok(Command::GetAutoRaise),
+        SubCommand::SetMenuBarStatus(cmd) => {
+            let mode = parse_menu_bar_mode(&cmd.mode)?;
+            Ok(Command::SetMenuBarStatus { mode })
+        }
+        SubCommand::GetMenuBarStatus(_) => Ok(Command::GetMenuBarStatus),
         SubCommand::SetOuterGap(cmd) => {
             if cmd.values.is_empty() {
                 bail!("set-outer-gap requires at least one value");
@@ -1347,6 +1375,12 @@ fn parse_command(args: &[String]) -> Result<Command> {
             Ok(Command::SetAutoRaise { mode, delay_ms })
         }
         "get-auto-raise" => Ok(Command::GetAutoRaise),
+        "set-menu-bar-status" => {
+            let cmd: SetMenuBarStatusCmd = from_argh(cmd_name, &cmd_args)?;
+            let mode = parse_menu_bar_mode(&cmd.mode)?;
+            Ok(Command::SetMenuBarStatus { mode })
+        }
+        "get-menu-bar-status" => Ok(Command::GetMenuBarStatus),
         "set-outer-gap" => {
             let cmd: SetOuterGapCmd = from_argh(cmd_name, &cmd_args)?;
             if cmd.values.is_empty() {
@@ -1411,6 +1445,14 @@ fn parse_auto_raise_mode(s: &str) -> Result<AutoRaiseMode> {
         "disabled" => Ok(AutoRaiseMode::Disabled),
         "enabled" => Ok(AutoRaiseMode::Enabled),
         _ => bail!("Unknown auto-raise mode: {} (use disabled, enabled)", s),
+    }
+}
+
+fn parse_menu_bar_mode(s: &str) -> Result<MenuBarMode> {
+    match s.to_lowercase().as_str() {
+        "enabled" => Ok(MenuBarMode::Enabled),
+        "disabled" => Ok(MenuBarMode::Disabled),
+        _ => bail!("Unknown menu bar status: {} (use enabled, disabled)", s),
     }
 }
 

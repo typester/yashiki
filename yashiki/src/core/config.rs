@@ -1,4 +1,4 @@
-use yashiki_ipc::{AutoRaiseMode, CursorWarpMode, OuterGap};
+use yashiki_ipc::{AutoRaiseMode, CursorWarpMode, MenuBarMode, OuterGap};
 
 /// Application configuration settings.
 /// Grouped separately from window/display state for clarity.
@@ -8,6 +8,7 @@ pub struct Config {
     pub cursor_warp: CursorWarpMode,
     pub auto_raise_mode: AutoRaiseMode,
     pub auto_raise_delay_ms: u64,
+    pub menu_bar: MenuBarMode,
     pub outer_gap: OuterGap,
     pub init_completed: bool,
 }

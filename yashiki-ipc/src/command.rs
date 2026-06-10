@@ -25,6 +25,15 @@ pub enum AutoRaiseMode {
     Enabled,
 }
 
+/// Menu bar status - controls the native menu bar tag indicator
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MenuBarMode {
+    #[default]
+    Enabled,
+    Disabled,
+}
+
 /// Window status - indicates whether a window is managed or ignored
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -732,6 +741,12 @@ pub enum Command {
     },
     GetAutoRaise,
 
+    // Menu bar tag indicator
+    SetMenuBarStatus {
+        mode: MenuBarMode,
+    },
+    GetMenuBarStatus,
+
     // Outer gap
     SetOuterGap {
         values: Vec<String>,
@@ -789,6 +804,7 @@ pub enum Response {
     CursorWarp { mode: CursorWarpMode },
     Mode { name: String },
     AutoRaise { mode: AutoRaiseMode, delay_ms: u64 },
+    MenuBarStatus { mode: MenuBarMode },
     OuterGap { outer_gap: OuterGap },
     LogLevel { level: String, file_mode: bool },
 }

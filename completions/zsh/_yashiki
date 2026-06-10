@@ -40,6 +40,14 @@ _yashiki_auto_raise_modes() {
     _describe -t modes 'mode' modes
 }
 
+_yashiki_menu_bar_modes() {
+    local modes=(
+        'enabled:Show the native menu bar tag indicator'
+        'disabled:Hide the native menu bar tag indicator'
+    )
+    _describe -t modes 'mode' modes
+}
+
 _yashiki_layouts() {
     local layouts=(
         'tatami:Master-stack layout'
@@ -138,6 +146,8 @@ _yashiki_subcommands() {
         'get-cursor-warp:Get current cursor warp mode'
         'set-auto-raise:Set auto-raise mode (focus follows mouse)'
         'get-auto-raise:Get current auto-raise mode'
+        'set-menu-bar-status:Set menu bar tag indicator status'
+        'get-menu-bar-status:Get current menu bar tag indicator status'
         'set-outer-gap:Set outer gap'
         'get-outer-gap:Get current outer gap'
         'subscribe:Subscribe to state change events'
@@ -198,7 +208,7 @@ _yashiki() {
     case $state in
         args)
             case $line[1] in
-                start|version|tag-view-last|window-toggle-fullscreen|window-toggle-float|window-close|list-outputs|get-state|focused-window|exec-path|list-rules|get-cursor-warp|get-auto-raise|get-outer-gap|get-mode|quit)
+                start|version|tag-view-last|window-toggle-fullscreen|window-toggle-float|window-close|list-outputs|get-state|focused-window|exec-path|list-rules|get-cursor-warp|get-auto-raise|get-menu-bar-status|get-outer-gap|get-mode|quit)
                     # No arguments
                     ;;
                 declare-mode|enter-mode)
@@ -290,6 +300,9 @@ _yashiki() {
                     _arguments \
                         '--delay[Delay in milliseconds before raising]:delay (ms):' \
                         '1:mode:_yashiki_auto_raise_modes'
+                    ;;
+                set-menu-bar-status)
+                    _arguments '1:mode:_yashiki_menu_bar_modes'
                     ;;
                 set-outer-gap)
                     _arguments '*:gap value:'
