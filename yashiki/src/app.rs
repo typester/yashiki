@@ -1087,6 +1087,26 @@ impl App {
                         ctx.emit_state_change_events(&pre_state);
                     }
                     WorkspaceEvent::AppActivated { pid } => {
+                        // Re-register observers left incomplete by a registration failure at launch
+                        // (e.g. AXFocusedWindowChanged returning -25204 while a heavy app is still
+                        // starting). The app is fully ready by activation time, so this succeeds and
+                        // restores focus-change notifications that FocusIntent depends on.
+                        if ctx.observer_manager.borrow().has_incomplete_observer(pid) {
+                            tracing::info!(
+                                "Re-registering incomplete observer for pid {} on activation",
+                                pid
+                            );
+                            if let Err(e) =
+                                ctx.observer_manager.borrow_mut().reregister_observer(pid)
+                            {
+                                tracing::warn!(
+                                    "Failed to re-register observer for pid {}: {}",
+                                    pid,
+                                    e
+                                );
+                            }
+                        }
+
                         // Only sync if we don't have an observer OR we don't have windows
                         // This avoids redundant work when the app is already being tracked
                         let needs_sync = !ctx.observer_manager.borrow().has_observer(pid)
