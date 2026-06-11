@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1](https://github.com/typester/yashiki/compare/yashiki-v0.15.0...yashiki-v0.15.1) - 2026-06-11
+
+### Fixed
+
+- re-register incomplete observers on app activation ([#180](https://github.com/typester/yashiki/pull/180))
+
 ## [0.15.0](https://github.com/typester/yashiki/compare/yashiki-v0.14.0...yashiki-v0.15.0) - 2026-06-10
 
 ### Added
