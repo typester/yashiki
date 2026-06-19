@@ -436,6 +436,16 @@ AeroSpace-style stacked windows with focused window at front.
 | `set-orientation <h\|v>` | Horizontal or vertical stacking |
 | `toggle-orientation` | Toggle orientation |
 
+## Community Layout Engines
+
+Third-party layout engines built on the external layout protocol:
+
+| Engine | Description |
+|--------|-------------|
+| [kakejiku](https://github.com/pkarpovich/yashiki-layout-kakejiku) | Vertical main + stacked rows, made for portrait monitors |
+
+To add yours, open a pull request.
+
 ## Custom Layout Engines
 
 Yashiki supports external layout engines via stdin/stdout JSON protocol.
