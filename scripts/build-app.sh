@@ -118,19 +118,13 @@ mkdir -p "${APP_DIR}/Contents/MacOS"
 mkdir -p "${APP_DIR}/Contents/Resources/layouts"
 
 # Copy binaries
+# No launcher shim — yashiki is the bundle executable itself (macOS 26 menu bar fix, https://github.com/typester/yashiki/issues/182).
 cp "${BUILD_DIR}/yashiki" "${APP_DIR}/Contents/MacOS/"
 cp "${BUILD_DIR}/yashiki-layout-tatami" "${APP_DIR}/Contents/Resources/layouts/"
 cp "${BUILD_DIR}/yashiki-layout-byobu" "${APP_DIR}/Contents/Resources/layouts/"
 
 # Copy assets
 cp "${PROJECT_ROOT}/resources/icon/Assets.car" "${APP_DIR}/Contents/Resources/"
-
-# Create launcher wrapper
-cat > "${APP_DIR}/Contents/MacOS/yashiki-launcher" << 'EOF'
-#!/bin/bash
-exec "$(dirname "$0")/yashiki" start "$@"
-EOF
-chmod +x "${APP_DIR}/Contents/MacOS/yashiki-launcher"
 
 # Generate Info.plist
 sed "s/VERSION_PLACEHOLDER/${VERSION}/g" "${PROJECT_ROOT}/Info.plist.template" > "${APP_DIR}/Contents/Info.plist"

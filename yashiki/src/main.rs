@@ -621,28 +621,39 @@ fn init_logging() -> (Option<LogLevelSetter>, String, bool) {
     }
 }
 
+/// True when the executable lives inside a `.app` bundle (launched via LaunchServices).
+fn launched_from_app_bundle() -> bool {
+    std::env::current_exe()
+        .map(|p| p.to_string_lossy().contains(".app/Contents/MacOS/"))
+        .unwrap_or(false)
+}
+
+fn start_daemon() -> Result<()> {
+    let (log_level_setter, initial_level, is_file_logging) = init_logging();
+    tracing::info!("yashiki starting");
+    app::App::run(log_level_setter, initial_level, is_file_logging)
+}
+
 fn main() -> Result<()> {
     let cli: Cli = argh::from_env();
 
     match cli.command {
         None => {
-            // No subcommand - show help (simulate --help)
-            let args: Vec<&str> = vec!["yashiki", "--help"];
-            match Cli::from_args(&args[..1], &args[1..]) {
-                Ok(_) => {}
-                Err(e) => {
-                    println!("{}", e.output);
+            // Launched as a .app bundle: run the daemon (macOS 26 menu bar fix, https://github.com/typester/yashiki/issues/182).
+            if launched_from_app_bundle() {
+                start_daemon()
+            } else {
+                let args: Vec<&str> = vec!["yashiki", "--help"];
+                match Cli::from_args(&args[..1], &args[1..]) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        println!("{}", e.output);
+                    }
                 }
+                Ok(())
             }
-            Ok(())
         }
-        Some(SubCommand::Start(_)) => {
-            // Start daemon
-            let (log_level_setter, initial_level, is_file_logging) = init_logging();
-
-            tracing::info!("yashiki starting");
-            app::App::run(log_level_setter, initial_level, is_file_logging)
-        }
+        Some(SubCommand::Start(_)) => start_daemon(),
         Some(SubCommand::Version(_)) => {
             println!("v{}", VERSION);
             Ok(())
