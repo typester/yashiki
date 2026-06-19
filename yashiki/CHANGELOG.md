@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.2](https://github.com/typester/yashiki/compare/yashiki-v0.15.1...yashiki-v0.15.2) - 2026-06-19
+
+### Fixed
+
+- show menu bar indicator under macOS 26 Tahoe ([#183](https://github.com/typester/yashiki/pull/183))
+
 ## [0.15.1](https://github.com/typester/yashiki/compare/yashiki-v0.15.0...yashiki-v0.15.1) - 2026-06-11
 
 ### Fixed
