@@ -252,16 +252,6 @@ yashiki set-outer-gap 10
 yashiki layout-cmd --layout tatami set-inner-gap 10
 ```
 
-## Community Layout Engines
-
-Third-party layout engines built on this protocol:
-
-| Name | Description |
-|------|-------------|
-| [kakejiku](https://github.com/pkarpovich/yashiki-layout-kakejiku) | Vertical main + stacked rows layout for portrait monitors |
-
-To add yours to this list, open a pull request.
-
 ## Debugging Tips
 
 1. Test your layout engine standalone:
