@@ -901,11 +901,16 @@ impl App {
                 // Capture state before display change for event emission
                 let pre_state = capture_event_state(&ctx.state);
 
-                // Handle display change
-                let result = ctx
+                // Handle display change. `None` means the configuration read from the
+                // OS is the one already held: emitting events or retiling here would
+                // move every window and wake every subscriber for nothing.
+                let Some(result) = ctx
                     .state
                     .borrow_mut()
-                    .handle_display_change(&ctx.window_system);
+                    .handle_display_change(&ctx.window_system)
+                else {
+                    return;
+                };
 
                 // Emit display add/remove/update events (not covered by emit_state_change_events)
                 let focused_display = ctx.state.borrow().focused_display;
@@ -939,21 +944,15 @@ impl App {
                     &ctx.event_emitter,
                 );
 
-                // Retile affected displays
-                if !result.displays_to_retile.is_empty() {
-                    for display_id in result.displays_to_retile {
-                        do_retile_display(
-                            &ctx.state,
-                            &ctx.layout_engine_manager,
-                            &ctx.window_manipulator,
-                            display_id,
-                        );
-                    }
-                } else {
-                    do_retile(
+                // Retile the affected displays, and only those. The list is exhaustive:
+                // every branch that returns `Some` fills in the displays whose layout
+                // the change can move, so an empty list means none of them do.
+                for display_id in result.displays_to_retile {
+                    do_retile_display(
                         &ctx.state,
                         &ctx.layout_engine_manager,
                         &ctx.window_manipulator,
+                        display_id,
                     );
                 }
 

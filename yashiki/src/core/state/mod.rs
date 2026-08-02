@@ -605,7 +605,10 @@ impl State {
 
     // Display operations - delegated to state/display.rs
 
-    pub fn handle_display_change<W: WindowSystem>(&mut self, ws: &W) -> DisplayChangeResult {
+    pub fn handle_display_change<W: WindowSystem>(
+        &mut self,
+        ws: &W,
+    ) -> Option<DisplayChangeResult> {
         handle_display_change(self, ws)
     }
 
@@ -1474,12 +1477,66 @@ mod tests {
             )])
             .with_focused(Some(100));
 
-        let result = state.handle_display_change(&ws2);
+        let result = state
+            .handle_display_change(&ws2)
+            .expect("display configuration changed");
 
         assert_eq!(result.added.len(), 1);
         assert_eq!(result.added[0].id, 2);
         assert!(result.removed.is_empty());
         assert_eq!(state.displays.len(), 2);
+    }
+
+    #[test]
+    fn test_handle_display_change_unchanged_configuration_is_a_no_op() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Same configuration read again. `None` rather than an empty result: the
+        // caller retiles exactly the displays it is handed, so an empty list would
+        // still be a result to act on, and the distinction is the whole point.
+        assert!(
+            state.handle_display_change(&ws).is_none(),
+            "an unchanged configuration must report no change at all"
+        );
+        assert_eq!(state.displays.len(), 2);
+    }
+
+    #[test]
+    fn test_handle_display_change_moved_display_still_retiles() {
+        let ws1 = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws1);
+
+        // Same display id, different frame: the menu bar appearing looks like this.
+        let ws2 = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 30.0, 1920.0, 1050.0)])
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+
+        let result = state
+            .handle_display_change(&ws2)
+            .expect("display configuration changed");
+
+        assert!(!result.displays_to_retile.is_empty());
     }
 
     #[test]
@@ -1505,7 +1562,9 @@ mod tests {
             )])
             .with_focused(Some(100));
 
-        let result = state.handle_display_change(&ws2);
+        let result = state
+            .handle_display_change(&ws2)
+            .expect("display configuration changed");
 
         assert!(result.added.is_empty());
         assert_eq!(result.removed.len(), 1);
@@ -1539,7 +1598,9 @@ mod tests {
             ])
             .with_focused(Some(100));
 
-        let result = state.handle_display_change(&ws2);
+        let result = state
+            .handle_display_change(&ws2)
+            .expect("display configuration changed");
 
         assert_eq!(state.windows.get(&101).unwrap().display_id, 1);
 
@@ -2841,7 +2902,9 @@ mod tests {
             ])
             .with_focused(Some(100));
 
-        let _result = state.handle_display_change(&ws2);
+        state
+            .handle_display_change(&ws2)
+            .expect("display configuration changed");
 
         // Window 101 should now be on display 1 (fallback) with orphaned_from = Some(2)
         assert_eq!(state.windows.get(&101).unwrap().display_id, 1);
@@ -2878,7 +2941,9 @@ mod tests {
             ])
             .with_focused(Some(100));
 
-        let _result = state.handle_display_change(&ws2);
+        state
+            .handle_display_change(&ws2)
+            .expect("display configuration changed");
         assert_eq!(state.windows.get(&101).unwrap().display_id, 1);
         assert_eq!(state.windows.get(&101).unwrap().orphaned_from, Some(2));
 
@@ -2894,7 +2959,9 @@ mod tests {
             ])
             .with_focused(Some(100));
 
-        let result = state.handle_display_change(&ws3);
+        let result = state
+            .handle_display_change(&ws3)
+            .expect("display configuration changed");
 
         // Window 101 should be restored to display 2
         assert_eq!(state.windows.get(&101).unwrap().display_id, 2);
@@ -2928,7 +2995,9 @@ mod tests {
             .with_windows(vec![])
             .with_focused(None);
 
-        let _result = state.handle_display_change(&ws2);
+        state
+            .handle_display_change(&ws2)
+            .expect("display configuration changed");
 
         // visible_tags should be saved
         assert_eq!(state.saved_display_tags.get(&2), Some(&Tag::new(3)));
@@ -2942,7 +3011,9 @@ mod tests {
             .with_windows(vec![])
             .with_focused(None);
 
-        let _result = state.handle_display_change(&ws3);
+        state
+            .handle_display_change(&ws3)
+            .expect("display configuration changed");
 
         // visible_tags should be restored to tag 3
         assert_eq!(state.displays.get(&2).unwrap().visible_tags, Tag::new(3));
@@ -3005,7 +3076,9 @@ mod tests {
             ])
             .with_focused(Some(100));
 
-        let _result = state.handle_display_change(&ws2);
+        state
+            .handle_display_change(&ws2)
+            .expect("display configuration changed");
 
         // Verify window 101 is orphaned
         assert_eq!(state.windows.get(&101).unwrap().display_id, 1);
@@ -3026,7 +3099,9 @@ mod tests {
             ])
             .with_focused(Some(100));
 
-        let result = state.handle_display_change(&ws3);
+        let result = state
+            .handle_display_change(&ws3)
+            .expect("display configuration changed");
 
         // Window 101 should be restored to display 2
         assert_eq!(state.windows.get(&101).unwrap().display_id, 2);
@@ -3071,7 +3146,9 @@ mod tests {
             )])
             .with_focused(Some(100));
 
-        let _result = state.handle_display_change(&ws2);
+        state
+            .handle_display_change(&ws2)
+            .expect("display configuration changed");
 
         // Window should be on fallback display (1) with orphaned_from = 3
         assert_eq!(state.windows.get(&100).unwrap().display_id, 1);
@@ -3086,7 +3163,9 @@ mod tests {
             )])
             .with_focused(Some(100));
 
-        let _result = state.handle_display_change(&ws3);
+        state
+            .handle_display_change(&ws3)
+            .expect("display configuration changed");
 
         // Window is still on display 1, orphaned_from should still be 3 (not 1)
         assert_eq!(state.windows.get(&100).unwrap().display_id, 1);
@@ -3103,7 +3182,9 @@ mod tests {
             )])
             .with_focused(Some(100));
 
-        let _result = state.handle_display_change(&ws4);
+        state
+            .handle_display_change(&ws4)
+            .expect("display configuration changed");
 
         // Window should be restored to display 3
         assert_eq!(state.windows.get(&100).unwrap().display_id, 3);
