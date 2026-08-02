@@ -30,6 +30,10 @@ extern "C" {
     ) -> i32;
 }
 
+/// `kCGDisplayBeginConfigurationFlag`. Set on the callback that fires *before*
+/// the change, when the display metrics still describe the old configuration.
+const K_CG_DISPLAY_BEGIN_CONFIGURATION_FLAG: u32 = 1 << 0;
+
 /// What woke the display source. Both variants mean the same thing to the
 /// handler -- re-read the configuration -- and travel the same channel so that a
 /// change reported through both collapses into one reconcile.
@@ -54,6 +58,11 @@ extern "C" fn display_reconfig_callback(
     flags: u32,
     _user_info: *mut c_void,
 ) {
+    // Handling the pre-change notification would retile against stale geometry.
+    if flags & K_CG_DISPLAY_BEGIN_CONFIGURATION_FLAG != 0 {
+        return;
+    }
+
     raise(DisplayChangeSignal::Reconfiguration { display_id, flags });
 }
 
