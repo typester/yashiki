@@ -197,7 +197,7 @@ pub fn get_all_displays() -> Vec<DisplayInfo> {
     }
 
     let main_display_id = unsafe { CGMainDisplayID() };
-    let menu_bar_heights = detect_menu_bar_heights();
+    let top_insets = get_top_insets();
 
     // Get display names from NSScreen (names don't change with resolution)
     let display_names = get_display_names();
@@ -206,11 +206,11 @@ pub fn get_all_displays() -> Vec<DisplayInfo> {
         .iter()
         .map(|&display_id| {
             let bounds = get_display_bounds(display_id);
-            let menu_bar_height = menu_bar_heights.get(&display_id).copied().unwrap_or(0.0);
+            let top_inset = top_insets.get(&display_id).copied().unwrap_or(0.0);
 
-            // Visible frame = full bounds minus menu bar at top
-            let visible_y = bounds.y + menu_bar_height;
-            let visible_height = bounds.height - menu_bar_height;
+            // Usable area = physical bounds minus what the OS reserves at the top
+            let visible_y = bounds.y + top_inset;
+            let visible_height = bounds.height - top_inset;
 
             let name = display_names
                 .get(&display_id)
@@ -314,67 +314,40 @@ pub fn has_popup_menu_on_screen() -> bool {
     false
 }
 
-/// Detect menu bar heights for each display by looking at Window Server windows.
-/// Menu bars are at layer 24, owned by "Window Server", thin (height < 50) and screen-wide.
-/// Returns a map of display_id -> menu_bar_height.
-fn detect_menu_bar_heights() -> HashMap<DisplayId, f64> {
-    let active_display_ids = get_active_display_ids();
-    if active_display_ids.is_empty() {
-        return HashMap::new();
-    }
+/// What the OS keeps for itself at the top of each display, as the difference
+/// between `NSScreen.frame` and `visibleFrame` along the top edge. Only the top
+/// edge is considered, so the Dock does not affect the result. A display that
+/// reserves nothing gets a zero, which is a measurement rather than an absence.
+///
+/// Not the menu bar height, despite being what the menu bar usually accounts
+/// for. An external panel measured 0 with the menu bar auto-hidden and 30 with
+/// it visible, while a notched built-in measured 37.5 either way: there the
+/// reserved band is the notch safe area, which the menu bar sits inside rather
+/// than adds to.
+///
+/// Scanning the window list for the menu bar was tried and does not work: it
+/// reports whether the menu bar is drawn right now, not whether it reserves
+/// space, and the window is intermittently absent even when it does.
+fn get_top_insets() -> HashMap<DisplayId, f64> {
+    let mtm = unsafe { MainThreadMarker::new_unchecked() };
+    let screens = NSScreen::screens(mtm);
 
-    // Get display bounds for all active displays
-    let display_bounds: Vec<(DisplayId, Bounds)> = active_display_ids
+    screens
         .iter()
-        .map(|&id| (id, get_display_bounds(id)))
-        .collect();
+        .filter_map(|screen| {
+            let display_id = get_display_id_for_screen(&screen)?;
 
-    let options = kCGWindowListOptionOnScreenOnly;
-    let window_list: CFArray = unsafe {
-        CFArray::wrap_under_create_rule(CGWindowListCopyWindowInfo(options, kCGNullWindowID))
-    };
+            let frame = screen.frame();
+            let visible = screen.visibleFrame();
 
-    let mut menu_bar_heights: HashMap<DisplayId, f64> = HashMap::new();
+            // AppKit is bottom-left origin, so the top edge is origin.y + height.
+            // Rounded up: a notched panel reserves 37.5, and truncating it later
+            // would leave windows half a point inside what the OS kept for itself.
+            let inset = ((frame.origin.y + frame.size.height)
+                - (visible.origin.y + visible.size.height))
+                .ceil();
 
-    for i in 0..window_list.len() {
-        let dict_ptr = unsafe { *window_list.get_unchecked(i) };
-        let dict: CFDictionary = unsafe { CFDictionary::wrap_under_get_rule(dict_ptr as *const _) };
-
-        // Check if this is a Window Server window at layer 24 (menu bar layer)
-        let Some(layer) = get_number(&dict, "kCGWindowLayer").and_then(|n| n.to_i32()) else {
-            continue;
-        };
-        if layer != 24 {
-            continue;
-        }
-
-        let Some(owner_name) = get_string(&dict, "kCGWindowOwnerName") else {
-            continue;
-        };
-        if owner_name != "Window Server" {
-            continue;
-        }
-
-        let Some(bounds) = parse_bounds(&dict, "kCGWindowBounds") else {
-            continue;
-        };
-
-        // Menu bar should be thin (height < 50) and wide (width > 500)
-        if bounds.height >= 50.0 || bounds.width <= 500.0 {
-            continue;
-        }
-
-        // Match to display by comparing position and width
-        for &(display_id, ref display) in &display_bounds {
-            if (bounds.x - display.x).abs() < 1.0
-                && (bounds.y - display.y).abs() < 1.0
-                && (bounds.width - display.width).abs() < 1.0
-            {
-                menu_bar_heights.insert(display_id, bounds.height);
-                break;
-            }
-        }
-    }
-
-    menu_bar_heights
+            Some((display_id, inset))
+        })
+        .collect()
 }
