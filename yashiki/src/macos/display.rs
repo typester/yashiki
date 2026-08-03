@@ -30,14 +30,20 @@ extern "C" {
     ) -> i32;
 }
 
+/// What woke the display source. Both variants mean the same thing to the
+/// handler -- re-read the configuration -- and travel the same channel so that a
+/// change reported through both collapses into one reconcile.
 #[derive(Debug, Clone)]
-pub struct DisplayReconfigEvent {
-    pub display_id: DisplayId,
-    pub flags: u32,
+pub enum DisplayChangeSignal {
+    /// CGDisplayRegisterReconfigurationCallback, one per affected display.
+    Reconfiguration { display_id: DisplayId, flags: u32 },
+    /// NSApplicationDidChangeScreenParameters. Carries nothing: it says the
+    /// screen list changed, and the geometry is read back from the OS anyway.
+    ScreenParameters,
 }
 
 struct DisplayCallbackState {
-    tx: Sender<DisplayReconfigEvent>,
+    tx: Sender<DisplayChangeSignal>,
     source_ptr: Arc<AtomicPtr<c_void>>,
 }
 
@@ -48,22 +54,33 @@ extern "C" fn display_reconfig_callback(
     flags: u32,
     _user_info: *mut c_void,
 ) {
-    if let Some(state) = DISPLAY_CALLBACK_STATE.get() {
-        let _ = state.tx.send(DisplayReconfigEvent { display_id, flags });
+    raise(DisplayChangeSignal::Reconfiguration { display_id, flags });
+}
 
-        // Signal the CFRunLoopSource to wake up the main thread
-        let source = state.source_ptr.load(Ordering::Acquire);
-        if !source.is_null() {
-            unsafe {
-                CFRunLoopSourceSignal(source as CFRunLoopSourceRef);
-                CFRunLoopWakeUp(CFRunLoopGetMain());
-            }
+/// Report a screen-parameter change on the same path as the reconfiguration
+/// callback. Called from the AppKit notification, which has no display to name.
+pub fn signal_screen_parameters_changed() {
+    raise(DisplayChangeSignal::ScreenParameters);
+}
+
+fn raise(signal: DisplayChangeSignal) {
+    let Some(state) = DISPLAY_CALLBACK_STATE.get() else {
+        return;
+    };
+    let _ = state.tx.send(signal);
+
+    // Signal the CFRunLoopSource to wake up the main thread
+    let source = state.source_ptr.load(Ordering::Acquire);
+    if !source.is_null() {
+        unsafe {
+            CFRunLoopSourceSignal(source as CFRunLoopSourceRef);
+            CFRunLoopWakeUp(CFRunLoopGetMain());
         }
     }
 }
 
 pub fn register_display_callback(
-    tx: Sender<DisplayReconfigEvent>,
+    tx: Sender<DisplayChangeSignal>,
     source_ptr: Arc<AtomicPtr<c_void>>,
 ) -> anyhow::Result<()> {
     DISPLAY_CALLBACK_STATE
