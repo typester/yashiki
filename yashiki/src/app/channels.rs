@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 
 use crate::event::Event;
 use crate::ipc::{EventBroadcaster, EventServer, IpcServer};
-use crate::macos::DisplayReconfigEvent;
+use crate::macos::DisplayChangeSignal;
 use yashiki_ipc::{Command, Response, StateEvent};
 
 pub type IpcCommandWithResponse = (Command, mpsc::Sender<Response>);
@@ -50,8 +50,8 @@ pub struct MainChannels {
     pub event_tx: mpsc::Sender<Event>,
     pub state_event_tx: std_mpsc::Sender<StateEvent>,
     pub snapshot_request_rx: std_mpsc::Receiver<SnapshotRequest>,
-    pub display_reconfig_tx: std_mpsc::Sender<DisplayReconfigEvent>,
-    pub display_reconfig_rx: std_mpsc::Receiver<DisplayReconfigEvent>,
+    pub display_reconfig_tx: std_mpsc::Sender<DisplayChangeSignal>,
+    pub display_reconfig_rx: std_mpsc::Receiver<DisplayChangeSignal>,
     pub ipc_source: Arc<AtomicPtr<std::ffi::c_void>>,
 }
 
@@ -81,7 +81,7 @@ pub fn create_channels() -> (TokioChannels, MainChannels) {
         std_mpsc::channel::<SnapshotRequest>();
 
     // Channel: display reconfiguration events (callback -> main thread)
-    let (display_reconfig_tx, display_reconfig_rx) = std_mpsc::channel::<DisplayReconfigEvent>();
+    let (display_reconfig_tx, display_reconfig_rx) = std_mpsc::channel::<DisplayChangeSignal>();
 
     // Note: register_display_callback is called in run_main_loop after source creation
 

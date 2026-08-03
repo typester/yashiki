@@ -47,7 +47,7 @@ use crate::event_emitter::{create_snapshot, EventEmitter};
 use crate::layout::LayoutEngineManager;
 use crate::macos;
 use crate::macos::{
-    DisplayReconfigEvent, HotkeyManager, MousePosition, MouseTracker, ObserverManager,
+    DisplayChangeSignal, HotkeyManager, MousePosition, MouseTracker, ObserverManager,
     WorkspaceEvent, WorkspaceWatcher,
 };
 use crate::pid;
@@ -250,7 +250,7 @@ struct RunLoopContext {
     observer_event_rx: std_mpsc::Receiver<Event>,
     workspace_event_rx: std_mpsc::Receiver<WorkspaceEvent>,
     snapshot_request_rx: std_mpsc::Receiver<SnapshotRequest>,
-    display_reconfig_rx: std_mpsc::Receiver<DisplayReconfigEvent>,
+    display_reconfig_rx: std_mpsc::Receiver<DisplayChangeSignal>,
     event_tx: mpsc::Sender<Event>,
     event_emitter: EventEmitter,
     observer_manager: RefCell<ObserverManager>,
@@ -876,22 +876,41 @@ impl App {
         extern "C" fn display_source_callback(info: *const std::ffi::c_void) {
             let ctx = unsafe { &*(info as *const RunLoopContext) };
 
-            // Process all pending display reconfig events
-            while let Ok(event) = ctx.display_reconfig_rx.try_recv() {
-                tracing::info!(
-                    "Display reconfiguration: display_id={}, flags={:#x}",
-                    event.display_id,
-                    event.flags
-                );
+            // Both the reconfiguration callback and the screen-parameter notification
+            // arrive here, one signal per affected display in the first case, and the
+            // reconciliation covers the whole configuration either way. Drain the queue
+            // and reconcile once rather than repeating it per signal.
+            let mut pending = 0usize;
+            while let Ok(signal) = ctx.display_reconfig_rx.try_recv() {
+                if let DisplayChangeSignal::Reconfiguration { display_id, flags } = signal {
+                    tracing::info!(
+                        "Display reconfiguration: display_id={}, flags={:#x}",
+                        display_id,
+                        flags
+                    );
+                }
+                pending += 1;
+            }
 
+            if pending > 0 {
+                if pending > 1 {
+                    tracing::debug!("Coalesced {} display change signals", pending);
+                }
+
+                tracing::debug!("Reconciling displays");
                 // Capture state before display change for event emission
                 let pre_state = capture_event_state(&ctx.state);
 
-                // Handle display change
-                let result = ctx
+                // Handle display change. `None` means the configuration read from the
+                // OS is the one already held: emitting events or retiling here would
+                // move every window and wake every subscriber for nothing.
+                let Some(result) = ctx
                     .state
                     .borrow_mut()
-                    .handle_display_change(&ctx.window_system);
+                    .handle_display_change(&ctx.window_system)
+                else {
+                    return;
+                };
 
                 // Emit display add/remove/update events (not covered by emit_state_change_events)
                 let focused_display = ctx.state.borrow().focused_display;
@@ -925,21 +944,15 @@ impl App {
                     &ctx.event_emitter,
                 );
 
-                // Retile affected displays
-                if !result.displays_to_retile.is_empty() {
-                    for display_id in result.displays_to_retile {
-                        do_retile_display(
-                            &ctx.state,
-                            &ctx.layout_engine_manager,
-                            &ctx.window_manipulator,
-                            display_id,
-                        );
-                    }
-                } else {
-                    do_retile(
+                // Retile the affected displays, and only those. The list is exhaustive:
+                // every branch that returns `Some` fills in the displays whose layout
+                // the change can move, so an empty list means none of them do.
+                for display_id in result.displays_to_retile {
+                    do_retile_display(
                         &ctx.state,
                         &ctx.layout_engine_manager,
                         &ctx.window_manipulator,
+                        display_id,
                     );
                 }
 
@@ -1159,12 +1172,6 @@ impl App {
                         } else {
                             tracing::debug!("App activated (already tracked), pid {}", pid);
                         }
-                    }
-                    WorkspaceEvent::DisplaysChanged => {
-                        // Handled by display_source_callback via CGDisplayRegisterReconfigurationCallback
-                        tracing::debug!(
-                            "DisplaysChanged event received (handled by display callback)"
-                        );
                     }
                 }
             }

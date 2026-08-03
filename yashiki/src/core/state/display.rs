@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use crate::core::Rect;
 use crate::macos::DisplayId;
 use crate::platform::WindowSystem;
 use yashiki_ipc::OutputDirection;
@@ -20,13 +21,38 @@ use super::sync::sync_all;
 /// The order difference is intentional:
 /// - On reconnect: must sync first to create Display entries, then restore saved state
 /// - On disconnect: must save state before removing displays
-pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> DisplayChangeResult {
+///
+/// Returns `None` when the configuration read from the OS is the one already held,
+/// which the caller must treat as "do nothing at all". An empty `displays_to_retile`
+/// inside `Some` means the same thing for retiling specifically: the displays that
+/// need one, of which there may be none.
+pub fn handle_display_change<W: WindowSystem>(
+    state: &mut State,
+    ws: &W,
+) -> Option<DisplayChangeResult> {
     let display_infos = ws.get_all_displays();
     let current_ids: HashSet<_> = display_infos.iter().map(|d| d.id).collect();
     let previous_ids: HashSet<_> = state.displays.keys().copied().collect();
 
     let removed_ids: Vec<_> = previous_ids.difference(&current_ids).copied().collect();
     let added_ids: HashSet<_> = current_ids.difference(&previous_ids).copied().collect();
+
+    // The OS emits several notifications around one configuration change, and some
+    // of them describe a configuration we already hold. Retiling on those moves
+    // every window for nothing, so compare first and bail out when nothing moved.
+    if removed_ids.is_empty() && added_ids.is_empty() {
+        let unchanged = display_infos.iter().all(|info| {
+            state.displays.get(&info.id).is_some_and(|display| {
+                display.name == info.name
+                    && display.is_main == info.is_main
+                    && display.frame == Rect::from_bounds(&info.frame)
+            })
+        });
+        if unchanged {
+            tracing::debug!("Display configuration unchanged, nothing to do");
+            return None;
+        }
+    }
 
     // === Reconnect branch: no displays removed, possibly some added ===
     if removed_ids.is_empty() {
@@ -88,13 +114,13 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
             .cloned()
             .collect();
 
-        return DisplayChangeResult {
+        return Some(DisplayChangeResult {
             window_moves,
             displays_to_retile: displays_to_retile.into_iter().collect(),
             added,
             removed: vec![],
             new_window_ids,
-        };
+        });
     }
 
     // === Disconnect branch: some displays removed ===
@@ -108,13 +134,13 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
 
     let Some(fallback_id) = fallback_display else {
         tracing::warn!("No fallback display available");
-        return DisplayChangeResult {
+        return Some(DisplayChangeResult {
             window_moves: vec![],
             displays_to_retile: vec![],
             added: vec![],
             removed: removed_ids,
             new_window_ids: vec![],
-        };
+        });
     };
 
     let mut window_moves = Vec::new();
@@ -173,13 +199,13 @@ pub fn handle_display_change<W: WindowSystem>(state: &mut State, ws: &W) -> Disp
 
     let displays_to_retile: Vec<_> = affected_displays.into_iter().collect();
 
-    DisplayChangeResult {
+    Some(DisplayChangeResult {
         window_moves,
         displays_to_retile,
         added,
         removed: removed_ids,
         new_window_ids,
-    }
+    })
 }
 
 pub fn focus_output(state: &mut State, direction: OutputDirection) -> Option<FocusOutputResult> {
