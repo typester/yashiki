@@ -137,19 +137,15 @@ pub fn execute_effects<M: WindowManipulator>(
                 manipulator.exec_command(&command, &path)?;
             }
             Effect::ExecCommandTracked { command, path } => {
-                match manipulator.exec_command_tracked(&command, &path) {
-                    Ok(pid) => {
-                        state
-                            .borrow_mut()
-                            .tracked_processes
-                            .push(crate::core::TrackedProcess {
-                                pid,
-                                _command: command.clone(),
-                            });
-                        tracing::info!("Tracked process started: {} (pid={})", command, pid);
-                    }
-                    Err(e) => return Err(e),
-                }
+                let pid = manipulator.exec_command_tracked(&command, &path)?;
+                state
+                    .borrow_mut()
+                    .tracked_processes
+                    .push(crate::core::TrackedProcess {
+                        pid,
+                        _command: command.clone(),
+                    });
+                tracing::info!("Tracked process started: {} (pid={})", command, pid);
             }
             Effect::UpdateLayoutExecPath { path } => {
                 layout_engine_manager.borrow_mut().set_exec_path(&path);
