@@ -187,6 +187,9 @@ pub fn compute_layout_changes_for_display(
         if window.display_id != display_id {
             continue;
         }
+        if window.on_other_space {
+            continue;
+        }
 
         let should_be_visible = window.tags.intersects(visible_tags);
         let is_visible = !window.is_hidden();
@@ -285,7 +288,11 @@ fn windows_on_display_in_order<F: Fn(&Window) -> bool>(
     let visible_tags = display.visible_tags;
 
     let is_candidate = |w: &Window| -> bool {
-        w.display_id == display_id && !w.is_hidden() && w.tags.intersects(visible_tags) && extra(w)
+        w.display_id == display_id
+            && !w.is_hidden()
+            && !w.on_other_space
+            && w.tags.intersects(visible_tags)
+            && extra(w)
     };
 
     let mut result: Vec<&Window> = Vec::new();
