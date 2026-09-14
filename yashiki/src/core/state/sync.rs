@@ -10,6 +10,13 @@ use super::super::state::{IgnoredWindowInfo, State, WindowMove};
 use super::layout::{add_to_tag_orders, compute_hide_position_for_display, remove_from_tag_orders};
 use super::rules::{has_matching_non_ignore_rule, should_ignore_window_extended};
 
+#[derive(Debug, PartialEq)]
+enum RemovalDecision {
+    Remove,
+    Keep,
+    KeepOnOtherSpace,
+}
+
 /// Grace period during which recently ignored windows protect managed windows from removal.
 /// This handles Firefox-style fullscreen transitions where a new ignored window appears
 /// while the original managed window temporarily disappears.
@@ -62,7 +69,7 @@ fn should_remove_window<W: WindowSystem>(
     pid: i32,
     ax_accessible: bool,
     window_level: i32,
-) -> bool {
+) -> RemovalDecision {
     if !ax_accessible {
         if !ws.is_process_alive(pid) {
             tracing::info!(
@@ -70,44 +77,49 @@ fn should_remove_window<W: WindowSystem>(
                 window_id,
                 pid,
             );
-            return true;
+            return RemovalDecision::Remove;
         }
-        // Process alive but AX inaccessible — likely on another macOS Space.
-        // Try window-level verification via CGS private API.
         if let Some(exists) = ws.window_exists_on_any_space(window_id) {
             if exists {
                 tracing::debug!(
                     "Keeping window [{}]: exists on another Space (CGS)",
                     window_id,
                 );
-                return false;
+                return RemovalDecision::KeepOnOtherSpace;
             }
             tracing::info!(
                 "Removing window [{}]: not on any Space (CGS), process {} alive but window gone",
                 window_id,
                 pid,
             );
-            return true;
+            return RemovalDecision::Remove;
         }
-        // CGS API unavailable — fall back to keeping the window (safe default)
-        return false;
+        return RemovalDecision::Keep;
     }
 
-    // Non-normal layer windows are not included in AXWindows attribute,
-    // so skip the AX check - remove when they disappear from CGWindowList
     if window_level != 0 {
-        return true;
+        return RemovalDecision::Remove;
     }
 
-    // Window-level check: don't remove if window exists in AX API (transitioning)
     if ws.window_exists_in_ax(window_id, pid) {
         tracing::info!(
             "Skipping removal for [{}]: exists in AX API (transitioning)",
             window_id
         );
-        return false;
+        return RemovalDecision::Keep;
     }
-    true
+
+    // Not in AX — check CGS for windows on another Space (e.g. native fullscreen)
+    if let Some(exists) = ws.window_exists_on_any_space(window_id) {
+        if exists {
+            tracing::info!(
+                "Keeping window [{}]: not in AX but exists on another Space (CGS)",
+                window_id,
+            );
+            return RemovalDecision::KeepOnOtherSpace;
+        }
+    }
+    RemovalDecision::Remove
 }
 
 /// Check if a window should be removed, considering fullscreen transitions.
@@ -129,14 +141,14 @@ fn should_remove_window_if_not_transitioning<W: WindowSystem>(
     ax_accessible: bool,
     pids_with_new_windows: &HashSet<i32>,
     window_level: i32,
-) -> bool {
+) -> RemovalDecision {
     if pids_with_new_windows.contains(&pid) {
         tracing::debug!(
             "Skipping removal for [{}]: PID {} has new windows (transitioning)",
             window_id,
             pid
         );
-        return false;
+        return RemovalDecision::Keep;
     }
     should_remove_window(ws, window_id, pid, ax_accessible, window_level)
 }
@@ -393,7 +405,7 @@ pub fn sync_pid<W: WindowSystem>(
     // Remove managed windows that are no longer on screen
     for id in current_ids.difference(&on_screen_ids) {
         let window_level = state.windows.get(id).map(|w| w.window_level).unwrap_or(0);
-        if !should_remove_window_if_not_transitioning(
+        match should_remove_window_if_not_transitioning(
             ws,
             *id,
             pid,
@@ -401,16 +413,17 @@ pub fn sync_pid<W: WindowSystem>(
             &pids_with_new_windows,
             window_level,
         ) {
-            // Window kept — check if it moved to another Space
-            if !ax_accessible {
+            RemovalDecision::Keep => continue,
+            RemovalDecision::KeepOnOtherSpace => {
                 if let Some(window) = state.windows.get_mut(id) {
                     if !window.on_other_space {
                         tracing::info!("Window [{}] moved to another Space", id);
                         window.on_other_space = true;
                     }
                 }
+                continue;
             }
-            continue;
+            RemovalDecision::Remove => {}
         }
 
         if let Some(window) = state.windows.remove(id) {
@@ -451,7 +464,7 @@ pub fn sync_pid<W: WindowSystem>(
         .collect();
 
     for (id, window_level) in ignored_to_check {
-        if !should_remove_window_if_not_transitioning(
+        match should_remove_window_if_not_transitioning(
             ws,
             id,
             pid,
@@ -459,10 +472,12 @@ pub fn sync_pid<W: WindowSystem>(
             &pids_with_new_windows,
             window_level,
         ) {
-            continue;
+            RemovalDecision::Remove => {
+                state.ignored_windows.remove(&id);
+                tracing::debug!("Ignored window removed (no longer on screen): [{}]", id);
+            }
+            _ => continue,
         }
-        state.ignored_windows.remove(&id);
-        tracing::debug!("Ignored window removed (no longer on screen): [{}]", id);
     }
 
     // Re-evaluate ignored windows that are still on screen
@@ -809,23 +824,26 @@ pub fn sync_with_window_infos<W: WindowSystem>(
     for id in current_ids.difference(&on_screen_ids) {
         if let Some(window) = state.windows.get(id) {
             let ax_accessible = !inaccessible_pids.contains(&window.pid);
-            if !should_remove_window_if_not_transitioning(
+            let decision = should_remove_window_if_not_transitioning(
                 ws,
                 *id,
                 window.pid,
                 ax_accessible,
                 &pids_with_new_windows,
                 window.window_level,
-            ) {
-                if !ax_accessible {
+            );
+            match decision {
+                RemovalDecision::Keep => continue,
+                RemovalDecision::KeepOnOtherSpace => {
                     if let Some(window) = state.windows.get_mut(id) {
                         if !window.on_other_space {
                             tracing::info!("Window [{}] moved to another Space", id);
                             window.on_other_space = true;
                         }
                     }
+                    continue;
                 }
-                continue;
+                RemovalDecision::Remove => {}
             }
 
             tracing::info!(
@@ -863,7 +881,7 @@ pub fn sync_with_window_infos<W: WindowSystem>(
 
     for (id, pid, window_level) in ignored_to_check {
         let ax_accessible = !inaccessible_pids.contains(&pid);
-        if !should_remove_window_if_not_transitioning(
+        match should_remove_window_if_not_transitioning(
             ws,
             id,
             pid,
@@ -871,10 +889,12 @@ pub fn sync_with_window_infos<W: WindowSystem>(
             &pids_with_new_windows,
             window_level,
         ) {
-            continue;
+            RemovalDecision::Remove => {
+                state.ignored_windows.remove(&id);
+                tracing::debug!("Ignored window removed (no longer on screen): [{}]", id);
+            }
+            _ => continue,
         }
-        state.ignored_windows.remove(&id);
-        tracing::debug!("Ignored window removed (no longer on screen): [{}]", id);
     }
 
     // Re-evaluate ignored windows that are still on screen
@@ -1003,51 +1023,72 @@ mod tests {
     use crate::platform::mock::MockWindowSystem;
 
     #[test]
-    fn test_should_remove_window_ax_inaccessible_cgs_exists() {
+    fn test_ax_inaccessible_cgs_exists() {
         let mut ws = MockWindowSystem::new();
         ws.ax_accessible_pids.remove(&1000);
         ws.space_windows = Some(HashSet::from([100]));
 
-        assert!(
-            !should_remove_window(&ws, 100, 1000, false, 0),
-            "window on another Space should not be removed"
+        assert_eq!(
+            should_remove_window(&ws, 100, 1000, false, 0),
+            RemovalDecision::KeepOnOtherSpace,
         );
     }
 
     #[test]
-    fn test_should_remove_window_ax_inaccessible_cgs_gone() {
+    fn test_ax_inaccessible_cgs_gone() {
         let mut ws = MockWindowSystem::new();
         ws.ax_accessible_pids.remove(&1000);
         ws.space_windows = Some(HashSet::new());
 
-        assert!(
+        assert_eq!(
             should_remove_window(&ws, 100, 1000, false, 0),
-            "window not on any Space should be removed"
+            RemovalDecision::Remove,
         );
     }
 
     #[test]
-    fn test_should_remove_window_ax_inaccessible_cgs_unavailable() {
+    fn test_ax_inaccessible_cgs_unavailable() {
         let mut ws = MockWindowSystem::new();
         ws.ax_accessible_pids.remove(&1000);
-        // space_windows = None (CGS API unavailable)
 
-        assert!(
-            !should_remove_window(&ws, 100, 1000, false, 0),
-            "should fall back to keeping window when CGS is unavailable"
+        assert_eq!(
+            should_remove_window(&ws, 100, 1000, false, 0),
+            RemovalDecision::Keep,
         );
     }
 
     #[test]
-    fn test_should_remove_window_ax_inaccessible_process_dead() {
+    fn test_ax_inaccessible_process_dead() {
         let mut ws = MockWindowSystem::new();
         ws.ax_accessible_pids.remove(&1000);
         ws.alive_pids.remove(&1000);
         ws.space_windows = Some(HashSet::from([100]));
 
-        assert!(
+        assert_eq!(
             should_remove_window(&ws, 100, 1000, false, 0),
-            "dead process window should be removed regardless of CGS"
+            RemovalDecision::Remove,
+        );
+    }
+
+    #[test]
+    fn test_ax_accessible_not_in_ax_but_on_other_space() {
+        let mut ws = MockWindowSystem::new();
+        ws.space_windows = Some(HashSet::from([100]));
+        // AX accessible, window NOT in AX list, but CGS says it's on another Space
+        assert_eq!(
+            should_remove_window(&ws, 100, 1000, true, 0),
+            RemovalDecision::KeepOnOtherSpace,
+        );
+    }
+
+    #[test]
+    fn test_ax_accessible_not_in_ax_not_on_any_space() {
+        let mut ws = MockWindowSystem::new();
+        ws.space_windows = Some(HashSet::new());
+        // AX accessible, not in AX, not on any Space — truly gone
+        assert_eq!(
+            should_remove_window(&ws, 100, 1000, true, 0),
+            RemovalDecision::Remove,
         );
     }
 }
