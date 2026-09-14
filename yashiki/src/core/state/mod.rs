@@ -296,6 +296,12 @@ impl State {
         self.windows.values().any(|w| w.pid == pid)
     }
 
+    pub fn has_other_space_window_on_display(&self, display_id: DisplayId) -> bool {
+        self.windows
+            .values()
+            .any(|w| w.display_id == display_id && w.on_other_space)
+    }
+
     /// Find the topmost visible managed window at the given screen coordinates.
     /// Uses cached z-order (front-to-back) to return the window that is visually on top.
     /// Ignored windows are skipped so auto-raise doesn't try to focus them.
