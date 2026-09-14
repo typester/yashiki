@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.3](https://github.com/typester/yashiki/compare/yashiki-v0.15.2...yashiki-v0.15.3) - 2026-09-14
+
+### Fixed
+
+- *(display)* follow screen-parameter changes ([#188](https://github.com/typester/yashiki/pull/188))
+- *(display)* measure the reserved top inset from visibleFrame ([#187](https://github.com/typester/yashiki/pull/187))
+
 ## [0.15.2](https://github.com/typester/yashiki/compare/yashiki-v0.15.1...yashiki-v0.15.2) - 2026-06-19
 
 ### Fixed
