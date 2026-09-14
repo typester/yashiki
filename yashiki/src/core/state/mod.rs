@@ -4699,4 +4699,62 @@ mod tests {
             })
         ));
     }
+
+    #[test]
+    fn test_on_other_space_window_excluded_from_layout() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Firefox", 200.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Mark window 101 as on another Space
+        state.windows.get_mut(&101).unwrap().on_other_space = true;
+
+        let visible = layout::visible_windows_on_display(&state, 1);
+        assert!(
+            !visible.iter().any(|w| w.id == 101),
+            "on_other_space window should be excluded from visible layout"
+        );
+        assert!(
+            visible.iter().any(|w| w.id == 100),
+            "normal window should be in visible layout"
+        );
+    }
+
+    #[test]
+    fn test_on_other_space_window_excluded_from_hide_show() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Firefox", 200.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Mark window 101 as on another Space
+        state.windows.get_mut(&101).unwrap().on_other_space = true;
+
+        // Switch tags so windows should be hidden
+        state.displays.get_mut(&1).unwrap().visible_tags = Tag::new(2);
+        let moves = layout::compute_layout_changes_for_display(&mut state, 1);
+
+        // Window 100 should be hidden, but 101 (on other Space) should not be touched
+        assert!(
+            moves.iter().any(|m| m.window_id == 100),
+            "normal window should be hidden on tag switch"
+        );
+        assert!(
+            !moves.iter().any(|m| m.window_id == 101),
+            "on_other_space window should not be hidden"
+        );
+    }
 }
