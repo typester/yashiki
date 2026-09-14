@@ -103,12 +103,14 @@ pub fn terminate_process(pid: u32) {
     }
 }
 
+// Display events no longer travel this channel, so every remaining variant is an
+// app lifecycle notification. The shared prefix is the point.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone)]
 pub enum WorkspaceEvent {
     AppLaunched { pid: i32 },
     AppTerminated { pid: i32 },
     AppActivated { pid: i32 },
-    DisplaysChanged,
 }
 
 struct Ivars {
@@ -163,11 +165,7 @@ define_class!(
         #[unsafe(method(displaysChanged:))]
         fn displays_changed(&self, _notification: &NSNotification) {
             tracing::debug!("Screen parameters changed");
-            let tx = self.ivars().event_tx.borrow();
-            if let Some(sender) = tx.as_ref() {
-                let _: Result<(), _> = sender.send(WorkspaceEvent::DisplaysChanged);
-            }
-            signal_runloop_source(&self.ivars().source_ptr);
+            super::display::signal_screen_parameters_changed();
         }
     }
 );
@@ -253,9 +251,9 @@ impl WorkspaceWatcher {
                 None,
             );
 
-            // Register for screen change notifications using default notification center.
-            // Note: This notification doesn't work without NSApplication's event loop.
-            // Display changes are detected via polling in timer_callback instead.
+            // Menu bar visibility, resolution and arrangement changes arrive here.
+            // A real reconfiguration also fires the CoreGraphics callback; the
+            // handler drops whichever arrives second.
             let default_center = objc2_foundation::NSNotificationCenter::defaultCenter();
             let screen_changed_name =
                 NSString::from_str("NSApplicationDidChangeScreenParametersNotification");
