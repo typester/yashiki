@@ -731,18 +731,30 @@ impl State {
     }
 
     pub fn move_focused_to_tags(&mut self, tags: u32) -> Vec<WindowMove> {
+        if self.has_other_space_window_on_display(self.focused_display) {
+            return vec![];
+        }
         move_focused_to_tags(self, tags)
     }
 
     pub fn toggle_focused_window_tags(&mut self, tags: u32) -> Vec<WindowMove> {
+        if self.has_other_space_window_on_display(self.focused_display) {
+            return vec![];
+        }
         toggle_focused_window_tags(self, tags)
     }
 
     pub fn toggle_focused_fullscreen(&mut self) -> Option<(DisplayId, bool, u32, i32)> {
+        if self.has_other_space_window_on_display(self.focused_display) {
+            return None;
+        }
         toggle_focused_fullscreen(self)
     }
 
     pub fn toggle_focused_float(&mut self) -> Option<(DisplayId, bool, u32, i32)> {
+        if self.has_other_space_window_on_display(self.focused_display) {
+            return None;
+        }
         toggle_focused_float(self)
     }
 
@@ -753,6 +765,9 @@ impl State {
     }
 
     pub fn swap_window(&mut self, direction: Direction) -> Option<DisplayId> {
+        if self.has_other_space_window_on_display(self.focused_display) {
+            return None;
+        }
         swap_window(self, direction)
     }
 
@@ -761,6 +776,9 @@ impl State {
     }
 
     pub fn send_to_output(&mut self, direction: OutputDirection) -> Option<SendToOutputResult> {
+        if self.has_other_space_window_on_display(self.focused_display) {
+            return None;
+        }
         send_to_output(self, direction)
     }
 
