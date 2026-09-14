@@ -13,6 +13,13 @@ pub fn view_tags_on_display(
     tags: u32,
     display_id: DisplayId,
 ) -> Vec<WindowMove> {
+    if state.has_other_space_window_on_display(display_id) {
+        tracing::debug!(
+            "Ignoring tag-view on display {}: window on another Space",
+            display_id
+        );
+        return vec![];
+    }
     let new_visible = Tag::from_mask(tags);
     let first_tag = new_visible.first_tag().unwrap_or(1);
     let new_layout = state.resolve_layout_for_tag(first_tag as u8).to_string();
@@ -42,6 +49,13 @@ pub fn toggle_tags_on_display(
     tags: u32,
     display_id: DisplayId,
 ) -> Vec<WindowMove> {
+    if state.has_other_space_window_on_display(display_id) {
+        tracing::debug!(
+            "Ignoring tag-toggle on display {}: window on another Space",
+            display_id
+        );
+        return vec![];
+    }
     let Some(disp) = state.displays.get_mut(&display_id) else {
         return vec![];
     };
@@ -63,6 +77,13 @@ pub fn toggle_tags_on_display(
 
 pub fn view_tags_last(state: &mut State) -> Vec<WindowMove> {
     let display_id = state.effective_focused_display();
+    if state.has_other_space_window_on_display(display_id) {
+        tracing::debug!(
+            "Ignoring tag-view-last on display {}: window on another Space",
+            display_id
+        );
+        return vec![];
+    }
     let Some(disp) = state.displays.get_mut(&display_id) else {
         return vec![];
     };
