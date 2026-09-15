@@ -79,7 +79,7 @@ fn should_remove_window<W: WindowSystem>(
             );
             return RemovalDecision::Remove;
         }
-        if let Some(exists) = ws.window_exists_on_any_space(window_id) {
+        if let Some(exists) = ws.window_is_on_other_space(window_id) {
             if exists {
                 tracing::debug!(
                     "Keeping window [{}]: exists on another Space (CGS)",
@@ -110,7 +110,7 @@ fn should_remove_window<W: WindowSystem>(
     }
 
     // Not in AX — check CGS for windows on another Space (e.g. native fullscreen)
-    if let Some(exists) = ws.window_exists_on_any_space(window_id) {
+    if let Some(exists) = ws.window_is_on_other_space(window_id) {
         if exists {
             tracing::info!(
                 "Keeping window [{}]: not in AX but exists on another Space (CGS)",
