@@ -194,6 +194,7 @@ mod tests {
             is_floating: false,
             is_fullscreen: false,
             orphaned_from: None,
+            on_other_space: false,
         }
     }
 

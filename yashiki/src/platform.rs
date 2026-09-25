@@ -33,6 +33,9 @@ pub trait WindowSystem {
     /// Check if a process is still alive.
     /// Returns true if the process exists, false if it has terminated.
     fn is_process_alive(&self, pid: i32) -> bool;
+    /// Check if a window is on a macOS Space other than the current one (CGS private API).
+    /// Returns Some(true/false) on success, None if the API is unavailable.
+    fn window_is_on_other_space(&self, window_id: u32) -> Option<bool>;
 }
 
 /// macOS implementation of WindowSystem
@@ -135,6 +138,10 @@ impl WindowSystem for MacOSWindowSystem {
 
     fn is_process_alive(&self, pid: i32) -> bool {
         unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    fn window_is_on_other_space(&self, window_id: u32) -> Option<bool> {
+        crate::macos::space::window_is_on_other_space(window_id)
     }
 }
 
@@ -668,6 +675,9 @@ pub mod mock {
         /// Used to simulate transitioning windows during fullscreen.
         /// Stored as (window_id, pid).
         pub ax_only_windows: HashSet<(u32, i32)>,
+        /// Windows that exist on any Space (CGS API simulation).
+        /// None means CGS API is unavailable; Some(set) means available.
+        pub space_windows: Option<HashSet<u32>>,
     }
 
     impl Default for MockWindowSystem {
@@ -680,6 +690,7 @@ pub mod mock {
                 alive_pids: HashSet::from([1, 2, 3, 4, 5, 100, 1000, 1001, 1002]),
                 custom_extended_attributes: HashMap::new(),
                 ax_only_windows: HashSet::new(),
+                space_windows: None,
             }
         }
     }
@@ -789,6 +800,12 @@ pub mod mock {
 
         fn is_process_alive(&self, pid: i32) -> bool {
             self.alive_pids.contains(&pid)
+        }
+
+        fn window_is_on_other_space(&self, window_id: u32) -> Option<bool> {
+            self.space_windows
+                .as_ref()
+                .map(|set| set.contains(&window_id))
         }
     }
 

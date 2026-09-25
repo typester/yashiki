@@ -3,6 +3,7 @@ mod display;
 mod hotkey;
 mod mouse_tracker;
 mod observer;
+pub mod space;
 mod workspace;
 
 pub use accessibility::*;
