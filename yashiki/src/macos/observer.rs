@@ -115,7 +115,13 @@ impl ObserverManager {
     }
 
     pub fn remove_observer(&mut self, pid: i32) {
-        if let Some((_observer, refcon)) = self.observers.remove(&pid) {
+        if let Some((observer, refcon)) = self.observers.remove(&pid) {
+            // The run loop retains the observer's source, so dropping the observer alone does
+            // not stop callbacks. Detach the source first; otherwise a later notification
+            // would dereference the CallbackContext freed below (use-after-free).
+            let source = observer.run_loop_source();
+            CFRunLoop::get_current().remove_source(&source, unsafe { kCFRunLoopDefaultMode });
+            drop(observer);
             unsafe { drop(Box::from_raw(refcon as *mut CallbackContext)) };
             self.incomplete_observers.remove(&pid);
             tracing::debug!("Removed observer for pid {}", pid);
