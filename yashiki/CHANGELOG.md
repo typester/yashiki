@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.4](https://github.com/typester/yashiki/compare/yashiki-v0.15.3...yashiki-v0.15.4) - 2026-09-25
+
+### Fixed
+
+- *(observer)* detach run loop source before freeing callback context ([#193](https://github.com/typester/yashiki/pull/193))
+
 ## [0.15.3](https://github.com/typester/yashiki/compare/yashiki-v0.15.2...yashiki-v0.15.3) - 2026-09-14
 
 ### Fixed
