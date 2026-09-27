@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.5](https://github.com/typester/yashiki/compare/yashiki-layout-tatami-v0.15.4...yashiki-layout-tatami-v0.15.5) - 2026-09-27
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.7.3](https://github.com/typester/yashiki/compare/yashiki-layout-tatami-v0.7.2...yashiki-layout-tatami-v0.7.3) - 2026-01-20
 
 ### Other
