@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use super::{Config, Display, Rect, RulesEngine, Tag, Window, WindowId};
@@ -174,6 +174,15 @@ pub struct State {
     /// suppress sync's CGWindowList-based frame overwrite during the macOS AX
     /// catch-up window. See [`FRAME_WRITE_SUPPRESS_MS`].
     pub recent_frame_writes: HashMap<WindowId, Instant>,
+    /// Displays currently showing a native fullscreen Space. yashiki leaves them alone.
+    pub fullscreen_space_displays: HashSet<DisplayId>,
+}
+
+/// Displays that started or stopped showing a native fullscreen Space since the last update.
+#[derive(Debug, PartialEq)]
+pub struct SpaceTransitions {
+    pub entered: Vec<DisplayId>,
+    pub returned: Vec<DisplayId>,
 }
 
 impl State {
@@ -195,6 +204,7 @@ impl State {
             auto_raise_state: AutoRaiseState::default(),
             window_z_order: Vec::new(),
             recent_frame_writes: HashMap::new(),
+            fullscreen_space_displays: HashSet::new(),
         }
     }
 
@@ -607,6 +617,28 @@ impl State {
                 .ok_or_else(|| format!("Output not found: {:?}", spec)),
             None => Ok(self.effective_focused_display()),
         }
+    }
+
+    /// Record which displays are showing a native fullscreen Space. Displays that no longer exist are ignored.
+    pub fn update_fullscreen_spaces(&mut self, now: HashSet<DisplayId>) -> SpaceTransitions {
+        let now: HashSet<DisplayId> = now
+            .into_iter()
+            .filter(|id| self.displays.contains_key(id))
+            .collect();
+        let mut entered: Vec<DisplayId> = now
+            .difference(&self.fullscreen_space_displays)
+            .copied()
+            .collect();
+        let mut returned: Vec<DisplayId> = self
+            .fullscreen_space_displays
+            .difference(&now)
+            .copied()
+            .filter(|id| self.displays.contains_key(id))
+            .collect();
+        entered.sort_unstable();
+        returned.sort_unstable();
+        self.fullscreen_space_displays = now;
+        SpaceTransitions { entered, returned }
     }
 
     // Display operations - delegated to state/display.rs
@@ -4779,6 +4811,59 @@ mod tests {
         assert!(
             !moves.iter().any(|m| m.window_id == 101),
             "on_other_space window should not be hidden"
+        );
+    }
+
+    fn transitions(entered: Vec<DisplayId>, returned: Vec<DisplayId>) -> SpaceTransitions {
+        SpaceTransitions { entered, returned }
+    }
+
+    #[test]
+    fn test_update_fullscreen_spaces_reports_transitions() {
+        let ws = MockWindowSystem::new().with_displays(vec![
+            create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+            create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+        ]);
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        assert_eq!(
+            state.update_fullscreen_spaces(HashSet::from([2])),
+            transitions(vec![2], vec![])
+        );
+        assert_eq!(
+            state.update_fullscreen_spaces(HashSet::from([1, 2])),
+            transitions(vec![1], vec![])
+        );
+        assert_eq!(
+            state.update_fullscreen_spaces(HashSet::from([1, 2])),
+            transitions(vec![], vec![])
+        );
+        assert_eq!(
+            state.update_fullscreen_spaces(HashSet::new()),
+            transitions(vec![], vec![1, 2])
+        );
+        assert!(state.fullscreen_space_displays.is_empty());
+    }
+
+    #[test]
+    fn test_update_fullscreen_spaces_ignores_unknown_displays() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)]);
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        assert_eq!(
+            state.update_fullscreen_spaces(HashSet::from([1, 99])),
+            transitions(vec![1], vec![])
+        );
+        assert!(!state.fullscreen_space_displays.contains(&99));
+
+        // A display removed while on a fullscreen Space is not reported as returned
+        state.displays.remove(&1);
+        assert_eq!(
+            state.update_fullscreen_spaces(HashSet::new()),
+            transitions(vec![], vec![])
         );
     }
 }

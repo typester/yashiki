@@ -103,14 +103,12 @@ pub fn terminate_process(pid: u32) {
     }
 }
 
-// Display events no longer travel this channel, so every remaining variant is an
-// app lifecycle notification. The shared prefix is the point.
-#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone)]
 pub enum WorkspaceEvent {
     AppLaunched { pid: i32 },
     AppTerminated { pid: i32 },
     AppActivated { pid: i32 },
+    ActiveSpaceChanged,
 }
 
 struct Ivars {
@@ -160,6 +158,16 @@ define_class!(
                 }
                 signal_runloop_source(&self.ivars().source_ptr);
             }
+        }
+
+        #[unsafe(method(activeSpaceChanged:))]
+        fn active_space_changed(&self, _notification: &NSNotification) {
+            tracing::debug!("Active Space changed");
+            let tx = self.ivars().event_tx.borrow();
+            if let Some(sender) = tx.as_ref() {
+                let _: Result<(), _> = sender.send(WorkspaceEvent::ActiveSpaceChanged);
+            }
+            signal_runloop_source(&self.ivars().source_ptr);
         }
 
         #[unsafe(method(displaysChanged:))]
@@ -248,6 +256,16 @@ impl WorkspaceWatcher {
                 observer_obj,
                 sel!(appActivated:),
                 Some(&activate_name),
+                None,
+            );
+
+            let space_changed_name =
+                NSString::from_str("NSWorkspaceActiveSpaceDidChangeNotification");
+
+            workspace_center.addObserver_selector_name_object(
+                observer_obj,
+                sel!(activeSpaceChanged:),
+                Some(&space_changed_name),
                 None,
             );
 

@@ -1,11 +1,21 @@
 use std::collections::HashSet;
+use std::ffi::c_void;
 use std::sync::OnceLock;
 
 use core_foundation::array::{__CFArray, CFArray};
-use core_foundation::base::TCFType;
+use core_foundation::base::{CFType, CFTypeRef, TCFType};
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
+use core_foundation::uuid::{CFUUIDCreateString, CFUUIDRef, CFUUID};
+use core_foundation::ConcreteCFType;
+
+use super::DisplayId;
+
+#[link(name = "ColorSync", kind = "framework")]
+extern "C" {
+    fn CGDisplayCreateUUIDFromDisplayID(display: u32) -> CFUUIDRef;
+}
 
 type CGSMainConnectionIDFn = unsafe extern "C" fn() -> u32;
 type CGSCopySpacesForWindowsFn =
@@ -66,36 +76,117 @@ fn get_cgs_api() -> Option<&'static CgsApi> {
 }
 
 const CGS_ALL_SPACES_MASK: u32 = 7;
+const CGS_SPACE_TYPE_FULLSCREEN: i64 = 4;
 
-fn get_current_space_ids(api: &CgsApi, cid: u32) -> Option<HashSet<u64>> {
-    unsafe {
+fn cgs_connection() -> Option<(&'static CgsApi, u32)> {
+    let api = get_cgs_api()?;
+    let cid = unsafe { (api.main_connection_id)() };
+    (cid != 0).then_some((api, cid))
+}
+
+/// The Space a display is currently showing, from `CGSCopyManagedDisplaySpaces`.
+struct DisplaySpace {
+    /// Display UUID, or "Main" when displays don't have separate Spaces.
+    identifier: String,
+    current_space_id: u64,
+    current_space_type: i64,
+}
+
+/// Look up `key` in a CF dictionary, returning the value only if it has the expected type.
+fn dict_value<T: ConcreteCFType>(dict: &CFDictionary, key: &str) -> Option<T> {
+    let key = CFString::new(key);
+    let value = dict.find(key.as_concrete_TypeRef() as *const c_void)?;
+    unsafe { CFType::wrap_under_get_rule(*value as CFTypeRef) }.downcast::<T>()
+}
+
+fn copy_display_spaces(api: &CgsApi, cid: u32) -> Option<Vec<DisplaySpace>> {
+    let displays: CFArray = unsafe {
         let ptr = (api.copy_managed_display_spaces)(cid);
         if ptr.is_null() {
             return None;
         }
-        let displays: CFArray = CFArray::wrap_under_create_rule(ptr);
-        let key = CFString::new("Current Space");
-        let id_key = CFString::new("ManagedSpaceID");
-        let mut ids = HashSet::new();
+        CFArray::wrap_under_create_rule(ptr)
+    };
 
-        for i in 0..displays.len() {
-            let dict_ptr = *displays.get_unchecked(i);
-            let dict: CFDictionary = CFDictionary::wrap_under_get_rule(dict_ptr as *const _);
-            let Some(space_ptr) = dict.find(key.as_concrete_TypeRef() as *const _) else {
-                continue;
-            };
-            let space_dict: CFDictionary =
-                CFDictionary::wrap_under_get_rule(*space_ptr as *const _);
-            let Some(id_ptr) = space_dict.find(id_key.as_concrete_TypeRef() as *const _) else {
-                continue;
-            };
-            let id_num: CFNumber = CFNumber::wrap_under_get_rule(*id_ptr as *const _);
-            if let Some(id) = id_num.to_i64() {
-                ids.insert(id as u64);
-            }
+    let spaces = displays
+        .iter()
+        .filter_map(|item| {
+            let dict = unsafe { CFType::wrap_under_get_rule(*item as CFTypeRef) }
+                .downcast::<CFDictionary>()?;
+            let current = dict_value::<CFDictionary>(&dict, "Current Space")?;
+            Some(DisplaySpace {
+                identifier: dict_value::<CFString>(&dict, "Display Identifier")
+                    .map(|s| s.to_string())
+                    .unwrap_or_default(),
+                current_space_id: dict_value::<CFNumber>(&current, "ManagedSpaceID")?.to_i64()?
+                    as u64,
+                current_space_type: dict_value::<CFNumber>(&current, "type")
+                    .and_then(|n| n.to_i64())
+                    .unwrap_or(0),
+            })
+        })
+        .collect();
+    Some(spaces)
+}
+
+fn get_current_space_ids(api: &CgsApi, cid: u32) -> Option<HashSet<u64>> {
+    let spaces = copy_display_spaces(api, cid)?;
+    Some(spaces.iter().map(|s| s.current_space_id).collect())
+}
+
+fn display_uuid(display_id: DisplayId) -> Option<String> {
+    unsafe {
+        let uuid_ref = CGDisplayCreateUUIDFromDisplayID(display_id);
+        if uuid_ref.is_null() {
+            return None;
         }
-        Some(ids)
+        let uuid = CFUUID::wrap_under_create_rule(uuid_ref);
+        let string_ref = CFUUIDCreateString(std::ptr::null(), uuid.as_concrete_TypeRef());
+        if string_ref.is_null() {
+            return None;
+        }
+        Some(CFString::wrap_under_create_rule(string_ref).to_string())
     }
+}
+
+/// Displays whose current Space is a native fullscreen Space. Empty when the CGS private API is unavailable.
+pub fn fullscreen_space_displays(display_ids: &[DisplayId]) -> HashSet<DisplayId> {
+    let Some(spaces) = cgs_connection().and_then(|(api, cid)| copy_display_spaces(api, cid)) else {
+        return HashSet::new();
+    };
+
+    for space in spaces.iter().filter(|s| s.current_space_type != 0) {
+        tracing::debug!(
+            "CGS: display {} is showing Space {} of type {}",
+            space.identifier,
+            space.current_space_id,
+            space.current_space_type
+        );
+    }
+
+    let fullscreen: Vec<&DisplaySpace> = spaces
+        .iter()
+        .filter(|s| s.current_space_type == CGS_SPACE_TYPE_FULLSCREEN)
+        .collect();
+    if fullscreen.is_empty() {
+        return HashSet::new();
+    }
+    // "Main" means all displays share one set of Spaces ("Displays have separate Spaces" is off)
+    if fullscreen.iter().any(|s| s.identifier == "Main") {
+        return display_ids.iter().copied().collect();
+    }
+
+    display_ids
+        .iter()
+        .copied()
+        .filter(|&id| {
+            display_uuid(id).is_some_and(|uuid| {
+                fullscreen
+                    .iter()
+                    .any(|s| s.identifier.eq_ignore_ascii_case(&uuid))
+            })
+        })
+        .collect()
 }
 
 /// Where a window lives relative to the Spaces the displays are currently showing.
@@ -112,19 +203,13 @@ pub enum SpacePresence {
 /// Find where a window lives relative to the current Spaces. Returns `None` if the CGS private API is
 /// unavailable or its answer cannot be read.
 pub fn window_space_presence(window_id: u32) -> Option<SpacePresence> {
-    let api = get_cgs_api()?;
+    let (api, cid) = cgs_connection()?;
+    let current_spaces = get_current_space_ids(api, cid)?;
+    if current_spaces.is_empty() {
+        return None;
+    }
 
     unsafe {
-        let cid = (api.main_connection_id)();
-        if cid == 0 {
-            return None;
-        }
-
-        let current_spaces = get_current_space_ids(api, cid)?;
-        if current_spaces.is_empty() {
-            return None;
-        }
-
         let wid = CFNumber::from(window_id as i64);
         let window_ids = CFArray::from_CFTypes(&[wid.as_CFType()]);
 

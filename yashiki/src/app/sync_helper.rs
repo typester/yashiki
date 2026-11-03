@@ -54,6 +54,19 @@ pub fn sync_and_process_new_windows<W: WindowSystem, M: WindowManipulator>(
     SyncResult { changed }
 }
 
+/// Re-check which displays are showing a native fullscreen Space and record the result in state.
+pub fn refresh_fullscreen_spaces<W: WindowSystem>(state: &RefCell<State>, window_system: &W) {
+    let display_ids: Vec<DisplayId> = state.borrow().displays.keys().copied().collect();
+    let now = window_system.fullscreen_space_displays(&display_ids);
+    let transitions = state.borrow_mut().update_fullscreen_spaces(now);
+    for display_id in &transitions.entered {
+        tracing::info!("Display {} is showing a fullscreen Space", display_id);
+    }
+    for display_id in &transitions.returned {
+        tracing::info!("Display {} is back from a fullscreen Space", display_id);
+    }
+}
+
 /// Process newly discovered windows: apply rules and emit events.
 pub fn process_new_windows<M: WindowManipulator>(
     new_window_ids: Vec<WindowId>,

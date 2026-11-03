@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use core_graphics::geometry::{CGPoint, CGSize};
 
 use crate::core::{Rect, WindowMove};
@@ -37,6 +39,9 @@ pub trait WindowSystem {
     /// Find where a window lives relative to the Spaces the displays are showing (CGS private API).
     /// Returns None if the API is unavailable.
     fn window_space_presence(&self, window_id: u32) -> Option<SpacePresence>;
+    /// Displays currently showing a native fullscreen Space (CGS private API).
+    /// Empty if the API is unavailable.
+    fn fullscreen_space_displays(&self, display_ids: &[DisplayId]) -> HashSet<DisplayId>;
 }
 
 /// macOS implementation of WindowSystem
@@ -143,6 +148,10 @@ impl WindowSystem for MacOSWindowSystem {
 
     fn window_space_presence(&self, window_id: u32) -> Option<SpacePresence> {
         crate::macos::space::window_space_presence(window_id)
+    }
+
+    fn fullscreen_space_displays(&self, display_ids: &[DisplayId]) -> HashSet<DisplayId> {
+        crate::macos::space::fullscreen_space_displays(display_ids)
     }
 }
 
@@ -679,6 +688,8 @@ pub mod mock {
         /// Space presence per window (CGS API simulation).
         /// None means the CGS API is unavailable; windows missing from the map are on no Space.
         pub space_presence: Option<HashMap<u32, SpacePresence>>,
+        /// Displays showing a native fullscreen Space (CGS API simulation).
+        pub fullscreen_spaces: HashSet<DisplayId>,
     }
 
     impl Default for MockWindowSystem {
@@ -692,6 +703,7 @@ pub mod mock {
                 custom_extended_attributes: HashMap::new(),
                 ax_only_windows: HashSet::new(),
                 space_presence: None,
+                fullscreen_spaces: HashSet::new(),
             }
         }
     }
@@ -807,6 +819,14 @@ pub mod mock {
             self.space_presence
                 .as_ref()
                 .map(|map| map.get(&window_id).copied().unwrap_or(SpacePresence::Gone))
+        }
+
+        fn fullscreen_space_displays(&self, display_ids: &[DisplayId]) -> HashSet<DisplayId> {
+            display_ids
+                .iter()
+                .copied()
+                .filter(|id| self.fullscreen_spaces.contains(id))
+                .collect()
         }
     }
 
