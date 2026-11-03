@@ -87,6 +87,8 @@ pub struct HotkeyManager {
     tap: Option<HotkeyTap>,
     dirty: bool,
     runloop_source: Arc<AtomicPtr<std::ffi::c_void>>,
+    /// Returns true for a matched binding whose key should go to the focused app instead.
+    passthrough: fn(&Command) -> bool,
 }
 
 impl HotkeyManager {
@@ -108,7 +110,14 @@ impl HotkeyManager {
             tap: None,
             dirty: false,
             runloop_source,
+            passthrough: |_| false,
         }
+    }
+
+    /// Set the check that lets a matched key through to the focused app instead of running its command.
+    pub fn set_passthrough(&mut self, passthrough: fn(&Command) -> bool) {
+        self.passthrough = passthrough;
+        self.dirty = true;
     }
 
     pub fn declare_mode(&mut self, name: &str) {
@@ -226,6 +235,7 @@ impl HotkeyManager {
         let current_mode = Arc::clone(&self.current_mode);
         let tx = self.command_tx.clone();
         let source = Arc::clone(&self.runloop_source);
+        let passthrough = self.passthrough;
 
         let mach_port_ptr: Arc<AtomicPtr<c_void>> = Arc::new(AtomicPtr::new(ptr::null_mut()));
         let mach_port_for_callback = Arc::clone(&mach_port_ptr);
@@ -274,6 +284,15 @@ impl HotkeyManager {
                 let mode = current_mode.read().unwrap();
                 if let Some(mode_bindings) = all_bindings.get(mode.as_str()) {
                     if let Some(command) = mode_bindings.get(&hotkey).cloned() {
+                        if passthrough(&command) {
+                            tracing::debug!(
+                                "Hotkey passed through: {:?} -> {:?} (mode: {})",
+                                hotkey,
+                                command,
+                                mode
+                            );
+                            return CallbackResult::Keep;
+                        }
                         tracing::debug!(
                             "Hotkey matched: {:?} -> {:?} (mode: {})",
                             hotkey,

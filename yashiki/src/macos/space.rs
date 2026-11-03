@@ -21,11 +21,13 @@ type CGSMainConnectionIDFn = unsafe extern "C" fn() -> u32;
 type CGSCopySpacesForWindowsFn =
     unsafe extern "C" fn(u32, u32, *const __CFArray) -> *const __CFArray;
 type CGSCopyManagedDisplaySpacesFn = unsafe extern "C" fn(u32) -> *const __CFArray;
+type CGSGetActiveSpaceFn = unsafe extern "C" fn(u32) -> u64;
 
 struct CgsApi {
     main_connection_id: CGSMainConnectionIDFn,
     copy_spaces_for_windows: CGSCopySpacesForWindowsFn,
     copy_managed_display_spaces: CGSCopyManagedDisplaySpacesFn,
+    get_active_space: CGSGetActiveSpaceFn,
 }
 
 static CGS_API: OnceLock<Option<CgsApi>> = OnceLock::new();
@@ -49,8 +51,13 @@ fn get_cgs_api() -> Option<&'static CgsApi> {
             let main_cid = sym(c"CGSMainConnectionID");
             let copy_spaces = sym(c"CGSCopySpacesForWindows");
             let copy_display_spaces = sym(c"CGSCopyManagedDisplaySpaces");
+            let active_space = sym(c"CGSGetActiveSpace");
 
-            if main_cid.is_null() || copy_spaces.is_null() || copy_display_spaces.is_null() {
+            if main_cid.is_null()
+                || copy_spaces.is_null()
+                || copy_display_spaces.is_null()
+                || active_space.is_null()
+            {
                 tracing::warn!("CGS: one or more symbols not found, Space detection disabled");
                 libc::dlclose(handle);
                 return None;
@@ -70,6 +77,9 @@ fn get_cgs_api() -> Option<&'static CgsApi> {
                     *mut std::ffi::c_void,
                     CGSCopyManagedDisplaySpacesFn,
                 >(copy_display_spaces),
+                get_active_space: std::mem::transmute::<*mut std::ffi::c_void, CGSGetActiveSpaceFn>(
+                    active_space,
+                ),
             })
         })
         .as_ref()
@@ -187,6 +197,19 @@ pub fn fullscreen_space_displays(display_ids: &[DisplayId]) -> HashSet<DisplayId
             })
         })
         .collect()
+}
+
+/// Whether the Space with keyboard focus is a native fullscreen Space. False when the CGS private API is unavailable.
+pub fn active_space_is_fullscreen() -> bool {
+    let Some((api, cid)) = cgs_connection() else {
+        return false;
+    };
+    let active = unsafe { (api.get_active_space)(cid) };
+    copy_display_spaces(api, cid).is_some_and(|spaces| {
+        spaces.iter().any(|s| {
+            s.current_space_id == active && s.current_space_type == CGS_SPACE_TYPE_FULLSCREEN
+        })
+    })
 }
 
 /// Where a window lives relative to the Spaces the displays are currently showing.

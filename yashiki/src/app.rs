@@ -472,6 +472,10 @@ impl App {
         // Create hotkey manager
         let (hotkey_cmd_tx, hotkey_cmd_rx) = std_mpsc::channel::<Command>();
         let mut hotkey_manager = HotkeyManager::new(hotkey_cmd_tx, hotkey_source_clone);
+        // Window/tag/layout keys go to the app while keyboard focus is on a native fullscreen Space
+        hotkey_manager.set_passthrough(|cmd| {
+            dispatch::space_gate(cmd).is_some() && macos::space::active_space_is_fullscreen()
+        });
 
         // Start hotkey tap (initially with no bindings, will be updated via IPC)
         if let Err(e) = hotkey_manager.start() {
