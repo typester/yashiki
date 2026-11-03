@@ -278,7 +278,18 @@ impl RunLoopContext {
 
     /// Re-check which displays are showing a native fullscreen Space. Called before acting on windows.
     fn refresh_fullscreen_spaces(&self) {
-        sync_helper::refresh_fullscreen_spaces(&self.state, &self.window_system);
+        let changed = sync_helper::refresh_fullscreen_spaces(
+            &self.state,
+            &self.window_system,
+            &self.layout_engine_manager,
+            &self.window_manipulator,
+            &self.event_emitter,
+        );
+        if changed {
+            if let Some(mtm) = MainThreadMarker::new() {
+                self.refresh_menu_bar(mtm);
+            }
+        }
     }
 
     /// Refresh the menu bar indicator content. No-op when disabled (status item absent) — no rendering work.

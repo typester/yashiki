@@ -13,9 +13,9 @@ pub fn view_tags_on_display(
     tags: u32,
     display_id: DisplayId,
 ) -> Vec<WindowMove> {
-    if state.has_other_space_window_on_display(display_id) {
+    if state.is_on_fullscreen_space(display_id) {
         tracing::debug!(
-            "Ignoring tag-view on display {}: window on another Space",
+            "Ignoring tag-view on display {}: showing a fullscreen Space",
             display_id
         );
         return vec![];
@@ -49,9 +49,9 @@ pub fn toggle_tags_on_display(
     tags: u32,
     display_id: DisplayId,
 ) -> Vec<WindowMove> {
-    if state.has_other_space_window_on_display(display_id) {
+    if state.is_on_fullscreen_space(display_id) {
         tracing::debug!(
-            "Ignoring tag-toggle on display {}: window on another Space",
+            "Ignoring tag-toggle on display {}: showing a fullscreen Space",
             display_id
         );
         return vec![];
@@ -77,9 +77,9 @@ pub fn toggle_tags_on_display(
 
 pub fn view_tags_last(state: &mut State) -> Vec<WindowMove> {
     let display_id = state.effective_focused_display();
-    if state.has_other_space_window_on_display(display_id) {
+    if state.is_on_fullscreen_space(display_id) {
         tracing::debug!(
-            "Ignoring tag-view-last on display {}: window on another Space",
+            "Ignoring tag-view-last on display {}: showing a fullscreen Space",
             display_id
         );
         return vec![];

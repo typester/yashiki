@@ -306,10 +306,9 @@ impl State {
         self.windows.values().any(|w| w.pid == pid)
     }
 
-    pub fn has_other_space_window_on_display(&self, display_id: DisplayId) -> bool {
-        self.windows
-            .values()
-            .any(|w| w.display_id == display_id && w.on_other_space)
+    /// Whether the display is showing a native fullscreen Space, which yashiki leaves alone.
+    pub fn is_on_fullscreen_space(&self, display_id: DisplayId) -> bool {
+        self.fullscreen_space_displays.contains(&display_id)
     }
 
     /// Find the topmost visible managed window at the given screen coordinates.
@@ -763,30 +762,18 @@ impl State {
     }
 
     pub fn move_focused_to_tags(&mut self, tags: u32) -> Vec<WindowMove> {
-        if self.has_other_space_window_on_display(self.focused_display) {
-            return vec![];
-        }
         move_focused_to_tags(self, tags)
     }
 
     pub fn toggle_focused_window_tags(&mut self, tags: u32) -> Vec<WindowMove> {
-        if self.has_other_space_window_on_display(self.focused_display) {
-            return vec![];
-        }
         toggle_focused_window_tags(self, tags)
     }
 
     pub fn toggle_focused_fullscreen(&mut self) -> Option<(DisplayId, bool, u32, i32)> {
-        if self.has_other_space_window_on_display(self.focused_display) {
-            return None;
-        }
         toggle_focused_fullscreen(self)
     }
 
     pub fn toggle_focused_float(&mut self) -> Option<(DisplayId, bool, u32, i32)> {
-        if self.has_other_space_window_on_display(self.focused_display) {
-            return None;
-        }
         toggle_focused_float(self)
     }
 
@@ -797,9 +784,6 @@ impl State {
     }
 
     pub fn swap_window(&mut self, direction: Direction) -> Option<DisplayId> {
-        if self.has_other_space_window_on_display(self.focused_display) {
-            return None;
-        }
         swap_window(self, direction)
     }
 
@@ -808,9 +792,6 @@ impl State {
     }
 
     pub fn send_to_output(&mut self, direction: OutputDirection) -> Option<SendToOutputResult> {
-        if self.has_other_space_window_on_display(self.focused_display) {
-            return None;
-        }
         send_to_output(self, direction)
     }
 
@@ -4865,5 +4846,52 @@ mod tests {
             state.update_fullscreen_spaces(HashSet::new()),
             transitions(vec![], vec![])
         );
+    }
+
+    fn state_with_window_on_display_1(displays: Vec<crate::macos::DisplayInfo>) -> State {
+        let ws = MockWindowSystem::new()
+            .with_displays(displays)
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+        let mut state = State::new();
+        state.sync_all(&ws);
+        state
+    }
+
+    #[test]
+    fn test_view_tags_ignored_on_fullscreen_space() {
+        let mut state =
+            state_with_window_on_display_1(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)]);
+        state.fullscreen_space_displays.insert(1);
+
+        assert!(state.view_tags_on_display(0b10, 1).is_empty());
+        assert!(state.toggle_tags_on_display(0b10, 1).is_empty());
+        assert_eq!(state.displays.get(&1).unwrap().visible_tags.mask(), 0b1);
+    }
+
+    #[test]
+    fn test_compute_layout_changes_skips_display_on_fullscreen_space() {
+        let mut state =
+            state_with_window_on_display_1(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)]);
+        // Window 100 should be hidden on tag 2, but the display is away
+        state.displays.get_mut(&1).unwrap().visible_tags = Tag::new(2);
+        state.fullscreen_space_displays.insert(1);
+
+        assert!(layout::compute_layout_changes_for_display(&mut state, 1).is_empty());
+        assert!(!state.windows.get(&100).unwrap().is_hidden());
+    }
+
+    #[test]
+    fn test_send_to_output_skips_target_on_fullscreen_space() {
+        let mut state = state_with_window_on_display_1(vec![
+            create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+            create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+        ]);
+        state.fullscreen_space_displays.insert(2);
+
+        assert!(state.send_to_output(OutputDirection::Next).is_none());
+        assert_eq!(state.windows.get(&100).unwrap().display_id, 1);
     }
 }

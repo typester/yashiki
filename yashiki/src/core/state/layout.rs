@@ -173,6 +173,10 @@ pub fn compute_layout_changes_for_display(
     state: &mut State,
     display_id: DisplayId,
 ) -> Vec<WindowMove> {
+    // Its windows are out of reach; hide/show is applied when the display comes back
+    if state.is_on_fullscreen_space(display_id) {
+        return vec![];
+    }
     let Some(display) = state.displays.get(&display_id) else {
         return vec![];
     };
