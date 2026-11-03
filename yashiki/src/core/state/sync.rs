@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use super::super::{Display, Rect, Window, WindowId};
+use crate::macos::space::SpacePresence;
 use crate::macos::DisplayId;
 use crate::platform::WindowSystem;
 
@@ -52,14 +53,17 @@ fn pids_with_recent_ignored_windows(state: &State) -> HashSet<i32> {
         .collect()
 }
 
-/// Check if a window should be removed from tracking.
-/// Returns true if:
-/// - Process is AX inaccessible AND dead (ghost window from missed AppTerminated)
-/// - Process is AX accessible AND window does NOT exist in AX API (window truly gone)
+/// Decide what to do with a tracked window that is missing from CGWindowList.
 ///
-/// Returns false if:
-/// - Process is AX inaccessible but alive (window on different macOS Space)
-/// - Process is AX accessible AND window exists in AX API (window transitioning)
+/// Process AX inaccessible:
+/// - process dead → Remove (ghost window from a missed AppTerminated)
+/// - CGS: on another Space → KeepOnOtherSpace, on no Space → Remove
+/// - CGS: on a current Space, or CGS unavailable → Keep
+///
+/// Process AX accessible:
+/// - window exists in AX API → Keep (transitioning)
+/// - CGS: on another Space → KeepOnOtherSpace (e.g. native fullscreen)
+/// - otherwise → Remove
 ///
 /// For non-normal layer windows (level != 0), the AX check is skipped because
 /// system dialogs (File Picker, etc.) are not included in AXWindows attribute.
@@ -79,22 +83,24 @@ fn should_remove_window<W: WindowSystem>(
             );
             return RemovalDecision::Remove;
         }
-        if let Some(exists) = ws.window_is_on_other_space(window_id) {
-            if exists {
+        return match ws.window_space_presence(window_id) {
+            Some(SpacePresence::Other) => {
                 tracing::debug!(
                     "Keeping window [{}]: exists on another Space (CGS)",
                     window_id,
                 );
-                return RemovalDecision::KeepOnOtherSpace;
+                RemovalDecision::KeepOnOtherSpace
             }
-            tracing::info!(
-                "Removing window [{}]: not on any Space (CGS), process {} alive but window gone",
-                window_id,
-                pid,
-            );
-            return RemovalDecision::Remove;
-        }
-        return RemovalDecision::Keep;
+            Some(SpacePresence::Gone) => {
+                tracing::info!(
+                    "Removing window [{}]: not on any Space (CGS), process {} alive but window gone",
+                    window_id,
+                    pid,
+                );
+                RemovalDecision::Remove
+            }
+            Some(SpacePresence::Current) | None => RemovalDecision::Keep,
+        };
     }
 
     if window_level != 0 {
@@ -110,14 +116,12 @@ fn should_remove_window<W: WindowSystem>(
     }
 
     // Not in AX — check CGS for windows on another Space (e.g. native fullscreen)
-    if let Some(exists) = ws.window_is_on_other_space(window_id) {
-        if exists {
-            tracing::info!(
-                "Keeping window [{}]: not in AX but exists on another Space (CGS)",
-                window_id,
-            );
-            return RemovalDecision::KeepOnOtherSpace;
-        }
+    if ws.window_space_presence(window_id) == Some(SpacePresence::Other) {
+        tracing::info!(
+            "Keeping window [{}]: not in AX but exists on another Space (CGS)",
+            window_id,
+        );
+        return RemovalDecision::KeepOnOtherSpace;
     }
     RemovalDecision::Remove
 }
@@ -1019,14 +1023,25 @@ pub fn sync_windows_for_display<W: WindowSystem>(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::platform::mock::MockWindowSystem;
 
-    #[test]
-    fn test_ax_inaccessible_cgs_exists() {
+    fn ws_with_presence(presence: Option<SpacePresence>) -> MockWindowSystem {
         let mut ws = MockWindowSystem::new();
+        ws.space_presence = Some(
+            presence
+                .map(|p| HashMap::from([(100, p)]))
+                .unwrap_or_default(),
+        );
+        ws
+    }
+
+    #[test]
+    fn test_ax_inaccessible_on_other_space() {
+        let mut ws = ws_with_presence(Some(SpacePresence::Other));
         ws.ax_accessible_pids.remove(&1000);
-        ws.space_windows = Some(HashSet::from([100]));
 
         assert_eq!(
             should_remove_window(&ws, 100, 1000, false, 0),
@@ -1035,14 +1050,25 @@ mod tests {
     }
 
     #[test]
-    fn test_ax_inaccessible_cgs_gone() {
-        let mut ws = MockWindowSystem::new();
+    fn test_ax_inaccessible_on_no_space() {
+        let mut ws = ws_with_presence(None);
         ws.ax_accessible_pids.remove(&1000);
-        ws.space_windows = Some(HashSet::new());
 
         assert_eq!(
             should_remove_window(&ws, 100, 1000, false, 0),
             RemovalDecision::Remove,
+        );
+    }
+
+    #[test]
+    fn test_ax_inaccessible_on_current_space() {
+        // On a current Space but missing from CGWindowList: not gone, keep it
+        let mut ws = ws_with_presence(Some(SpacePresence::Current));
+        ws.ax_accessible_pids.remove(&1000);
+
+        assert_eq!(
+            should_remove_window(&ws, 100, 1000, false, 0),
+            RemovalDecision::Keep,
         );
     }
 
@@ -1059,10 +1085,9 @@ mod tests {
 
     #[test]
     fn test_ax_inaccessible_process_dead() {
-        let mut ws = MockWindowSystem::new();
+        let mut ws = ws_with_presence(Some(SpacePresence::Other));
         ws.ax_accessible_pids.remove(&1000);
         ws.alive_pids.remove(&1000);
-        ws.space_windows = Some(HashSet::from([100]));
 
         assert_eq!(
             should_remove_window(&ws, 100, 1000, false, 0),
@@ -1072,9 +1097,7 @@ mod tests {
 
     #[test]
     fn test_ax_accessible_not_in_ax_but_on_other_space() {
-        let mut ws = MockWindowSystem::new();
-        ws.space_windows = Some(HashSet::from([100]));
-        // AX accessible, window NOT in AX list, but CGS says it's on another Space
+        let ws = ws_with_presence(Some(SpacePresence::Other));
         assert_eq!(
             should_remove_window(&ws, 100, 1000, true, 0),
             RemovalDecision::KeepOnOtherSpace,
@@ -1082,10 +1105,18 @@ mod tests {
     }
 
     #[test]
+    fn test_ax_accessible_not_in_ax_on_current_space() {
+        // AX can see the current Spaces, so a window missing from it there is gone
+        let ws = ws_with_presence(Some(SpacePresence::Current));
+        assert_eq!(
+            should_remove_window(&ws, 100, 1000, true, 0),
+            RemovalDecision::Remove,
+        );
+    }
+
+    #[test]
     fn test_ax_accessible_not_in_ax_not_on_any_space() {
-        let mut ws = MockWindowSystem::new();
-        ws.space_windows = Some(HashSet::new());
-        // AX accessible, not in AX, not on any Space — truly gone
+        let ws = ws_with_presence(None);
         assert_eq!(
             should_remove_window(&ws, 100, 1000, true, 0),
             RemovalDecision::Remove,

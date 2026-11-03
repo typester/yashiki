@@ -98,9 +98,20 @@ fn get_current_space_ids(api: &CgsApi, cid: u32) -> Option<HashSet<u64>> {
     }
 }
 
-/// Check whether a window is on a macOS Space other than any display's current
-/// Space. Returns `None` if the CGS private API is unavailable.
-pub fn window_is_on_other_space(window_id: u32) -> Option<bool> {
+/// Where a window lives relative to the Spaces the displays are currently showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpacePresence {
+    /// On a Space that some display is currently showing.
+    Current,
+    /// Only on Spaces no display is showing (e.g. a native fullscreen Space the user left).
+    Other,
+    /// Not on any Space: the window is gone.
+    Gone,
+}
+
+/// Find where a window lives relative to the current Spaces. Returns `None` if the CGS private API is
+/// unavailable or its answer cannot be read.
+pub fn window_space_presence(window_id: u32) -> Option<SpacePresence> {
     let api = get_cgs_api()?;
 
     unsafe {
@@ -129,7 +140,7 @@ pub fn window_is_on_other_space(window_id: u32) -> Option<bool> {
 
         let spaces: CFArray = CFArray::wrap_under_create_rule(spaces_ptr);
         if spaces.is_empty() {
-            return Some(false);
+            return Some(SpacePresence::Gone);
         }
 
         let window_spaces: HashSet<u64> = (0..spaces.len())
@@ -139,7 +150,15 @@ pub fn window_is_on_other_space(window_id: u32) -> Option<bool> {
                 num.to_i64().map(|v| v as u64)
             })
             .collect();
+        // Spaces were reported but none could be read: unknown, not "gone"
+        if window_spaces.is_empty() {
+            return None;
+        }
 
-        Some(window_spaces.is_disjoint(&current_spaces))
+        if window_spaces.is_disjoint(&current_spaces) {
+            Some(SpacePresence::Other)
+        } else {
+            Some(SpacePresence::Current)
+        }
     }
 }
