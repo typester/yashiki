@@ -173,6 +173,10 @@ pub fn compute_layout_changes_for_display(
     state: &mut State,
     display_id: DisplayId,
 ) -> Vec<WindowMove> {
+    // Its windows are out of reach; hide/show is applied when the display comes back
+    if state.is_on_fullscreen_space(display_id) {
+        return vec![];
+    }
     let Some(display) = state.displays.get(&display_id) else {
         return vec![];
     };
@@ -185,6 +189,9 @@ pub fn compute_layout_changes_for_display(
 
     for window in state.windows.values() {
         if window.display_id != display_id {
+            continue;
+        }
+        if window.on_other_space {
             continue;
         }
 
@@ -285,7 +292,11 @@ fn windows_on_display_in_order<F: Fn(&Window) -> bool>(
     let visible_tags = display.visible_tags;
 
     let is_candidate = |w: &Window| -> bool {
-        w.display_id == display_id && !w.is_hidden() && w.tags.intersects(visible_tags) && extra(w)
+        w.display_id == display_id
+            && !w.is_hidden()
+            && !w.on_other_space
+            && w.tags.intersects(visible_tags)
+            && extra(w)
     };
 
     let mut result: Vec<&Window> = Vec::new();

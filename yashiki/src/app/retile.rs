@@ -36,6 +36,14 @@ fn retile_single_display<M: WindowManipulator>(
     manipulator: &M,
     display_id: DisplayId,
 ) {
+    if state.borrow().is_on_fullscreen_space(display_id) {
+        tracing::debug!(
+            "Skipping retile of display {}: showing a fullscreen Space",
+            display_id
+        );
+        return;
+    }
+
     // First, handle any fullscreen windows on this display
     let fullscreen_data = {
         let state = state.borrow();

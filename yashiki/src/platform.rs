@@ -1,6 +1,9 @@
+use std::collections::HashSet;
+
 use core_graphics::geometry::{CGPoint, CGSize};
 
 use crate::core::{Rect, WindowMove};
+use crate::macos::space::SpacePresence;
 use crate::macos::{
     activate_application, get_frontmost_app_pid, AXUIElement, DisplayId, DisplayInfo, WindowInfo,
 };
@@ -33,6 +36,12 @@ pub trait WindowSystem {
     /// Check if a process is still alive.
     /// Returns true if the process exists, false if it has terminated.
     fn is_process_alive(&self, pid: i32) -> bool;
+    /// Find where a window lives relative to the Spaces the displays are showing (CGS private API).
+    /// Returns None if the API is unavailable.
+    fn window_space_presence(&self, window_id: u32) -> Option<SpacePresence>;
+    /// Displays currently showing a native fullscreen Space (CGS private API).
+    /// Empty if the API is unavailable.
+    fn fullscreen_space_displays(&self, display_ids: &[DisplayId]) -> HashSet<DisplayId>;
 }
 
 /// macOS implementation of WindowSystem
@@ -135,6 +144,14 @@ impl WindowSystem for MacOSWindowSystem {
 
     fn is_process_alive(&self, pid: i32) -> bool {
         unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    fn window_space_presence(&self, window_id: u32) -> Option<SpacePresence> {
+        crate::macos::space::window_space_presence(window_id)
+    }
+
+    fn fullscreen_space_displays(&self, display_ids: &[DisplayId]) -> HashSet<DisplayId> {
+        crate::macos::space::fullscreen_space_displays(display_ids)
     }
 }
 
@@ -668,6 +685,11 @@ pub mod mock {
         /// Used to simulate transitioning windows during fullscreen.
         /// Stored as (window_id, pid).
         pub ax_only_windows: HashSet<(u32, i32)>,
+        /// Space presence per window (CGS API simulation).
+        /// None means the CGS API is unavailable; windows missing from the map are on no Space.
+        pub space_presence: Option<HashMap<u32, SpacePresence>>,
+        /// Displays showing a native fullscreen Space (CGS API simulation).
+        pub fullscreen_spaces: HashSet<DisplayId>,
     }
 
     impl Default for MockWindowSystem {
@@ -680,6 +702,8 @@ pub mod mock {
                 alive_pids: HashSet::from([1, 2, 3, 4, 5, 100, 1000, 1001, 1002]),
                 custom_extended_attributes: HashMap::new(),
                 ax_only_windows: HashSet::new(),
+                space_presence: None,
+                fullscreen_spaces: HashSet::new(),
             }
         }
     }
@@ -789,6 +813,20 @@ pub mod mock {
 
         fn is_process_alive(&self, pid: i32) -> bool {
             self.alive_pids.contains(&pid)
+        }
+
+        fn window_space_presence(&self, window_id: u32) -> Option<SpacePresence> {
+            self.space_presence
+                .as_ref()
+                .map(|map| map.get(&window_id).copied().unwrap_or(SpacePresence::Gone))
+        }
+
+        fn fullscreen_space_displays(&self, display_ids: &[DisplayId]) -> HashSet<DisplayId> {
+            display_ids
+                .iter()
+                .copied()
+                .filter(|id| self.fullscreen_spaces.contains(id))
+                .collect()
         }
     }
 

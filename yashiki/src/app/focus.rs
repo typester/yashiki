@@ -15,6 +15,10 @@ pub fn focus_visible_window_if_needed<M: WindowManipulator>(
         if !state.displays.contains_key(&display_id) {
             return;
         }
+        // Focusing a desktop window there would switch the display away from the fullscreen Space
+        if state.is_on_fullscreen_space(display_id) {
+            return;
+        }
 
         let all_focusable = state.focusable_windows_on_display(display_id);
         if all_focusable.is_empty() {

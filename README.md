@@ -14,7 +14,7 @@ macOS tiling window manager written in Rust.
 - **Auto-raise** - Focus follows mouse with optional delay (focus window when cursor enters)
 - **Keybinding modes** - Named modes (river-style) for context-dependent hotkeys (e.g., resize mode, passthrough mode)
 - **State streaming** - Real-time events for status bars and external tools
-- **No SIP disable required** - Uses only public Accessibility API
+- **No SIP disable required** - Uses the public Accessibility API, plus a few optional read-only private CGS calls to detect native fullscreen Spaces
 - **Shell script configuration** - Config is just a shell script (`~/.config/yashiki/init`)
 
 ## Status
