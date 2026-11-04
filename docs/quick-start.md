@@ -308,7 +308,7 @@ The windows should tile automatically in the tatami (master-stack) layout.
 
 This is tiling-style fullscreen within the current Space, not macOS native fullscreen (which creates a separate Space).
 
-If you do use macOS native fullscreen (for example, a fullscreen video), Yashiki leaves that display alone while it shows the fullscreen Space: window and tag commands for it are ignored, and their hotkeys go to the app. Other displays keep working as usual. When you go back to the desktop, Yashiki syncs the display again and retiles it.
+If you do use macOS native fullscreen (for example, a fullscreen video), Yashiki leaves that display alone while it shows the fullscreen Space: commands that act on that display are ignored. Other displays keep working as usual. When you go back to the desktop, Yashiki syncs the display again and retiles it.
 
 ### 5. Float a Window
 
