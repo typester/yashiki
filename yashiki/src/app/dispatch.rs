@@ -54,35 +54,35 @@ pub fn dispatch_command<S: WindowSystem, M: WindowManipulator>(
 }
 
 /// How a command is gated while a display is showing a native fullscreen Space.
-pub(crate) enum SpaceGate<'a> {
+enum SpaceGate<'a> {
+    /// Acts on the focused window's display.
+    FocusedWindow,
     /// Acts on the focused display.
     FocusedDisplay,
     /// Acts on the display given by `--output`, or the focused one.
     Output(Option<&'a OutputSpecifier>),
-    /// Not blocked over IPC; only its hotkey passes through on a fullscreen Space.
-    HotkeyOnly,
 }
 
-/// Classify commands that act on windows, tags or layout. No wildcard arm, so new commands must be classified.
-pub(crate) fn space_gate(cmd: &Command) -> Option<SpaceGate<'_>> {
+/// Classify commands by the display they act on. No wildcard arm, so new commands must be classified.
+fn space_gate(cmd: &Command) -> Option<SpaceGate<'_>> {
     match cmd {
-        Command::WindowFocus { .. }
-        | Command::WindowSwap { .. }
+        Command::WindowSwap { .. }
         | Command::WindowClose
         | Command::WindowToggleFloat
         | Command::WindowToggleFullscreen
         | Command::WindowMoveToTag { .. }
         | Command::WindowToggleTag { .. }
-        | Command::TagViewLast
-        | Command::OutputFocus { .. }
-        | Command::OutputSend { .. } => Some(SpaceGate::FocusedDisplay),
+        | Command::OutputSend { .. } => Some(SpaceGate::FocusedWindow),
+        Command::WindowFocus { .. } | Command::TagViewLast => Some(SpaceGate::FocusedDisplay),
         Command::TagView { output, .. } | Command::TagToggle { output, .. } => {
             Some(SpaceGate::Output(output.as_ref()))
         }
-        Command::LayoutCommand { .. } | Command::LayoutSet { .. } | Command::Retile { .. } => {
-            Some(SpaceGate::HotkeyOnly)
-        }
-        Command::LayoutSetDefault { .. }
+        // output-focus leaves the display; layout changes apply on retile, which skips fullscreen displays
+        Command::OutputFocus { .. }
+        | Command::LayoutCommand { .. }
+        | Command::LayoutSet { .. }
+        | Command::Retile { .. }
+        | Command::LayoutSetDefault { .. }
         | Command::LayoutGet { .. }
         | Command::DeclareMode { .. }
         | Command::EnterMode { .. }
@@ -119,22 +119,17 @@ pub(crate) fn space_gate(cmd: &Command) -> Option<SpaceGate<'_>> {
 
 /// The display that blocks the command because it is showing a native fullscreen Space, if any.
 fn fullscreen_space_block(cmd: &Command, state: &State) -> Option<DisplayId> {
-    let candidates: Vec<DisplayId> = match space_gate(cmd)? {
-        SpaceGate::FocusedDisplay => {
-            let focused_window_display = state
-                .focused
-                .and_then(|id| state.windows.get(&id))
-                .map(|w| w.display_id);
-            std::iter::once(state.effective_focused_display())
-                .chain(focused_window_display)
-                .collect()
-        }
-        SpaceGate::Output(spec) => state.get_target_display(spec).ok().into_iter().collect(),
-        SpaceGate::HotkeyOnly => return None,
+    let display_id = match space_gate(cmd)? {
+        SpaceGate::FocusedWindow => state
+            .focused
+            .and_then(|id| state.windows.get(&id))
+            .map(|w| w.display_id)?,
+        SpaceGate::FocusedDisplay => state.effective_focused_display(),
+        SpaceGate::Output(spec) => state.get_target_display(spec).ok()?,
     };
-    candidates
-        .into_iter()
-        .find(|&id| state.is_on_fullscreen_space(id))
+    state
+        .is_on_fullscreen_space(display_id)
+        .then_some(display_id)
 }
 
 /// Returns target display_id for tag-view commands, None for other commands.
@@ -218,7 +213,7 @@ mod tests {
     use crate::platform::mock::{
         create_test_display, create_test_window, MockWindowManipulator, MockWindowSystem,
     };
-    use yashiki_ipc::Direction;
+    use yashiki_ipc::{Direction, OutputDirection};
 
     type TestContext = (
         RefCell<State>,
@@ -448,6 +443,12 @@ mod tests {
     #[test]
     fn test_space_gate_classification() {
         assert!(matches!(
+            space_gate(&Command::WindowSwap {
+                direction: Direction::Next
+            }),
+            Some(SpaceGate::FocusedWindow)
+        ));
+        assert!(matches!(
             space_gate(&Command::WindowFocus {
                 direction: Direction::Next
             }),
@@ -460,18 +461,66 @@ mod tests {
             }),
             Some(SpaceGate::Output(None))
         ));
-        assert!(matches!(
-            space_gate(&Command::LayoutCommand {
-                layout: None,
-                cmd: "zoom".to_string(),
-                args: vec![],
-            }),
-            Some(SpaceGate::HotkeyOnly)
-        ));
+        assert!(space_gate(&Command::OutputFocus {
+            direction: OutputDirection::Next
+        })
+        .is_none());
+        assert!(space_gate(&Command::LayoutCommand {
+            layout: None,
+            cmd: "zoom".to_string(),
+            args: vec![],
+        })
+        .is_none());
         assert!(space_gate(&Command::Exec {
             command: "true".to_string(),
             track: false,
         })
         .is_none());
+    }
+
+    #[test]
+    fn test_dispatch_ignores_window_command_on_fullscreen_space() {
+        let ctx = setup_test_context();
+        {
+            let mut state = ctx.0.borrow_mut();
+            state.focused = Some(100);
+            state.fullscreen_space_displays.insert(1);
+        }
+
+        let response = dispatch(&ctx, Command::WindowToggleFloat);
+
+        assert!(matches!(response, Response::Error { .. }));
+        assert!(!ctx.0.borrow().windows.get(&100).unwrap().is_floating);
+    }
+
+    #[test]
+    fn test_dispatch_allows_output_focus_away_from_fullscreen_space() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![
+                create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+                create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+            ])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Firefox", 0.0, 0.0, 1920.0, 1080.0),
+                create_test_window(101, 1001, "Terminal", 2000.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+        let ctx = setup_test_context_with(ws);
+        {
+            let mut state = ctx.0.borrow_mut();
+            state.focused = Some(100);
+            state.focused_display = 1;
+            state.fullscreen_space_displays.insert(1);
+        }
+
+        let response = dispatch(
+            &ctx,
+            Command::OutputFocus {
+                direction: OutputDirection::Next,
+            },
+        );
+
+        assert!(matches!(response, Response::Ok));
+        assert_eq!(ctx.0.borrow().focused_display, 2);
     }
 }
