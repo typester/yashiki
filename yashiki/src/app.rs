@@ -276,6 +276,22 @@ impl RunLoopContext {
         }
     }
 
+    /// Re-check which displays are showing a native fullscreen Space. Called before acting on windows.
+    fn refresh_fullscreen_spaces(&self) {
+        let changed = sync_helper::refresh_fullscreen_spaces(
+            &self.state,
+            &self.window_system,
+            &self.layout_engine_manager,
+            &self.window_manipulator,
+            &self.event_emitter,
+        );
+        if changed {
+            if let Some(mtm) = MainThreadMarker::new() {
+                self.refresh_menu_bar(mtm);
+            }
+        }
+    }
+
     /// Refresh the menu bar indicator content. No-op when disabled (status item absent) — no rendering work.
     fn refresh_menu_bar(&self, mtm: MainThreadMarker) {
         if let Some(item) = self.status_item.borrow().as_ref() {
@@ -504,6 +520,7 @@ impl App {
         // Create CFRunLoopSource for IPC commands (immediate processing)
         extern "C" fn ipc_source_callback(info: *const std::ffi::c_void) {
             let ctx = unsafe { &*(info as *const RunLoopContext) };
+            ctx.refresh_fullscreen_spaces();
 
             // Process snapshot requests
             while let Ok(resp_tx) = ctx.snapshot_request_rx.try_recv() {
@@ -630,6 +647,7 @@ impl App {
         // Create CFRunLoopSource for hotkey commands (immediate processing)
         extern "C" fn hotkey_source_callback(info: *const std::ffi::c_void) {
             let ctx = unsafe { &*(info as *const RunLoopContext) };
+            ctx.refresh_fullscreen_spaces();
 
             // Process all pending hotkey commands
             while let Ok(cmd) = ctx.hotkey_cmd_rx.try_recv() {
@@ -904,11 +922,13 @@ impl App {
                 // Handle display change. `None` means the configuration read from the
                 // OS is the one already held: emitting events or retiling here would
                 // move every window and wake every subscriber for nothing.
-                let Some(result) = ctx
+                let result = ctx
                     .state
                     .borrow_mut()
-                    .handle_display_change(&ctx.window_system)
-                else {
+                    .handle_display_change(&ctx.window_system);
+                let Some(result) = result else {
+                    // Entering a fullscreen Space hides the menu bar, which lands here too
+                    ctx.refresh_fullscreen_spaces();
                     return;
                 };
 
@@ -958,6 +978,7 @@ impl App {
 
                 // Emit state change events (DisplayFocused, WindowUpdated, WindowDestroyed, TagsChanged, etc.)
                 ctx.emit_state_change_events(&pre_state);
+                ctx.refresh_fullscreen_spaces();
             }
         }
 
@@ -1004,6 +1025,7 @@ impl App {
         // Create CFRunLoopSource for workspace events (app launch/terminate)
         extern "C" fn workspace_source_callback(info: *const std::ffi::c_void) {
             let ctx = unsafe { &*(info as *const RunLoopContext) };
+            ctx.refresh_fullscreen_spaces();
 
             // Process workspace events (app launch/terminate)
             while let Ok(event) = ctx.workspace_event_rx.try_recv() {
@@ -1173,6 +1195,8 @@ impl App {
                             tracing::debug!("App activated (already tracked), pid {}", pid);
                         }
                     }
+                    // Already handled by the refresh at the top of this callback
+                    WorkspaceEvent::ActiveSpaceChanged => {}
                 }
             }
         }
@@ -1213,6 +1237,7 @@ impl App {
         // Create CFRunLoopSource for observer events
         extern "C" fn observer_source_callback(info: *const std::ffi::c_void) {
             let ctx = unsafe { &*(info as *const RunLoopContext) };
+            ctx.refresh_fullscreen_spaces();
 
             // Process observer events and forward to tokio
             let mut needs_retile = false;

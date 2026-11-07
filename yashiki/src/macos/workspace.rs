@@ -103,14 +103,12 @@ pub fn terminate_process(pid: u32) {
     }
 }
 
-// Display events no longer travel this channel, so every remaining variant is an
-// app lifecycle notification. The shared prefix is the point.
-#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone)]
 pub enum WorkspaceEvent {
     AppLaunched { pid: i32 },
     AppTerminated { pid: i32 },
     AppActivated { pid: i32 },
+    ActiveSpaceChanged,
 }
 
 struct Ivars {
@@ -130,11 +128,7 @@ define_class!(
         fn app_launched(&self, notification: &NSNotification) {
             if let Some(pid) = get_pid_from_notification(notification) {
                 tracing::debug!("App launched: pid {}", pid);
-                let tx = self.ivars().event_tx.borrow();
-                if let Some(sender) = tx.as_ref() {
-                    let _: Result<(), _> = sender.send(WorkspaceEvent::AppLaunched { pid });
-                }
-                signal_runloop_source(&self.ivars().source_ptr);
+                self.send_event(WorkspaceEvent::AppLaunched { pid });
             }
         }
 
@@ -142,11 +136,7 @@ define_class!(
         fn app_terminated(&self, notification: &NSNotification) {
             if let Some(pid) = get_pid_from_notification(notification) {
                 tracing::debug!("App terminated: pid {}", pid);
-                let tx = self.ivars().event_tx.borrow();
-                if let Some(sender) = tx.as_ref() {
-                    let _: Result<(), _> = sender.send(WorkspaceEvent::AppTerminated { pid });
-                }
-                signal_runloop_source(&self.ivars().source_ptr);
+                self.send_event(WorkspaceEvent::AppTerminated { pid });
             }
         }
 
@@ -154,12 +144,14 @@ define_class!(
         fn app_activated(&self, notification: &NSNotification) {
             if let Some(pid) = get_pid_from_notification(notification) {
                 tracing::debug!("App activated: pid {}", pid);
-                let tx = self.ivars().event_tx.borrow();
-                if let Some(sender) = tx.as_ref() {
-                    let _: Result<(), _> = sender.send(WorkspaceEvent::AppActivated { pid });
-                }
-                signal_runloop_source(&self.ivars().source_ptr);
+                self.send_event(WorkspaceEvent::AppActivated { pid });
             }
+        }
+
+        #[unsafe(method(activeSpaceChanged:))]
+        fn active_space_changed(&self, _notification: &NSNotification) {
+            tracing::debug!("Active Space changed");
+            self.send_event(WorkspaceEvent::ActiveSpaceChanged);
         }
 
         #[unsafe(method(displaysChanged:))]
@@ -202,6 +194,14 @@ impl WorkspaceObserver {
             source_ptr,
         });
         unsafe { msg_send![super(this), init] }
+    }
+
+    /// Queue an event for the main run loop and wake it up.
+    fn send_event(&self, event: WorkspaceEvent) {
+        if let Some(sender) = self.ivars().event_tx.borrow().as_ref() {
+            let _: Result<(), _> = sender.send(event);
+        }
+        signal_runloop_source(&self.ivars().source_ptr);
     }
 }
 
@@ -248,6 +248,16 @@ impl WorkspaceWatcher {
                 observer_obj,
                 sel!(appActivated:),
                 Some(&activate_name),
+                None,
+            );
+
+            let space_changed_name =
+                NSString::from_str("NSWorkspaceActiveSpaceDidChangeNotification");
+
+            workspace_center.addObserver_selector_name_object(
+                observer_obj,
+                sel!(activeSpaceChanged:),
+                Some(&space_changed_name),
                 None,
             );
 

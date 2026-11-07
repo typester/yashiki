@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use super::{Config, Display, Rect, RulesEngine, Tag, Window, WindowId};
@@ -174,6 +174,15 @@ pub struct State {
     /// suppress sync's CGWindowList-based frame overwrite during the macOS AX
     /// catch-up window. See [`FRAME_WRITE_SUPPRESS_MS`].
     pub recent_frame_writes: HashMap<WindowId, Instant>,
+    /// Displays currently showing a native fullscreen Space. yashiki leaves them alone.
+    pub fullscreen_space_displays: HashSet<DisplayId>,
+}
+
+/// Displays that started or stopped showing a native fullscreen Space since the last update.
+#[derive(Debug, PartialEq)]
+pub struct SpaceTransitions {
+    pub entered: Vec<DisplayId>,
+    pub returned: Vec<DisplayId>,
 }
 
 impl State {
@@ -195,6 +204,7 @@ impl State {
             auto_raise_state: AutoRaiseState::default(),
             window_z_order: Vec::new(),
             recent_frame_writes: HashMap::new(),
+            fullscreen_space_displays: HashSet::new(),
         }
     }
 
@@ -294,6 +304,11 @@ impl State {
 
     pub fn has_windows_for_pid(&self, pid: i32) -> bool {
         self.windows.values().any(|w| w.pid == pid)
+    }
+
+    /// Whether the display is showing a native fullscreen Space, which yashiki leaves alone.
+    pub fn is_on_fullscreen_space(&self, display_id: DisplayId) -> bool {
+        self.fullscreen_space_displays.contains(&display_id)
     }
 
     /// Find the topmost visible managed window at the given screen coordinates.
@@ -601,6 +616,28 @@ impl State {
                 .ok_or_else(|| format!("Output not found: {:?}", spec)),
             None => Ok(self.effective_focused_display()),
         }
+    }
+
+    /// Record which displays are showing a native fullscreen Space. Displays that no longer exist are ignored.
+    pub fn update_fullscreen_spaces(&mut self, now: HashSet<DisplayId>) -> SpaceTransitions {
+        let now: HashSet<DisplayId> = now
+            .into_iter()
+            .filter(|id| self.displays.contains_key(id))
+            .collect();
+        let mut entered: Vec<DisplayId> = now
+            .difference(&self.fullscreen_space_displays)
+            .copied()
+            .collect();
+        let mut returned: Vec<DisplayId> = self
+            .fullscreen_space_displays
+            .difference(&now)
+            .copied()
+            .filter(|id| self.displays.contains_key(id))
+            .collect();
+        entered.sort_unstable();
+        returned.sort_unstable();
+        self.fullscreen_space_displays = now;
+        SpaceTransitions { entered, returned }
     }
 
     // Display operations - delegated to state/display.rs
@@ -4698,5 +4735,163 @@ mod tests {
                 pid: 1001
             })
         ));
+    }
+
+    #[test]
+    fn test_on_other_space_window_excluded_from_layout() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Firefox", 200.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Mark window 101 as on another Space
+        state.windows.get_mut(&101).unwrap().on_other_space = true;
+
+        let visible = layout::visible_windows_on_display(&state, 1);
+        assert!(
+            !visible.iter().any(|w| w.id == 101),
+            "on_other_space window should be excluded from visible layout"
+        );
+        assert!(
+            visible.iter().any(|w| w.id == 100),
+            "normal window should be in visible layout"
+        );
+    }
+
+    #[test]
+    fn test_on_other_space_window_excluded_from_hide_show() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)])
+            .with_windows(vec![
+                create_test_window(100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0),
+                create_test_window(101, 1001, "Firefox", 200.0, 100.0, 800.0, 600.0),
+            ])
+            .with_focused(Some(100));
+
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        // Mark window 101 as on another Space
+        state.windows.get_mut(&101).unwrap().on_other_space = true;
+
+        // Switch tags so windows should be hidden
+        state.displays.get_mut(&1).unwrap().visible_tags = Tag::new(2);
+        let moves = layout::compute_layout_changes_for_display(&mut state, 1);
+
+        // Window 100 should be hidden, but 101 (on other Space) should not be touched
+        assert!(
+            moves.iter().any(|m| m.window_id == 100),
+            "normal window should be hidden on tag switch"
+        );
+        assert!(
+            !moves.iter().any(|m| m.window_id == 101),
+            "on_other_space window should not be hidden"
+        );
+    }
+
+    fn transitions(entered: Vec<DisplayId>, returned: Vec<DisplayId>) -> SpaceTransitions {
+        SpaceTransitions { entered, returned }
+    }
+
+    #[test]
+    fn test_update_fullscreen_spaces_reports_transitions() {
+        let ws = MockWindowSystem::new().with_displays(vec![
+            create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+            create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+        ]);
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        assert_eq!(
+            state.update_fullscreen_spaces(HashSet::from([2])),
+            transitions(vec![2], vec![])
+        );
+        assert_eq!(
+            state.update_fullscreen_spaces(HashSet::from([1, 2])),
+            transitions(vec![1], vec![])
+        );
+        assert_eq!(
+            state.update_fullscreen_spaces(HashSet::from([1, 2])),
+            transitions(vec![], vec![])
+        );
+        assert_eq!(
+            state.update_fullscreen_spaces(HashSet::new()),
+            transitions(vec![], vec![1, 2])
+        );
+        assert!(state.fullscreen_space_displays.is_empty());
+    }
+
+    #[test]
+    fn test_update_fullscreen_spaces_ignores_unknown_displays() {
+        let ws = MockWindowSystem::new()
+            .with_displays(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)]);
+        let mut state = State::new();
+        state.sync_all(&ws);
+
+        assert_eq!(
+            state.update_fullscreen_spaces(HashSet::from([1, 99])),
+            transitions(vec![1], vec![])
+        );
+        assert!(!state.fullscreen_space_displays.contains(&99));
+
+        // A display removed while on a fullscreen Space is not reported as returned
+        state.displays.remove(&1);
+        assert_eq!(
+            state.update_fullscreen_spaces(HashSet::new()),
+            transitions(vec![], vec![])
+        );
+    }
+
+    fn state_with_window_on_display_1(displays: Vec<crate::macos::DisplayInfo>) -> State {
+        let ws = MockWindowSystem::new()
+            .with_displays(displays)
+            .with_windows(vec![create_test_window(
+                100, 1000, "Safari", 100.0, 100.0, 800.0, 600.0,
+            )])
+            .with_focused(Some(100));
+        let mut state = State::new();
+        state.sync_all(&ws);
+        state
+    }
+
+    #[test]
+    fn test_view_tags_ignored_on_fullscreen_space() {
+        let mut state =
+            state_with_window_on_display_1(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)]);
+        state.fullscreen_space_displays.insert(1);
+
+        assert!(state.view_tags_on_display(0b10, 1).is_empty());
+        assert!(state.toggle_tags_on_display(0b10, 1).is_empty());
+        assert_eq!(state.displays.get(&1).unwrap().visible_tags.mask(), 0b1);
+    }
+
+    #[test]
+    fn test_compute_layout_changes_skips_display_on_fullscreen_space() {
+        let mut state =
+            state_with_window_on_display_1(vec![create_test_display(1, 0.0, 0.0, 1920.0, 1080.0)]);
+        // Window 100 should be hidden on tag 2, but the display is away
+        state.displays.get_mut(&1).unwrap().visible_tags = Tag::new(2);
+        state.fullscreen_space_displays.insert(1);
+
+        assert!(layout::compute_layout_changes_for_display(&mut state, 1).is_empty());
+        assert!(!state.windows.get(&100).unwrap().is_hidden());
+    }
+
+    #[test]
+    fn test_send_to_output_skips_target_on_fullscreen_space() {
+        let mut state = state_with_window_on_display_1(vec![
+            create_test_display(1, 0.0, 0.0, 1920.0, 1080.0),
+            create_test_display(2, 1920.0, 0.0, 1920.0, 1080.0),
+        ]);
+        state.fullscreen_space_displays.insert(2);
+
+        assert!(state.send_to_output(OutputDirection::Next).is_none());
+        assert_eq!(state.windows.get(&100).unwrap().display_id, 1);
     }
 }

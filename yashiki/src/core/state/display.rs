@@ -266,6 +266,13 @@ pub fn send_to_output(state: &mut State, direction: OutputDirection) -> Option<S
     if source_display_id == target_display_id {
         return None;
     }
+    if state.is_on_fullscreen_space(target_display_id) {
+        tracing::debug!(
+            "Ignoring output-send to display {}: showing a fullscreen Space",
+            target_display_id
+        );
+        return None;
+    }
 
     let target_display = state.displays.get(&target_display_id)?;
     let target_frame_x = target_display.frame.x;

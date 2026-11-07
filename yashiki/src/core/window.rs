@@ -29,6 +29,8 @@ pub struct Window {
     /// Some(display_id): Window was orphaned due to display removal (remembers original display)
     /// None: Window is on its intended display
     pub orphaned_from: Option<DisplayId>,
+    /// Window is on another macOS Space (native fullscreen, etc.) and unreachable via AX API.
+    pub on_other_space: bool,
 }
 
 impl Window {
@@ -53,6 +55,7 @@ impl Window {
             is_floating: false,
             is_fullscreen: false,
             orphaned_from: None,
+            on_other_space: false,
         }
     }
 
