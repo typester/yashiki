@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- [**breaking**] leave displays showing a native fullscreen Space alone (experimental) ([#191](https://github.com/typester/yashiki/pull/191))
+- leave displays showing a native fullscreen Space alone (experimental) ([#191](https://github.com/typester/yashiki/pull/191))
 
 ## [0.15.4](https://github.com/typester/yashiki/compare/yashiki-v0.15.3...yashiki-v0.15.4) - 2026-09-25
 
